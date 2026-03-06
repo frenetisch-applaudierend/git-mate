@@ -1,5 +1,7 @@
 # git-mate
 
+> **Work in progress** — not ready for public use.
+
 A focused Git CLI extension for workflows that blend branch checkout with optional worktrees. Built for my specific workflow using git.
 
 ## Requirements
