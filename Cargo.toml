@@ -2,6 +2,13 @@
 name = "git-mate"
 version = "0.1.0"
 edition = "2024"
+description = "A focused Git CLI extension for branch and sync workflows"
+license = "MIT"
+repository = "https://github.com/frenetisch-applaudierend/git-mate"
+homepage = "https://github.com/frenetisch-applaudierend/git-mate"
+readme = "README.md"
+keywords = ["git", "cli", "workflow", "branch"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
