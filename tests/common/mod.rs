@@ -1,0 +1,172 @@
+#![allow(dead_code)]
+
+use std::process::Command;
+use tempfile::TempDir;
+
+pub struct TestRepo {
+    pub dir: TempDir,
+}
+
+impl TestRepo {
+    /// Init a repo with one empty commit on `main`.
+    pub fn new() -> Self {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        // Use symbolic-ref instead of `init -b` for broader git compatibility.
+        git_silent(p, &["init"]);
+        git_silent(p, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git_silent(p, &["config", "user.email", "test@test.com"]);
+        git_silent(p, &["config", "user.name", "Test"]);
+        git_silent(p, &["commit", "--allow-empty", "-m", "init"]);
+        Self { dir }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    pub fn git(&self, args: &[&str]) {
+        git(self.path(), args);
+    }
+
+    pub fn current_branch(&self) -> String {
+        rev_parse_output(self.path(), &["rev-parse", "--abbrev-ref", "HEAD"])
+    }
+
+    pub fn head_commit(&self) -> String {
+        rev_parse_output(self.path(), &["rev-parse", "HEAD"])
+    }
+}
+
+/// A bare remote repo paired with a local clone — no network needed.
+pub struct RepoWithRemote {
+    bare: TempDir,
+    pub local: TempDir,
+}
+
+impl RepoWithRemote {
+    pub fn new() -> Self {
+        Self::with_default_branch("main")
+    }
+
+    /// Create a bare remote whose HEAD points to `branch`, then clone it locally.
+    pub fn with_default_branch(branch: &str) -> Self {
+        let bare = TempDir::new().unwrap();
+
+        // Init bare and point HEAD at the desired branch.
+        git_silent(bare.path(), &["init", "--bare"]);
+        git_silent(
+            bare.path(),
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{branch}")],
+        );
+
+        // Scratch clone: init, set HEAD, commit, push to bare.
+        let scratch = TempDir::new().unwrap();
+        let bare_url = bare.path().to_str().unwrap().to_string();
+        git_silent(scratch.path(), &["init"]);
+        git_silent(
+            scratch.path(),
+            &["symbolic-ref", "HEAD", &format!("refs/heads/{branch}")],
+        );
+        git_silent(scratch.path(), &["config", "user.email", "test@test.com"]);
+        git_silent(scratch.path(), &["config", "user.name", "Test"]);
+        git_silent(scratch.path(), &["remote", "add", "origin", &bare_url]);
+        git_silent(scratch.path(), &["commit", "--allow-empty", "-m", "init"]);
+        git_silent(scratch.path(), &["push", "-u", "origin", branch]);
+
+        // Clone bare into local.
+        let local = TempDir::new().unwrap();
+        git_silent(local.path(), &["clone", &bare_url, "."]);
+        git_silent(local.path(), &["config", "user.email", "test@test.com"]);
+        git_silent(local.path(), &["config", "user.name", "Test"]);
+
+        RepoWithRemote { bare, local }
+    }
+
+    pub fn local_path(&self) -> &std::path::Path {
+        self.local.path()
+    }
+
+    pub fn bare_path(&self) -> &std::path::Path {
+        self.bare.path()
+    }
+
+    pub fn local_current_branch(&self) -> String {
+        rev_parse_output(self.local_path(), &["rev-parse", "--abbrev-ref", "HEAD"])
+    }
+
+    pub fn local_head_commit(&self) -> String {
+        rev_parse_output(self.local_path(), &["rev-parse", "HEAD"])
+    }
+
+    pub fn remote_tracking_exists(&self, tracking_ref: &str) -> bool {
+        Command::new("git")
+            .args(["rev-parse", "--verify", tracking_ref])
+            .current_dir(self.local_path())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    }
+
+    /// Push a new empty commit onto the remote's current branch.
+    pub fn push_commit_to_remote(&self, message: &str) {
+        let scratch = TempDir::new().unwrap();
+        let bare_url = self.bare_path().to_str().unwrap().to_string();
+        git_silent(scratch.path(), &["clone", &bare_url, "."]);
+        git_silent(scratch.path(), &["config", "user.email", "test@test.com"]);
+        git_silent(scratch.path(), &["config", "user.name", "Test"]);
+        git_silent(scratch.path(), &["commit", "--allow-empty", "-m", message]);
+        git_silent(scratch.path(), &["push"]);
+    }
+
+    /// Create a new branch on the remote via a scratch clone.
+    pub fn push_branch_to_remote(&self, branch: &str) {
+        let scratch = TempDir::new().unwrap();
+        let bare_url = self.bare_path().to_str().unwrap().to_string();
+        git_silent(scratch.path(), &["clone", &bare_url, "."]);
+        git_silent(scratch.path(), &["config", "user.email", "test@test.com"]);
+        git_silent(scratch.path(), &["config", "user.name", "Test"]);
+        git_silent(scratch.path(), &["checkout", "-b", branch]);
+        git_silent(
+            scratch.path(),
+            &["commit", "--allow-empty", "-m", &format!("add {branch}")],
+        );
+        git_silent(scratch.path(), &["push", "origin", branch]);
+    }
+
+    /// Delete a branch directly from the bare repo.
+    pub fn delete_remote_branch(&self, branch: &str) {
+        git_silent(self.bare_path(), &["branch", "-D", branch]);
+    }
+}
+
+pub fn git(dir: &std::path::Path, args: &[&str]) {
+    let s = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(s.success(), "git {:?} failed in {:?}", args, dir);
+}
+
+fn git_silent(dir: &std::path::Path, args: &[&str]) {
+    let s = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(s.success(), "git {:?} failed in {:?}", args, dir);
+}
+
+fn rev_parse_output(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
