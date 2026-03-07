@@ -1,0 +1,7 @@
+{
+  "allowedTools": [
+    "Bash(cargo build:*)",
+    "Bash(cargo run:*)",
+    "Bash(cargo test:*)"
+  ]
+}
