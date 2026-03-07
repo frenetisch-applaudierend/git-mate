@@ -16,7 +16,7 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
 fn checkout_in_place(branch: &str) -> Result<(), String> {
     if !crate::git::is_main_worktree()? {
         return Err(
-            "checkout is only supported from the main worktree; use --worktree to add a new worktree"
+            "checkout is only supported from the main worktree; use --worktree to open this branch in a linked worktree"
                 .to_string(),
         );
     }
@@ -33,7 +33,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
         .ok_or("main worktree directory name is not valid UTF-8")?;
     let wt_path = root.join(project_name).join(branch);
 
-    if wt_path.exists() {
+    if wt_path.exists() && wt_path.join(".git").exists() {
         println!("worktree already exists at {}", wt_path.display());
         return Ok(());
     }

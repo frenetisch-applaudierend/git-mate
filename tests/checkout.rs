@@ -77,11 +77,14 @@ fn checkout_worktree_noop_if_path_exists() {
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
     repo.git(&["branch", "existing"]);
 
-    // Pre-create the target directory
-    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
-    let wt_path = wt_root.path().join(repo_name).join("existing");
-    std::fs::create_dir_all(&wt_path).unwrap();
+    // First call creates the worktree
+    git_mate()
+        .args(["checkout", "existing", "-w"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
 
+    // Second call should be a no-op
     git_mate()
         .args(["checkout", "existing", "-w"])
         .current_dir(repo.path())
