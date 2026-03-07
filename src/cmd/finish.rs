@@ -44,15 +44,11 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             crate::git::run(&["-C", &main_wt_path, "checkout", &default])?;
         }
         Some(wt) => {
-            let in_target = cwd.starts_with(&wt.path);
             let wt_path_str = wt
                 .path
                 .to_str()
                 .ok_or("worktree path is not valid UTF-8")?;
             crate::git::run(&["worktree", "remove", wt_path_str])?;
-            if in_target {
-                println!("GWT_CD:{}", main_wt.path.display());
-            }
         }
         None => {
             if !args.delete_branch {
