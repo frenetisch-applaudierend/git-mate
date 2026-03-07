@@ -18,7 +18,7 @@ pub fn run(args: NewArgs) -> Result<(), String> {
     if args.worktree {
         create_worktree(&args.branch, &from_ref)
     } else {
-        run_git(&["checkout", "-b", &args.branch, &from_ref])
+        crate::git::run(&["checkout", "-b", &args.branch, &from_ref])
     }
 }
 
@@ -26,10 +26,7 @@ fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
     if no_fetch {
         return Ok(());
     }
-    if read_git_config("mate.fetch")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "false" | "no" | "off" | "0"))
-        .unwrap_or(false)
-    {
+    if crate::git::config::read_bool("mate.fetch") == Some(false) {
         return Ok(());
     }
     let remotes = std::process::Command::new("git")
@@ -46,7 +43,7 @@ fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
     if !remotes.lines().any(|r| r.trim() == "origin") {
         return Ok(());
     }
-    run_git(&["fetch", "origin"])
+    crate::git::run(&["fetch", "origin"])
 }
 
 fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
@@ -73,7 +70,7 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     let wt_path_str = wt_path
         .to_str()
         .ok_or("worktree path is not valid UTF-8")?;
-    run_git(&["worktree", "add", wt_path_str, "-b", branch, from_ref])
+    crate::git::run(&["worktree", "add", wt_path_str, "-b", branch, from_ref])
 }
 
 fn find_main_worktree() -> Result<std::path::PathBuf, String> {
@@ -94,23 +91,11 @@ fn find_main_worktree() -> Result<std::path::PathBuf, String> {
 }
 
 fn read_worktree_root() -> Result<std::path::PathBuf, String> {
-    let value = read_git_config("mate.worktreeRoot").ok_or(
+    let value = crate::git::config::read_string("mate.worktreeRoot").ok_or(
         "mate.worktreeRoot is not configured; set it with: git config mate.worktreeRoot <path>"
             .to_string(),
     )?;
     Ok(expand_tilde(&value))
-}
-
-fn read_git_config(key: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["config", "--get", key])
-        .output()
-        .ok()?;
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
-    }
 }
 
 fn expand_tilde(path: &str) -> std::path::PathBuf {
@@ -151,14 +136,3 @@ fn detect_default_branch() -> Result<String, String> {
     Err("could not detect default branch; use --from to specify one".to_string())
 }
 
-fn run_git(args: &[&str]) -> Result<(), String> {
-    let status = std::process::Command::new("git")
-        .args(args)
-        .status()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("`git {}` failed", args.join(" ")))
-    }
-}
