@@ -3,11 +3,11 @@
 use std::process::Command;
 use tempfile::TempDir;
 
-pub struct TestRepo {
+pub struct RepoWithoutRemote {
     pub dir: TempDir,
 }
 
-impl TestRepo {
+impl RepoWithoutRemote {
     /// Init a repo with one empty commit on `main`.
     pub fn new() -> Self {
         let dir = TempDir::new().unwrap();
