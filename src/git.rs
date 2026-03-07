@@ -1,3 +1,55 @@
+pub fn find_main_worktree() -> Result<std::path::PathBuf, String> {
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("`git worktree list` failed".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            return Ok(std::path::PathBuf::from(path));
+        }
+    }
+    Err("could not determine main worktree path".to_string())
+}
+
+pub fn read_worktree_root() -> Result<std::path::PathBuf, String> {
+    let value = config::read_string("mate.worktreeRoot").ok_or(
+        "mate.worktreeRoot is not configured; set it with: git config mate.worktreeRoot <path>"
+            .to_string(),
+    )?;
+    Ok(expand_tilde(&value))
+}
+
+pub fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return std::path::PathBuf::from(home).join(rest);
+        }
+    }
+    std::path::PathBuf::from(path)
+}
+
+pub fn current_worktree_root() -> Result<std::path::PathBuf, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("`git rev-parse --show-toplevel` failed".to_string());
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(std::path::PathBuf::from(path))
+}
+
+pub fn is_main_worktree() -> Result<bool, String> {
+    let current = current_worktree_root()?;
+    let main = find_main_worktree()?;
+    Ok(current == main)
+}
+
 pub fn run(args: &[&str]) -> Result<(), String> {
     let status = std::process::Command::new("git")
         .args(args)

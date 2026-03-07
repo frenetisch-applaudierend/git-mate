@@ -55,8 +55,8 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     if !valid {
         return Err(format!("invalid branch name: {branch:?}"));
     }
-    let main_wt = find_main_worktree()?;
-    let root = read_worktree_root()?;
+    let main_wt = crate::git::find_main_worktree()?;
+    let root = crate::git::read_worktree_root()?;
     let project_name = main_wt
         .file_name()
         .ok_or("main worktree path has no directory name")?
@@ -71,40 +71,6 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
         .to_str()
         .ok_or("worktree path is not valid UTF-8")?;
     crate::git::run(&["worktree", "add", wt_path_str, "-b", branch, from_ref])
-}
-
-fn find_main_worktree() -> Result<std::path::PathBuf, String> {
-    let output = std::process::Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    if !output.status.success() {
-        return Err("`git worktree list` failed".to_string());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            return Ok(std::path::PathBuf::from(path));
-        }
-    }
-    Err("could not determine main worktree path".to_string())
-}
-
-fn read_worktree_root() -> Result<std::path::PathBuf, String> {
-    let value = crate::git::config::read_string("mate.worktreeRoot").ok_or(
-        "mate.worktreeRoot is not configured; set it with: git config mate.worktreeRoot <path>"
-            .to_string(),
-    )?;
-    Ok(expand_tilde(&value))
-}
-
-fn expand_tilde(path: &str) -> std::path::PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return std::path::PathBuf::from(home).join(rest);
-        }
-    }
-    std::path::PathBuf::from(path)
 }
 
 fn detect_default_branch() -> Result<String, String> {
