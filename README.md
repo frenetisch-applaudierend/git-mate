@@ -24,7 +24,7 @@ Then add the following to your `.zshrc`, `.bashrc`, or `config.fish` to enable a
 eval "$(git mate init zsh)"   # or bash / fish
 ```
 
-This installs a shell function that wraps `git-mate` and handles automatic `cd` for commands that change your working directory (`new`, `co`, `finish`). Without it, `git-mate` still works but won't navigate your shell.
+This installs a shell function that wraps `git-mate` and handles automatic `cd` for commands that change your working directory (`new`, `checkout`, `finish`). Without it, `git-mate` still works but won't navigate your shell.
 
 ## Commands
 
@@ -48,15 +48,15 @@ git mate new feature/login -w       # create a linked worktree and cd into it
 git mate new feature/login -w --from v2.1.0  # branch from a specific ref
 ```
 
-### `git mate co <branch>`
+### `git mate checkout <branch>`
 
 Checks out an existing branch — local or remote. If the branch already exists in a worktree, navigates there instead.
 
 ```bash
-git mate co feature/login           # checkout in main worktree
-git mate co feature/login -w        # create a linked worktree and cd into it
-git mate co 142                     # resolve GitHub issue #142 to its branch and check it out
-git mate co 142 -w                  # same, in a worktree
+git mate checkout feature/login           # checkout in main worktree
+git mate checkout feature/login -w        # create a linked worktree and cd into it
+git mate checkout 142                     # resolve GitHub issue #142 to its branch and check it out
+git mate checkout 142 -w                  # same, in a worktree
 ```
 
 When passing a GitHub issue number, `git-mate` uses `gh` to look up the associated branch. If no branch exists yet, it prompts you to create one.
