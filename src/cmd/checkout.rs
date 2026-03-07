@@ -33,7 +33,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
         .ok_or("main worktree directory name is not valid UTF-8")?;
     let wt_path = root.join(project_name).join(branch);
 
-    if wt_path.exists() {
+    if wt_path.is_dir() {
         if wt_path.join(".git").exists() {
             println!("worktree already exists at {}", wt_path.display());
             return Ok(());
@@ -43,6 +43,11 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
                 wt_path.display()
             ));
         }
+    } else if wt_path.exists() {
+        return Err(format!(
+            "cannot create worktree at {}: path already exists and is not a directory",
+            wt_path.display()
+        ));
     }
 
     if let Some(parent) = wt_path.parent() {
