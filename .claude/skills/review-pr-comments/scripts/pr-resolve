@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Resolve a review thread by index number (from pr-comments) or raw thread node ID.
+#
+# Usage:
+#   pr-resolve <number>           resolve thread #N from last pr-comments run
+#   pr-resolve <thread-node-id>   resolve by raw GraphQL node ID
+#   pr-resolve all                resolve all unresolved threads for current PR
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "Usage: pr-resolve <number|thread-id|all> [PR_NUMBER]" >&2
+    exit 1
+fi
+
+TARGET="$1"
+PR="${2:-}"
+if [[ -z "$PR" ]]; then
+    PR="$(gh pr view --json number -q .number 2>/dev/null)" \
+        || { echo "error: not on a PR branch (or no open PR found)" >&2; exit 1; }
+fi
+
+THREADS_FILE="/tmp/pr-threads-${PR}.json"
+if [[ ! -f "$THREADS_FILE" ]]; then
+    echo "error: no cached thread list for PR #${PR}. Run pr-comments first." >&2
+    exit 1
+fi
+
+resolve_thread() {
+    local thread_id="$1"
+    gh api graphql -f query='
+mutation($threadId: ID!) {
+  resolveReviewThread(input: { threadId: $threadId }) {
+    thread { id isResolved }
+  }
+}' -f threadId="$thread_id" \
+        -q '.data.resolveReviewThread.thread.isResolved' | grep -q "true" \
+        && echo "Resolved thread: ${thread_id}" \
+        || { echo "error: failed to resolve ${thread_id}" >&2; return 1; }
+}
+
+if [[ "$TARGET" == "all" ]]; then
+    COUNT=0
+    while IFS= read -r id; do
+        resolve_thread "$id"
+        COUNT=$((COUNT + 1))
+    done < <(jq -r '.[].id' "$THREADS_FILE")
+    echo "Resolved $COUNT thread(s)."
+elif [[ "$TARGET" =~ ^[0-9]+$ ]]; then
+    INDEX=$((TARGET - 1))
+    THREAD_ID="$(jq -r --argjson i "$INDEX" '.[$i].id // empty' "$THREADS_FILE")"
+    if [[ -z "$THREAD_ID" ]]; then
+        echo "error: no thread at index $TARGET (run pr-comments to see the list)" >&2
+        exit 1
+    fi
+    resolve_thread "$THREAD_ID"
+else
+    # Treat as raw node ID
+    resolve_thread "$TARGET"
+fi

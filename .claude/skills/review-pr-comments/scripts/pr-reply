@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Post a reply to a review thread by index number (from pr-comments) or raw thread node ID.
+#
+# Usage:
+#   pr-reply <number> "<message>"          reply to thread #N from last pr-comments run
+#   pr-reply <thread-node-id> "<message>"  reply by raw GraphQL node ID
+
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+    echo "Usage: pr-reply <number|thread-id> <message> [PR_NUMBER]" >&2
+    exit 1
+fi
+
+TARGET="$1"
+MESSAGE="$2"
+PR="${3:-}"
+
+if [[ -z "$PR" ]]; then
+    PR="$(gh pr view --json number -q .number 2>/dev/null)" \
+        || { echo "error: not on a PR branch (or no open PR found)" >&2; exit 1; }
+fi
+
+THREADS_FILE="/tmp/pr-threads-${PR}.json"
+if [[ ! -f "$THREADS_FILE" ]]; then
+    echo "error: no cached thread list for PR #${PR}. Run pr-comments first." >&2
+    exit 1
+fi
+
+if [[ "$TARGET" =~ ^[0-9]+$ ]]; then
+    INDEX=$((TARGET - 1))
+    THREAD_ID="$(jq -r --argjson i "$INDEX" '.[$i].id // empty' "$THREADS_FILE")"
+    if [[ -z "$THREAD_ID" ]]; then
+        echo "error: no thread at index $TARGET (run pr-comments to see the list)" >&2
+        exit 1
+    fi
+else
+    THREAD_ID="$TARGET"
+fi
+
+gh api graphql -f query='
+mutation($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: {
+    pullRequestReviewThreadId: $threadId
+    body: $body
+  }) {
+    comment {
+      id
+      body
+    }
+  }
+}' \
+    -f threadId="$THREAD_ID" \
+    -f body="$MESSAGE" \
+    -q '.data.addPullRequestReviewThreadReply.comment.id' \
+    && echo "Replied to thread: ${THREAD_ID}" \
+    || { echo "error: failed to reply to ${THREAD_ID}" >&2; exit 1; }
