@@ -9,6 +9,11 @@ pub struct FinishArgs {
 pub fn run(args: FinishArgs) -> Result<(), String> {
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
+    let main_wt_path = main_wt
+        .path
+        .to_str()
+        .ok_or("main worktree path is not valid UTF-8")?
+        .to_string();
     let cwd = std::env::current_dir()
         .map_err(|e| format!("could not determine current directory: {e}"))?;
 
@@ -36,7 +41,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                     "nothing to finish: {target_branch:?} is the default branch"
                 ));
             }
-            crate::git::run(&["checkout", &default])?;
+            crate::git::run(&["-C", &main_wt_path, "checkout", &default])?;
         }
         Some(wt) => {
             let in_target = cwd.starts_with(&wt.path);
@@ -59,7 +64,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
     }
 
     if args.delete_branch {
-        crate::git::run(&["branch", "-d", &target_branch])?;
+        crate::git::run(&["-C", &main_wt_path, "branch", "-d", &target_branch])?;
     }
 
     Ok(())

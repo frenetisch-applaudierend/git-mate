@@ -21,7 +21,13 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
         .output()
         .map_err(|e| format!("failed to run git: {e}"))?;
     if !output.status.success() {
-        return Err("`git worktree list` failed".to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            return Err("`git worktree list` failed".to_string());
+        } else {
+            return Err(format!("`git worktree list` failed: {stderr}"));
+        }
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut worktrees = Vec::new();

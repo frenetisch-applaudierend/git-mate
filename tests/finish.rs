@@ -69,7 +69,7 @@ fn finish_delete_branch_unmerged_fails() {
 fn finish_linked_worktree_removes_it_and_prints_gwt_cd() {
     let repo = common::RepoWithoutRemote::new();
     // Add a linked worktree for feature/x
-    let wt_path = repo.path().join("../feature-x-wt");
+    let wt_path = repo.path().join("feature-x-wt");
     let wt_path_str = wt_path.to_str().unwrap();
     repo.git(&["worktree", "add", "-b", "feature/x", wt_path_str, "main"]);
     let wt_canonical = std::fs::canonicalize(&wt_path).unwrap();
@@ -92,7 +92,7 @@ fn finish_linked_worktree_removes_it_and_prints_gwt_cd() {
 #[test]
 fn finish_branch_name_from_main_worktree_removes_linked_wt() {
     let repo = common::RepoWithoutRemote::new();
-    let wt_path = repo.path().join("../feature-y-wt");
+    let wt_path = repo.path().join("feature-y-wt");
     let wt_path_str = wt_path.to_str().unwrap();
     repo.git(&["worktree", "add", "-b", "feature/y", wt_path_str, "main"]);
     let wt_canonical = std::fs::canonicalize(&wt_path).unwrap();
@@ -103,6 +103,32 @@ fn finish_branch_name_from_main_worktree_removes_linked_wt() {
         .assert()
         .success();
     assert!(!wt_canonical.exists(), "worktree directory should be removed");
+}
+
+#[test]
+fn finish_linked_worktree_with_delete_branch_removes_wt_and_deletes_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_path = repo.path().join("feature-del-wt");
+    let wt_path_str = wt_path.to_str().unwrap();
+    repo.git(&["worktree", "add", "-b", "feature/del", wt_path_str, "main"]);
+    let wt_canonical = std::fs::canonicalize(&wt_path).unwrap();
+
+    let output = git_mate()
+        .args(["finish", "--delete-branch"])
+        .current_dir(&wt_canonical)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "finish --delete-branch should succeed");
+    assert!(!wt_canonical.exists(), "worktree directory should be removed");
+
+    let main_path = std::fs::canonicalize(repo.path()).unwrap();
+    let exists = Command::new("git")
+        .args(["rev-parse", "--verify", "feature/del"])
+        .current_dir(&main_path)
+        .status()
+        .unwrap()
+        .success();
+    assert!(!exists, "feature/del should have been deleted");
 }
 
 #[test]
