@@ -13,6 +13,15 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
     }
 }
 
+fn find_worktree_for_branch(branch: &str) -> Result<Option<std::path::PathBuf>, String> {
+    let path = crate::git::list_worktrees()?
+        .into_iter()
+        .skip(1) // skip main worktree
+        .find(|wt| wt.branch.as_deref() == Some(branch))
+        .map(|wt| wt.path);
+    Ok(path)
+}
+
 fn checkout_in_place(branch: &str) -> Result<(), String> {
     if !crate::git::is_main_worktree()? {
         return Err(
@@ -20,10 +29,18 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
+    if let Some(wt_path) = find_worktree_for_branch(branch)? {
+        println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
+        return Ok(());
+    }
     crate::git::run(&["checkout", branch])
 }
 
 fn checkout_worktree(branch: &str) -> Result<(), String> {
+    if let Some(wt_path) = find_worktree_for_branch(branch)? {
+        println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
+        return Ok(());
+    }
     let main_wt = crate::git::find_main_worktree()?;
     let root = crate::git::read_worktree_root()?;
     let project_name = main_wt

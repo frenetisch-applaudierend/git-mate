@@ -90,7 +90,7 @@ fn checkout_worktree_noop_if_path_exists() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("already exists"));
+        .stdout(predicate::str::contains("already checked out"));
 }
 
 #[test]
@@ -149,4 +149,38 @@ fn checkout_worktree_missing_config_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("mate.worktreeRoot"));
+}
+
+#[test]
+fn checkout_in_place_navigates_to_existing_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_path = wt_root.path().join("linked");
+
+    repo.git(&["branch", "feature/x"]);
+    repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/x"]);
+
+    git_mate()
+        .args(["checkout", "feature/x"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(wt_path.to_str().unwrap()));
+}
+
+#[test]
+fn checkout_worktree_navigates_to_existing_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_path = wt_root.path().join("linked");
+
+    repo.git(&["branch", "feature/x"]);
+    repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/x"]);
+
+    git_mate()
+        .args(["checkout", "feature/x", "-w"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(wt_path.to_str().unwrap()));
 }
