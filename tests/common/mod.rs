@@ -99,6 +99,14 @@ impl RepoWithRemote {
         rev_parse_output(self.local_path(), &["rev-parse", "HEAD"])
     }
 
+    pub fn branch_tip(&self, branch: &str) -> String {
+        rev_parse_output(self.local_path(), &["rev-parse", branch])
+    }
+
+    pub fn local_git(&self, args: &[&str]) {
+        git(self.local_path(), args);
+    }
+
     pub fn remote_tracking_exists(&self, tracking_ref: &str) -> bool {
         Command::new("git")
             .args(["rev-parse", "--verify", tracking_ref])

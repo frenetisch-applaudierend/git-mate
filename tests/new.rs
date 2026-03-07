@@ -91,7 +91,7 @@ fn worktree_mode_creates_worktree() {
     assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
 
     // The worktree should have feature/login checked out
-    let branch = std::process::Command::new("git")
+    let branch = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&wt_path)
         .output()
@@ -115,13 +115,7 @@ fn fetch_updates_before_branch() {
         .success();
 
     // The new branch tip should be the remote's latest commit, not the old local HEAD.
-    let branch_tip = Command::new("git")
-        .args(["rev-parse", "feat/x"])
-        .current_dir(setup.local_path())
-        .output()
-        .unwrap();
-    let branch_sha = String::from_utf8(branch_tip.stdout).unwrap().trim().to_string();
-    assert_ne!(branch_sha, old_head, "branch should be rooted at remote's new commit");
+    assert_ne!(setup.branch_tip("feat/x"), old_head, "branch should be rooted at remote's new commit");
 }
 
 #[test]
@@ -137,13 +131,7 @@ fn no_fetch_flag_skips_fetch() {
         .assert()
         .success();
 
-    let branch_tip = Command::new("git")
-        .args(["rev-parse", "feat/x"])
-        .current_dir(setup.local_path())
-        .output()
-        .unwrap();
-    let branch_sha = String::from_utf8(branch_tip.stdout).unwrap().trim().to_string();
-    assert_eq!(branch_sha, old_head, "branch should be rooted at old local HEAD (fetch skipped)");
+    assert_eq!(setup.branch_tip("feat/x"), old_head, "branch should be rooted at old local HEAD (fetch skipped)");
 }
 
 #[test]
@@ -152,11 +140,7 @@ fn fetch_config_false_skips_fetch() {
     let old_head = setup.local_head_commit();
 
     setup.push_commit_to_remote("remote update");
-    Command::new("git")
-        .args(["config", "mate.fetch", "false"])
-        .current_dir(setup.local_path())
-        .status()
-        .unwrap();
+    setup.local_git(&["config", "mate.fetch", "false"]);
 
     git_mate()
         .args(["new", "feat/x"])
@@ -164,13 +148,7 @@ fn fetch_config_false_skips_fetch() {
         .assert()
         .success();
 
-    let branch_tip = Command::new("git")
-        .args(["rev-parse", "feat/x"])
-        .current_dir(setup.local_path())
-        .output()
-        .unwrap();
-    let branch_sha = String::from_utf8(branch_tip.stdout).unwrap().trim().to_string();
-    assert_eq!(branch_sha, old_head, "branch should be rooted at old local HEAD (config fetch=false)");
+    assert_eq!(setup.branch_tip("feat/x"), old_head, "branch should be rooted at old local HEAD (config fetch=false)");
 }
 
 #[test]
@@ -184,33 +162,32 @@ fn no_remote_skips_fetch_silently() {
     assert_eq!(repo.current_branch(), "feat/x");
 }
 
+fn assert_fetch_skipped_with_config(value: &str) {
+    let setup = common::RepoWithRemote::new();
+    let old_head = setup.local_head_commit();
+    setup.push_commit_to_remote("remote update");
+    setup.local_git(&["config", "mate.fetch", value]);
+    git_mate()
+        .args(["new", "feat/x"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success();
+    assert_eq!(setup.branch_tip("feat/x"), old_head, "mate.fetch={value} should skip fetch");
+}
+
 #[test]
-fn fetch_config_other_false_values_skip_fetch() {
-    // mate.fetch recognises all git boolean false spellings: no, off, 0.
-    for value in ["no", "off", "0"] {
-        let setup = common::RepoWithRemote::new();
-        let old_head = setup.local_head_commit();
-        setup.push_commit_to_remote("remote update");
-        Command::new("git")
-            .args(["config", "mate.fetch", value])
-            .current_dir(setup.local_path())
-            .status()
-            .unwrap();
+fn fetch_config_no_skips_fetch() {
+    assert_fetch_skipped_with_config("no");
+}
 
-        git_mate()
-            .args(["new", "feat/x"])
-            .current_dir(setup.local_path())
-            .assert()
-            .success();
+#[test]
+fn fetch_config_off_skips_fetch() {
+    assert_fetch_skipped_with_config("off");
+}
 
-        let branch_tip = Command::new("git")
-            .args(["rev-parse", "feat/x"])
-            .current_dir(setup.local_path())
-            .output()
-            .unwrap();
-        let branch_sha = String::from_utf8(branch_tip.stdout).unwrap().trim().to_string();
-        assert_eq!(branch_sha, old_head, "mate.fetch={value} should skip fetch");
-    }
+#[test]
+fn fetch_config_zero_skips_fetch() {
+    assert_fetch_skipped_with_config("0");
 }
 
 #[test]
@@ -231,7 +208,7 @@ fn non_origin_remote_skips_fetch_silently() {
 #[test]
 fn worktree_mode_invalid_branch_name_fails() {
     let repo = common::RepoWithoutRemote::new();
-    let wt_root = tempfile::TempDir::new().unwrap();
+    let wt_root = TempDir::new().unwrap();
     repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
 
     git_mate()
