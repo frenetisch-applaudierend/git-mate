@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 mod cmd;
+mod git;
 
 #[derive(Parser)]
 #[command(name = "git-mate")]
