@@ -185,6 +185,64 @@ fn no_remote_skips_fetch_silently() {
 }
 
 #[test]
+fn fetch_config_other_false_values_skip_fetch() {
+    // mate.fetch recognises all git boolean false spellings: no, off, 0.
+    for value in ["no", "off", "0"] {
+        let setup = common::RepoWithRemote::new();
+        let old_head = setup.local_head_commit();
+        setup.push_commit_to_remote("remote update");
+        Command::new("git")
+            .args(["config", "mate.fetch", value])
+            .current_dir(setup.local_path())
+            .status()
+            .unwrap();
+
+        git_mate()
+            .args(["new", "feat/x"])
+            .current_dir(setup.local_path())
+            .assert()
+            .success();
+
+        let branch_tip = Command::new("git")
+            .args(["rev-parse", "feat/x"])
+            .current_dir(setup.local_path())
+            .output()
+            .unwrap();
+        let branch_sha = String::from_utf8(branch_tip.stdout).unwrap().trim().to_string();
+        assert_eq!(branch_sha, old_head, "mate.fetch={value} should skip fetch");
+    }
+}
+
+#[test]
+fn non_origin_remote_skips_fetch_silently() {
+    // A repo whose only remote is not named "origin" should not attempt
+    // `git fetch origin` — it would fail. The command must succeed.
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["remote", "add", "upstream", "https://example.com/repo.git"]);
+
+    git_mate()
+        .args(["new", "feat/x", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.current_branch(), "feat/x");
+}
+
+#[test]
+fn worktree_mode_invalid_branch_name_fails() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = tempfile::TempDir::new().unwrap();
+    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+
+    git_mate()
+        .args(["new", "../evil", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid branch name"));
+}
+
+#[test]
 fn worktree_mode_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     git_mate()
