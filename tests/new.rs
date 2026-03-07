@@ -3,6 +3,7 @@ mod common;
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
 use std::process::Command;
+use tempfile::TempDir;
 
 fn git_mate() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("git-mate"))
@@ -68,4 +69,44 @@ fn no_default_branch() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("--from"));
+}
+
+#[test]
+fn worktree_mode_creates_worktree() {
+    let repo = common::TestRepo::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+
+    git_mate()
+        .args(["new", "feature/login", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    // Derive expected path: <wt_root>/<repo-dir-name>/feature/login
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/login");
+    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+
+    // The worktree should have feature/login checked out
+    let branch = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    let branch_name = String::from_utf8(branch.stdout).unwrap().trim().to_string();
+    assert_eq!(branch_name, "feature/login");
+}
+
+#[test]
+fn worktree_mode_missing_config_fails() {
+    let repo = common::TestRepo::new();
+    git_mate()
+        .args(["new", "feat/x", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mate.worktreeRoot"));
 }
