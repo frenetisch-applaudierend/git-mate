@@ -5,6 +5,8 @@ pub struct NewArgs {
     pub from: Option<String>,
     #[arg(short = 'w', long)]
     pub worktree: bool,
+    #[arg(long)]
+    pub no_fetch: bool,
 }
 
 pub fn run(args: NewArgs) -> Result<(), String> {
@@ -12,11 +14,39 @@ pub fn run(args: NewArgs) -> Result<(), String> {
         Some(r) => r,
         None => detect_default_branch()?,
     };
+    fetch_if_needed(args.no_fetch)?;
     if args.worktree {
         create_worktree(&args.branch, &from_ref)
     } else {
         run_git(&["checkout", "-b", &args.branch, &from_ref])
     }
+}
+
+fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
+    if no_fetch {
+        return Ok(());
+    }
+    if read_git_config("mate.fetch")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "false" | "no" | "off" | "0"))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    let remotes = std::process::Command::new("git")
+        .args(["remote"])
+        .output()
+        .map(|o| {
+            o.status
+                .success()
+                .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if !remotes.lines().any(|r| r.trim() == "origin") {
+        return Ok(());
+    }
+    run_git(&["fetch", "origin"])
 }
 
 fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
@@ -103,7 +133,7 @@ fn detect_default_branch() -> Result<String, String> {
         let trimmed = raw.trim();
         let prefix = "refs/remotes/origin/";
         if let Some(branch) = trimmed.strip_prefix(prefix) {
-            return Ok(branch.to_string());
+            return Ok(format!("origin/{branch}"));
         }
     }
 
