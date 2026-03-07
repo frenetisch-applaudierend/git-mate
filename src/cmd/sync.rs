@@ -8,7 +8,7 @@ pub struct SyncArgs {
 
 pub fn run(args: SyncArgs) -> Result<(), String> {
     // 1. git fetch --all --prune
-    run_git(&["fetch", "--all", "--prune"])?;
+    crate::git::run(&["fetch", "--all", "--prune"])?;
 
     // 2. Check for upstream
     let has_upstream = std::process::Command::new("git")
@@ -30,17 +30,5 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     if args.ff_only {
         pull_args.push("--ff-only");
     }
-    run_git(&pull_args)
-}
-
-fn run_git(args: &[&str]) -> Result<(), String> {
-    let status = std::process::Command::new("git")
-        .args(args)
-        .status()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("`git {}` failed", args.join(" ")))
-    }
+    crate::git::run(&pull_args)
 }

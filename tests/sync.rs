@@ -10,7 +10,7 @@ fn git_mate() -> Command {
 #[test]
 fn no_upstream() {
     // Repo with no remote → fetch is a no-op; upstream check fails → prints notice and exits 0.
-    let repo = common::TestRepo::new();
+    let repo = common::RepoWithoutRemote::new();
     git_mate()
         .arg("sync")
         .current_dir(repo.path())

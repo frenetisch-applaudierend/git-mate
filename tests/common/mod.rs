@@ -3,11 +3,11 @@
 use std::process::Command;
 use tempfile::TempDir;
 
-pub struct TestRepo {
+pub struct RepoWithoutRemote {
     pub dir: TempDir,
 }
 
-impl TestRepo {
+impl RepoWithoutRemote {
     /// Init a repo with one empty commit on `main`.
     pub fn new() -> Self {
         let dir = TempDir::new().unwrap();
@@ -97,6 +97,14 @@ impl RepoWithRemote {
 
     pub fn local_head_commit(&self) -> String {
         rev_parse_output(self.local_path(), &["rev-parse", "HEAD"])
+    }
+
+    pub fn branch_tip(&self, branch: &str) -> String {
+        rev_parse_output(self.local_path(), &["rev-parse", branch])
+    }
+
+    pub fn local_git(&self, args: &[&str]) {
+        git(self.local_path(), args);
     }
 
     pub fn remote_tracking_exists(&self, tracking_ref: &str) -> bool {
