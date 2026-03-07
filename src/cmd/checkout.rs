@@ -40,7 +40,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
 
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create directories: {e}"))?;
+            .map_err(|e| format!("failed to create directories {}: {e}", parent.display()))?;
     }
 
     let wt_path_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
