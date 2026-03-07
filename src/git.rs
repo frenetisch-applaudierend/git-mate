@@ -10,6 +10,41 @@ pub fn run(args: &[&str]) -> Result<(), String> {
     }
 }
 
+pub struct WorktreeEntry {
+    pub path: std::path::PathBuf,
+    pub branch: Option<String>, // short name e.g. "feature/login", None if detached
+}
+
+pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("`git worktree list` failed".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut worktrees = Vec::new();
+    let mut current_path: Option<std::path::PathBuf> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in stdout.lines() {
+        if let Some(path) = line.strip_prefix("worktree ") {
+            if let Some(p) = current_path.take() {
+                worktrees.push(WorktreeEntry { path: p, branch: current_branch.take() });
+            }
+            current_path = Some(std::path::PathBuf::from(path));
+            current_branch = None;
+        } else if let Some(refs) = line.strip_prefix("branch refs/heads/") {
+            current_branch = Some(refs.to_string());
+        }
+    }
+    if let Some(p) = current_path {
+        worktrees.push(WorktreeEntry { path: p, branch: current_branch });
+    }
+    Ok(worktrees)
+}
+
 pub mod config {
     pub fn read_string(key: &str) -> Option<String> {
         let output = std::process::Command::new("git")

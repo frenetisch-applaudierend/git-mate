@@ -11,6 +11,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Finish(cmd::finish::FinishArgs),
     New(cmd::new::NewArgs),
     Sync(cmd::sync::SyncArgs),
 }
@@ -18,6 +19,7 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
+        Commands::Finish(args) => cmd::finish::run(args),
         Commands::New(args) => cmd::new::run(args),
         Commands::Sync(args) => cmd::sync::run(args),
     };
