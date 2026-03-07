@@ -1,19 +1,9 @@
 name: Setup Workspace
-description: Checkout repository and set up Rust toolchain with caching
-
-inputs:
-  fetch-depth:
-    description: Number of commits to fetch (0 = full history)
-    default: "1"
+description: Set up Rust toolchain with caching (run after checkout)
 
 runs:
   using: composite
   steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: ${{ inputs.fetch-depth }}
-
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 

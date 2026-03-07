@@ -16,7 +16,10 @@ jobs:
       pull-requests: read
 
     steps:
-      - name: Setup Rust
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup workspace
         uses: ./.github/actions/setup-workspace
 
       - name: Publish release

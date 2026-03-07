@@ -12,10 +12,13 @@ jobs:
       pull-requests: write # open / update the PR
 
     steps:
-      - name: Setup Rust
-        uses: ./.github/actions/setup-workspace
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history required for commit analysis
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
 
       - name: Open or update release PR
         uses: release-plz/action@v0.5
