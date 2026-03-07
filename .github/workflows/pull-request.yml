@@ -1,0 +1,13 @@
+name: Pull Request
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Rust
+        uses: ./.github/actions/setup-workspace
+
+      - name: Run tests
+        run: cargo test
