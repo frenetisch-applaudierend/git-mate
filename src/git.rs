@@ -1,18 +1,9 @@
 pub fn find_main_worktree() -> Result<std::path::PathBuf, String> {
-    let output = std::process::Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-    if !output.status.success() {
-        return Err("`git worktree list` failed".to_string());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            return Ok(std::path::PathBuf::from(path));
-        }
-    }
-    Err("could not determine main worktree path".to_string())
+    list_worktrees()?
+        .into_iter()
+        .next()
+        .map(|wt| wt.path)
+        .ok_or_else(|| "could not determine main worktree path".to_string())
 }
 
 pub fn read_worktree_root() -> Result<std::path::PathBuf, String> {

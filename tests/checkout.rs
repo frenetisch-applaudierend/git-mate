@@ -94,6 +94,28 @@ fn checkout_worktree_noop_if_path_exists() {
 }
 
 #[test]
+fn checkout_worktree_fails_if_directory_exists_but_is_not_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["branch", "existing"]);
+
+    // Create a plain directory at the worktree path (no .git file)
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("existing");
+    std::fs::create_dir_all(&wt_path).unwrap();
+
+    git_mate()
+        .args(["checkout", "existing", "-w"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not appear to be a git worktree"));
+}
+
+#[test]
 fn checkout_worktree_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["branch", "some-branch"]);
