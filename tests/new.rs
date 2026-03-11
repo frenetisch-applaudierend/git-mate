@@ -79,11 +79,14 @@ fn worktree_mode_creates_worktree() {
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
 
-    git_mate()
+    let output = git_mate()
         .args(["new", "feature/login", "-w", "--from", "main"])
         .current_dir(repo.path())
-        .assert()
-        .success();
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("_MATE_CD:"), "stdout should contain _MATE_CD:, got: {stdout:?}");
 
     // Derive expected path: <wt_root>/<repo-dir-name>/feature/login
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();

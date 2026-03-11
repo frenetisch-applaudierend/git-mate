@@ -13,6 +13,7 @@ struct Cli {
 enum Commands {
     Checkout(cmd::checkout::CheckoutArgs),
     Finish(cmd::finish::FinishArgs),
+    Init(cmd::init::InitArgs),
     New(cmd::new::NewArgs),
     Sync(cmd::sync::SyncArgs),
 }
@@ -22,6 +23,7 @@ fn main() {
     let result = match cli.command {
         Commands::Checkout(args) => cmd::checkout::run(args),
         Commands::Finish(args) => cmd::finish::run(args),
+        Commands::Init(args) => cmd::init::run(args),
         Commands::New(args) => cmd::new::run(args),
         Commands::Sync(args) => cmd::sync::run(args),
     };
