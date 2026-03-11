@@ -54,7 +54,9 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
         if wt_path.join(".git").exists() {
             let canonical = std::fs::canonicalize(&wt_path)
                 .unwrap_or_else(|_| wt_path.clone());
-            println!("_MATE_CD:{}", canonical.display());
+            if crate::git::called_from_wrapper() {
+                println!("_MATE_CD:{}", canonical.display());
+            }
             println!("worktree already exists at {}", wt_path.display());
             return Ok(());
         } else {
@@ -79,6 +81,8 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     crate::git::run(&["worktree", "add", wt_path_str, branch])?;
     let canonical = std::fs::canonicalize(&wt_path)
         .unwrap_or_else(|_| wt_path.clone());
-    println!("_MATE_CD:{}", canonical.display());
+    if crate::git::called_from_wrapper() {
+        println!("_MATE_CD:{}", canonical.display());
+    }
     Ok(())
 }

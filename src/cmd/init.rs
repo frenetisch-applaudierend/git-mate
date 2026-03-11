@@ -45,7 +45,7 @@ function {NAME}() {
 
 function _git_mate_co() {
     local stdout exit_code cd_path
-    stdout=$(command git mate checkout "$@")
+    stdout=$(GIT_MATE_SHELL=1 command git mate checkout "$@")
     exit_code=$?
     cd_path=$(printf '%s\n' "$stdout" | grep '^_MATE_CD:' | head -1 | sed 's/^_MATE_CD://')
     printf '%s\n' "$stdout" | grep -v '^_MATE_CD:'
@@ -55,7 +55,7 @@ function _git_mate_co() {
 
 function _git_mate_new() {
     local stdout exit_code cd_path
-    stdout=$(command git mate new "$@")
+    stdout=$(GIT_MATE_SHELL=1 command git mate new "$@")
     exit_code=$?
     cd_path=$(printf '%s\n' "$stdout" | grep '^_MATE_CD:' | head -1 | sed 's/^_MATE_CD://')
     printf '%s\n' "$stdout" | grep -v '^_MATE_CD:'
@@ -65,7 +65,7 @@ function _git_mate_new() {
 
 function _git_mate_finish() {
     local stdout exit_code cd_path
-    stdout=$(command git mate finish "$@")
+    stdout=$(GIT_MATE_SHELL=1 command git mate finish "$@")
     exit_code=$?
     cd_path=$(printf '%s\n' "$stdout" | grep '^_MATE_CD:' | head -1 | sed 's/^_MATE_CD://')
     printf '%s\n' "$stdout" | grep -v '^_MATE_CD:'

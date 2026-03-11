@@ -76,6 +76,7 @@ fn finish_linked_worktree_removes_it_and_prints_gwt_cd() {
 
     let output = git_mate()
         .args(["finish"])
+        .env("GIT_MATE_SHELL", "1")
         .current_dir(&wt_canonical)
         .output()
         .unwrap();

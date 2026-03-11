@@ -81,6 +81,7 @@ fn worktree_mode_creates_worktree() {
 
     let output = git_mate()
         .args(["new", "feature/login", "-w", "--from", "main"])
+        .env("GIT_MATE_SHELL", "1")
         .current_dir(repo.path())
         .output()
         .unwrap();
