@@ -62,6 +62,39 @@ git mate sync --rebase              # pull with --rebase
 git mate sync --ff-only             # pull with --ff-only
 ```
 
+## Shell integration
+
+`git mate init` emits a shell function that intercepts `git co`, `git new`, and
+`git finish` so that directory changes (e.g. switching into a new worktree) are
+reflected in your current shell session.
+
+Add this to your shell config:
+
+```bash
+# ~/.zshrc  or  ~/.bashrc
+eval "$(git mate init zsh)"   # zsh
+eval "$(git mate init bash)"  # bash
+```
+
+This defines a `git` wrapper function. Commands it doesn't recognise are passed
+straight through to the real `git` binary via `command git`.
+
+### Custom wrapper name
+
+If you'd rather not shadow `git`, you can use a different function name:
+
+```bash
+# Via flag (one-off)
+eval "$(git mate init zsh --wrapper-name g)"
+
+# Via git config (permanent)
+git config --global mate.wrapperName g
+eval "$(git mate init zsh)"
+```
+
+Either way, the helpers always call `command git mate ...` internally, so the
+real `git` binary is never affected.
+
 ## Worktree location
 
 By default, worktrees are created under a root directory named after the repo:
@@ -102,6 +135,7 @@ Or edit `~/.gitconfig` and `.git/config` directly:
 | Key | Description | Default |
 |-----|-------------|---------|
 | `mate.worktreeRoot` | Where to create linked worktrees | sibling of main worktree |
+| `mate.wrapperName` | Shell wrapper function name emitted by `git mate init` | `git` |
 
 ## Non-goals
 
