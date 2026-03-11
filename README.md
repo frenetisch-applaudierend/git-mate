@@ -76,7 +76,7 @@ eval "$(git mate init zsh)"   # zsh
 eval "$(git mate init bash)"  # bash
 ```
 
-This defines a `git` wrapper function. Commands it doesn't recognise are passed
+This defines a `gm` wrapper function. Commands it doesn't recognise are passed
 straight through to the real `git` binary via `command git`.
 
 ### Custom wrapper name
@@ -135,7 +135,7 @@ Or edit `~/.gitconfig` and `.git/config` directly:
 | Key | Description | Default |
 |-----|-------------|---------|
 | `mate.worktreeRoot` | Where to create linked worktrees | sibling of main worktree |
-| `mate.wrapperName` | Shell wrapper function name emitted by `git mate init` | `git` |
+| `mate.wrapperName` | Shell wrapper function name emitted by `git mate init` | `gm` |
 
 ## Non-goals
 
