@@ -52,6 +52,9 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
 
     if wt_path.is_dir() {
         if wt_path.join(".git").exists() {
+            let canonical = std::fs::canonicalize(&wt_path)
+                .unwrap_or_else(|_| wt_path.clone());
+            println!("_MATE_CD:{}", canonical.display());
             println!("worktree already exists at {}", wt_path.display());
             return Ok(());
         } else {
@@ -73,5 +76,9 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     }
 
     let wt_path_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
-    crate::git::run(&["worktree", "add", wt_path_str, branch])
+    crate::git::run(&["worktree", "add", wt_path_str, branch])?;
+    let canonical = std::fs::canonicalize(&wt_path)
+        .unwrap_or_else(|_| wt_path.clone());
+    println!("_MATE_CD:{}", canonical.display());
+    Ok(())
 }

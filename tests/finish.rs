@@ -83,8 +83,8 @@ fn finish_linked_worktree_removes_it_and_prints_gwt_cd() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let main_path = std::fs::canonicalize(repo.path()).unwrap();
     assert!(
-        stdout.contains(&format!("GWT_CD:{}", main_path.display())),
-        "stdout should contain GWT_CD:<main_path>, got: {stdout:?}"
+        stdout.contains(&format!("_MATE_CD:{}", main_path.display())),
+        "stdout should contain _MATE_CD:<main_path>, got: {stdout:?}"
     );
     assert!(!wt_canonical.exists(), "worktree directory should be removed");
 }

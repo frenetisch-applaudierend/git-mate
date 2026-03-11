@@ -51,7 +51,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             let in_this_wt = cwd.starts_with(&wt.path);
             crate::git::run(&["worktree", "remove", wt_path_str])?;
             if in_this_wt {
-                println!("GWT_CD:{}", main_wt.path.display());
+                println!("_MATE_CD:{}", main_wt.path.display());
             }
         }
         None => {

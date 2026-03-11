@@ -49,11 +49,14 @@ fn checkout_worktree_creates_worktree() {
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
     repo.git(&["branch", "feature/checkout"]);
 
-    git_mate()
+    let output = git_mate()
         .args(["checkout", "feature/checkout", "-w"])
         .current_dir(repo.path())
-        .assert()
-        .success();
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("_MATE_CD:"), "stdout should contain _MATE_CD:, got: {stdout:?}");
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/checkout");

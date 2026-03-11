@@ -70,7 +70,11 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     let wt_path_str = wt_path
         .to_str()
         .ok_or("worktree path is not valid UTF-8")?;
-    crate::git::run(&["worktree", "add", wt_path_str, "-b", branch, from_ref])
+    crate::git::run(&["worktree", "add", wt_path_str, "-b", branch, from_ref])?;
+    let canonical = std::fs::canonicalize(&wt_path)
+        .unwrap_or_else(|_| wt_path.clone());
+    println!("_MATE_CD:{}", canonical.display());
+    Ok(())
 }
 
 fn detect_default_branch() -> Result<String, String> {
