@@ -94,6 +94,10 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
     Ok(worktrees)
 }
 
+pub fn called_from_wrapper() -> bool {
+    std::env::var("GIT_MATE_SHELL").is_ok()
+}
+
 pub mod config {
     pub fn read_string(key: &str) -> Option<String> {
         let output = std::process::Command::new("git")

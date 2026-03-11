@@ -51,6 +51,7 @@ fn checkout_worktree_creates_worktree() {
 
     let output = git_mate()
         .args(["checkout", "feature/checkout", "-w"])
+        .env("GIT_MATE_SHELL", "1")
         .current_dir(repo.path())
         .output()
         .unwrap();

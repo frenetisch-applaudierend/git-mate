@@ -73,7 +73,9 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     crate::git::run(&["worktree", "add", wt_path_str, "-b", branch, from_ref])?;
     let canonical = std::fs::canonicalize(&wt_path)
         .unwrap_or_else(|_| wt_path.clone());
-    println!("_MATE_CD:{}", canonical.display());
+    if crate::git::called_from_wrapper() {
+        println!("_MATE_CD:{}", canonical.display());
+    }
     Ok(())
 }
 
