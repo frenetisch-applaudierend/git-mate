@@ -16,7 +16,7 @@ pub fn run(args: InitArgs) -> Result<(), String> {
     let name = args
         .wrapper_name
         .or_else(|| crate::git::config::read_string("mate.wrapperName"))
-        .unwrap_or_else(|| "git".to_string());
+        .unwrap_or_else(|| "gm".to_string());
 
     match args.shell {
         Shell::Zsh => print!("{}", shell_init(&name, "zsh")),
