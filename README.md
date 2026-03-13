@@ -2,7 +2,7 @@
 
 > **Work in progress** — not ready for public use.
 
-A focused Git CLI extension for workflows that blend branch checkout with optional worktrees. Built for my specific workflow using git.
+A Git CLI extension for my personal workflow around git worktrees.
 
 ## Requirements
 
@@ -81,19 +81,12 @@ straight through to the real `git` binary via `command git`.
 
 ### Custom wrapper name
 
-If you'd rather not shadow `git`, you can use a different function name:
+Override the default `gm` function name via git config:
 
 ```bash
-# Via flag (one-off)
-eval "$(git mate init zsh --wrapper-name g)"
-
-# Via git config (permanent)
 git config --global mate.wrapperName g
 eval "$(git mate init zsh)"
 ```
-
-Either way, the helpers always call `command git mate ...` internally, so the
-real `git` binary is never affected.
 
 ## Worktree location
 
