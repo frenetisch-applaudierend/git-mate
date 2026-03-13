@@ -64,9 +64,9 @@ git mate sync --ff-only             # pull with --ff-only
 
 ## Shell integration
 
-`git mate init` emits a shell function that intercepts `git co`, `git new`, and
-`git finish` so that directory changes (e.g. switching into a new worktree) are
-reflected in your current shell session.
+`git mate init` emits a shell wrapper function (`gm` by default) whose
+subcommands `co`, `new`, and `finish` handle directory changes (e.g. switching
+into a new worktree) in your current shell session.
 
 Add this to your shell config:
 
