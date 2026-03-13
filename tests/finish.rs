@@ -66,7 +66,7 @@ fn finish_delete_branch_unmerged_fails() {
 }
 
 #[test]
-fn finish_linked_worktree_removes_it_and_prints_gwt_cd() {
+fn finish_linked_worktree_removes_it_and_prints_mate_cd() {
     let repo = common::RepoWithoutRemote::new();
     // Add a linked worktree for feature/x
     let wt_path = repo.path().join("feature-x-wt");

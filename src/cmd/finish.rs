@@ -51,7 +51,9 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             let in_this_wt = cwd.starts_with(&wt.path);
             crate::git::run(&["worktree", "remove", wt_path_str])?;
             if in_this_wt && crate::git::called_from_wrapper() {
-                println!("_MATE_CD:{}", main_wt.path.display());
+                let canonical = std::fs::canonicalize(&main_wt.path)
+                    .map_err(|e| format!("could not canonicalize path: {e}"))?;
+                println!("_MATE_CD:{}", canonical.display());
             }
         }
         None => {
