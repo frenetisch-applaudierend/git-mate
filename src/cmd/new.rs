@@ -56,16 +56,7 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
         return Err(format!("invalid branch name: {branch:?}"));
     }
     let wt_path = crate::git::worktree_path(branch)?;
-    if let Some(parent) = wt_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create directories {}: {e}", parent.display()))?;
-    }
-    let wt_path_str = wt_path
-        .to_str()
-        .ok_or("worktree path is not valid UTF-8")?;
-    crate::git::run(&["worktree", "add", wt_path_str, "-b", branch, from_ref])?;
-    let canonical = std::fs::canonicalize(&wt_path)
-        .unwrap_or_else(|_| wt_path.clone());
+    let canonical = crate::git::add_worktree(&wt_path, &["-b", branch, from_ref])?;
     crate::output::emit_cd(&canonical);
     Ok(())
 }

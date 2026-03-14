@@ -1,3 +1,24 @@
+pub fn find_worktree_for_branch(branch: &str) -> Result<Option<std::path::PathBuf>, String> {
+    let path = list_worktrees()?
+        .into_iter()
+        .skip(1)
+        .find(|wt| wt.branch.as_deref() == Some(branch))
+        .map(|wt| wt.path);
+    Ok(path)
+}
+
+pub fn add_worktree(wt_path: &std::path::Path, extra_args: &[&str]) -> Result<std::path::PathBuf, String> {
+    if let Some(parent) = wt_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create directories {}: {e}", parent.display()))?;
+    }
+    let wt_path_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
+    let mut args = vec!["worktree", "add", wt_path_str];
+    args.extend_from_slice(extra_args);
+    run(&args)?;
+    Ok(std::fs::canonicalize(wt_path).unwrap_or_else(|_| wt_path.to_path_buf()))
+}
+
 pub fn find_main_worktree() -> Result<std::path::PathBuf, String> {
     list_worktrees()?
         .into_iter()

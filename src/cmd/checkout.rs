@@ -14,15 +14,6 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
     }
 }
 
-fn find_worktree_for_branch(branch: &str) -> Result<Option<std::path::PathBuf>, String> {
-    let path = crate::git::list_worktrees()?
-        .into_iter()
-        .skip(1) // skip main worktree
-        .find(|wt| wt.branch.as_deref() == Some(branch))
-        .map(|wt| wt.path);
-    Ok(path)
-}
-
 fn checkout_in_place(branch: &str) -> Result<(), String> {
     if !crate::git::is_main_worktree()? {
         return Err(
@@ -30,7 +21,7 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
-    if let Some(wt_path) = find_worktree_for_branch(branch)? {
+    if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
         println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
         return Ok(());
     }
@@ -38,7 +29,7 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
 }
 
 fn checkout_worktree(branch: &str) -> Result<(), String> {
-    if let Some(wt_path) = find_worktree_for_branch(branch)? {
+    if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
         println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
         return Ok(());
     }
@@ -64,15 +55,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
         ));
     }
 
-    if let Some(parent) = wt_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create directories {}: {e}", parent.display()))?;
-    }
-
-    let wt_path_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
-    crate::git::run(&["worktree", "add", wt_path_str, branch])?;
-    let canonical = std::fs::canonicalize(&wt_path)
-        .unwrap_or_else(|_| wt_path.clone());
+    let canonical = crate::git::add_worktree(&wt_path, &[branch])?;
     crate::output::emit_cd(&canonical);
     Ok(())
 }
