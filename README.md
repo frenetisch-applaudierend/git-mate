@@ -89,8 +89,6 @@ For the commands add it to the relevant command config, e.g. for checkout:
 git config --global mate.checkout.shorthand "co" # enables `git mate co` and if configured `gm co`
 ```
 
-Shorthands require shell integration.
-
 ## Worktree location
 
 By default, worktrees are created under a root directory named after the repo:

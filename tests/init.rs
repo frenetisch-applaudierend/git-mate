@@ -17,7 +17,7 @@ fn default_wrapper_name_is_gm() {
 #[test]
 fn config_overrides_wrapper_name() {
     let repo = common::RepoWithoutRemote::new();
-    repo.git(&["config", "mate.wrapperName", "g"]);
+    repo.git(&["config", "mate.shorthand", "g"]);
     common::git_mate()
         .args(["init", "zsh"])
         .current_dir(repo.path())
@@ -29,7 +29,7 @@ fn config_overrides_wrapper_name() {
 #[test]
 fn invalid_wrapper_name_is_rejected() {
     let repo = common::RepoWithoutRemote::new();
-    repo.git(&["config", "mate.wrapperName", "bad name!"]);
+    repo.git(&["config", "mate.shorthand", "bad name!"]);
     common::git_mate()
         .args(["init", "zsh"])
         .current_dir(repo.path())
@@ -77,7 +77,7 @@ fn completion_registered_for_binary_and_wrapper() {
 #[test]
 fn completion_uses_custom_wrapper_name() {
     let repo = common::RepoWithoutRemote::new();
-    repo.git(&["config", "mate.wrapperName", "g"]);
+    repo.git(&["config", "mate.shorthand", "g"]);
     common::git_mate()
         .args(["init", "zsh"])
         .current_dir(repo.path())
