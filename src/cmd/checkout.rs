@@ -1,5 +1,6 @@
 #[derive(clap::Args)]
 pub struct CheckoutArgs {
+    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::git::branch_completer))]
     pub branch: String,
     #[arg(short = 'w', long)]
     pub worktree: bool,
