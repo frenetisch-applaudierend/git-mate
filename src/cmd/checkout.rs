@@ -15,15 +15,18 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
 }
 
 fn checkout_in_place(branch: &str) -> Result<(), String> {
+    if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
+        let canonical = std::fs::canonicalize(&wt_path)
+            .unwrap_or_else(|_| wt_path.clone());
+        crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, canonical.display()));
+        crate::output::emit_cd(&canonical);
+        return Ok(());
+    }
     if !crate::git::is_main_worktree()? {
         return Err(
             "checkout is only supported from the main worktree; use --worktree to open this branch in a linked worktree"
                 .to_string(),
         );
-    }
-    if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
-        crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, wt_path.display()));
-        return Ok(());
     }
     crate::git::checkout(branch)?;
     crate::output::success(&format!("Switched to branch '{branch}'"));
