@@ -129,3 +129,55 @@ fn completion_uses_custom_wrapper_name() {
         "expected 'compdef _git_mate_complete g' in output, got: {stdout:?}"
     );
 }
+
+#[test]
+fn zsh_completion_strips_command_name_from_words() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = git_mate()
+        .args(["init", "zsh"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("${words[@]:1}"),
+        "expected '${{words[@]:1}}' (command name stripped) in zsh output, got: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("\"${words[@]}\""),
+        "unexpected bare '\"${{words[@]}}\"' (includes command name) in zsh output: {stdout:?}"
+    );
+}
+
+#[test]
+fn bash_completion_clears_compreply_before_filling() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = git_mate()
+        .args(["init", "bash"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("COMPREPLY=()"),
+        "expected 'COMPREPLY=()' (clear before fill) in bash output, got: {stdout:?}"
+    );
+}
+
+#[test]
+fn bash_completion_strips_command_name_from_comp_words() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = git_mate()
+        .args(["init", "bash"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("${COMP_WORDS[@]:1}"),
+        "expected '${{COMP_WORDS[@]:1}}' (command name stripped) in bash output, got: {stdout:?}"
+    );
+}

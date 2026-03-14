@@ -77,7 +77,7 @@ function _git_mate_finish()   { _git_mate_run finish   "$@"; }
 
 const ZSH_COMPLETION: &str = r#"function _git_mate_complete() {
     local -a candidates
-    candidates=(${(f)"$(COMPLETE=zsh command git-mate -- "${words[@]}" 2>/dev/null)"})
+    candidates=(${(f)"$(COMPLETE=zsh command git-mate -- "${words[@]:1}" 2>/dev/null)"})
     compadd -a candidates
 }
 compdef _git_mate_complete git-mate
@@ -85,8 +85,9 @@ compdef _git_mate_complete {NAME}"#;
 
 const BASH_COMPLETION: &str = r#"function _git_mate_complete() {
     local IFS=$'\n'
+    COMPREPLY=()
     while IFS= read -r line; do COMPREPLY+=("$line"); done \
-      < <(COMPLETE=bash command git-mate -- "${COMP_WORDS[@]}" 2>/dev/null)
+      < <(COMPLETE=bash command git-mate -- "${COMP_WORDS[@]:1}" 2>/dev/null)
 }
 complete -F _git_mate_complete git-mate
 complete -F _git_mate_complete {NAME}"#;
