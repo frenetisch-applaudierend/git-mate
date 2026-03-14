@@ -1,7 +1,5 @@
 # git-mate
 
-> **Work in progress** — not ready for public use.
-
 A Git CLI extension for my personal workflow around git worktrees.
 
 ## Installation
