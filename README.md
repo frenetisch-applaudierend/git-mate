@@ -2,6 +2,8 @@
 
 A Git CLI extension for my personal workflow around git worktrees.
 
+Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is not supported, WSL should work fine.
+
 ## Installation
 
 ```bash
