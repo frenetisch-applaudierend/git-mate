@@ -36,8 +36,13 @@ pub fn run(args: InitArgs) -> Result<(), String> {
 }
 
 fn shell_init(name: &str, shell: &str) -> String {
+    let completion = match shell {
+        "zsh" => ZSH_COMPLETION,
+        _ => BASH_COMPLETION,
+    };
     INIT_TEMPLATE
         .replace("{SHELL}", shell)
+        .replace("{COMPLETION_SETUP}", completion)
         .replace("{NAME}", name)
 }
 
@@ -67,4 +72,21 @@ function _git_mate_run() {
 function _git_mate_checkout() { _git_mate_run checkout "$@"; }
 function _git_mate_new()      { _git_mate_run new      "$@"; }
 function _git_mate_finish()   { _git_mate_run finish   "$@"; }
-"#;
+
+{COMPLETION_SETUP}"#;
+
+const ZSH_COMPLETION: &str = r#"function _git_mate_complete() {
+    local -a candidates
+    candidates=(${(f)"$(COMPLETE=zsh command git-mate -- "${words[@]}" 2>/dev/null)"})
+    compadd -a candidates
+}
+compdef _git_mate_complete git-mate
+compdef _git_mate_complete {NAME}"#;
+
+const BASH_COMPLETION: &str = r#"function _git_mate_complete() {
+    local IFS=$'\n'
+    while IFS= read -r line; do COMPREPLY+=("$line"); done \
+      < <(COMPLETE=bash command git-mate -- "${COMP_WORDS[@]}" 2>/dev/null)
+}
+complete -F _git_mate_complete git-mate
+complete -F _git_mate_complete {NAME}"#;

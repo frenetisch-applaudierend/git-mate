@@ -1,6 +1,7 @@
 #[derive(clap::Args)]
 pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
+    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::git::branch_completer))]
     pub branch: Option<String>,
     #[arg(long)]
     pub delete_branch: bool,

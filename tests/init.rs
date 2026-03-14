@@ -52,3 +52,80 @@ fn invalid_wrapper_name_is_rejected() {
         .failure()
         .stderr(predicate::str::contains("invalid wrapper name"));
 }
+
+#[test]
+fn zsh_output_includes_completion_function() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = git_mate()
+        .args(["init", "zsh"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("_git_mate_complete"),
+        "expected '_git_mate_complete' in zsh output, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("compdef"),
+        "expected 'compdef' in zsh output, got: {stdout:?}"
+    );
+}
+
+#[test]
+fn bash_output_includes_completion_function() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = git_mate()
+        .args(["init", "bash"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("_git_mate_complete"),
+        "expected '_git_mate_complete' in bash output, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("complete -F"),
+        "expected 'complete -F' in bash output, got: {stdout:?}"
+    );
+}
+
+#[test]
+fn completion_registered_for_binary_and_wrapper() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = git_mate()
+        .args(["init", "zsh"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("compdef _git_mate_complete git-mate"),
+        "expected 'compdef _git_mate_complete git-mate' in output, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("compdef _git_mate_complete gm"),
+        "expected 'compdef _git_mate_complete gm' in output, got: {stdout:?}"
+    );
+}
+
+#[test]
+fn completion_uses_custom_wrapper_name() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.wrapperName", "g"]);
+    let output = git_mate()
+        .args(["init", "zsh"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("compdef _git_mate_complete g"),
+        "expected 'compdef _git_mate_complete g' in output, got: {stdout:?}"
+    );
+}

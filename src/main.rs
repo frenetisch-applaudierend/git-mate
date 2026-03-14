@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::CompleteEnv;
 mod cmd;
 mod git;
 
@@ -19,6 +20,7 @@ enum Commands {
 }
 
 fn main() {
+    CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
     let result = match cli.command {
         Commands::Checkout(args) => cmd::checkout::run(args),
