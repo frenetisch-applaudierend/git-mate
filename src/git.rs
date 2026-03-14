@@ -7,7 +7,10 @@ pub fn find_worktree_for_branch(branch: &str) -> Result<Option<std::path::PathBu
     Ok(path)
 }
 
-pub fn add_worktree(wt_path: &std::path::Path, extra_args: &[&str]) -> Result<std::path::PathBuf, String> {
+pub fn add_worktree(
+    wt_path: &std::path::Path,
+    extra_args: &[&str],
+) -> Result<std::path::PathBuf, String> {
     if let Some(parent) = wt_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create directories {}: {e}", parent.display()))?;
@@ -165,7 +168,10 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
     for line in stdout.lines() {
         if let Some(path) = line.strip_prefix("worktree ") {
             if let Some(p) = current_path.take() {
-                worktrees.push(WorktreeEntry { path: p, branch: current_branch.take() });
+                worktrees.push(WorktreeEntry {
+                    path: p,
+                    branch: current_branch.take(),
+                });
             }
             current_path = Some(std::path::PathBuf::from(path));
             current_branch = None;
@@ -174,7 +180,10 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
         }
     }
     if let Some(p) = current_path {
-        worktrees.push(WorktreeEntry { path: p, branch: current_branch });
+        worktrees.push(WorktreeEntry {
+            path: p,
+            branch: current_branch,
+        });
     }
     Ok(worktrees)
 }
@@ -221,10 +230,6 @@ pub fn detect_default_branch(remote: bool) -> Result<String, String> {
     }
 
     Err("could not detect default branch; use --from to specify one".to_string())
-}
-
-pub fn called_from_wrapper() -> bool {
-    std::env::var("GIT_MATE_SHELL").is_ok()
 }
 
 pub mod config {
