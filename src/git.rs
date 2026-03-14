@@ -62,15 +62,44 @@ pub fn is_main_worktree() -> Result<bool, String> {
     Ok(current == main)
 }
 
+static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn set_verbose(v: bool) {
+    let _ = VERBOSE.set(v);
+}
+
+fn is_verbose() -> bool {
+    *VERBOSE.get().unwrap_or(&false)
+}
+
 pub fn run(args: &[&str]) -> Result<(), String> {
-    let status = std::process::Command::new("git")
+    if is_verbose() {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .status()
+            .map_err(|e| format!("failed to run git: {e}"))?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err(format!("`git {}` failed", args.join(" ")))
+        };
+    }
+    let output = std::process::Command::new("git")
         .args(args)
-        .status()
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
         .map_err(|e| format!("failed to run git: {e}"))?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
-        Err(format!("`git {}` failed", args.join(" ")))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            Err(format!("`git {}` failed", args.join(" ")))
+        } else {
+            Err(format!("`git {}` failed: {stderr}", args.join(" ")))
+        }
     }
 }
 

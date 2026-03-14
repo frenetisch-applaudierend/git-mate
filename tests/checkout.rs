@@ -90,7 +90,7 @@ fn checkout_worktree_noop_if_path_exists() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("already checked out"));
+        .stderr(predicate::str::contains("already checked out"));
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn checkout_in_place_navigates_to_existing_worktree() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(wt_path.to_str().unwrap()));
+        .stderr(predicate::str::contains(wt_path.to_str().unwrap()));
 }
 
 #[test]
@@ -182,5 +182,5 @@ fn checkout_worktree_navigates_to_existing_worktree() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(wt_path.to_str().unwrap()));
+        .stderr(predicate::str::contains(wt_path.to_str().unwrap()));
 }

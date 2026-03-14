@@ -43,6 +43,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                 ));
             }
             crate::git::run(&["-C", &main_wt_path, "checkout", &default])?;
+            crate::output::success(&format!("Finished '{target_branch}', back on '{default}'"));
         }
         Some(wt) => {
             let wt_path_str = wt
@@ -51,6 +52,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                 .ok_or("worktree path is not valid UTF-8")?;
             let in_this_wt = cwd.starts_with(&wt.path);
             crate::git::run(&["worktree", "remove", wt_path_str])?;
+            crate::output::success(&format!("Removed worktree for '{target_branch}'"));
             if in_this_wt {
                 let canonical = std::fs::canonicalize(&main_wt.path)
                     .map_err(|e| format!("could not canonicalize path: {e}"))?;
@@ -68,6 +70,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
 
     if args.delete_branch {
         crate::git::run(&["-C", &main_wt_path, "branch", "-d", &target_branch])?;
+        crate::output::success(&format!("Deleted branch '{target_branch}'"));
     }
 
     Ok(())

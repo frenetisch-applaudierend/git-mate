@@ -18,7 +18,9 @@ pub fn run(args: NewArgs) -> Result<(), String> {
     if args.worktree {
         create_worktree(&args.branch, &from_ref)
     } else {
-        crate::git::run(&["checkout", "-b", &args.branch, &from_ref])
+        crate::git::run(&["checkout", "-b", &args.branch, &from_ref])?;
+        crate::output::success(&format!("Created and switched to branch '{}'", args.branch));
+        Ok(())
     }
 }
 
@@ -57,6 +59,7 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     }
     let wt_path = crate::git::worktree_path(branch)?;
     let canonical = crate::git::add_worktree(&wt_path, &["-b", branch, from_ref])?;
+    crate::output::success(&format!("Created worktree for '{branch}' at {}", canonical.display()));
     crate::output::emit_cd(&canonical);
     Ok(())
 }

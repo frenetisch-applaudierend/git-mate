@@ -11,7 +11,7 @@ fn no_upstream() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicates::str::contains("No upstream"));
+        .stderr(predicates::str::contains("No upstream"));
 }
 
 #[test]

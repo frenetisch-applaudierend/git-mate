@@ -18,7 +18,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         .unwrap_or(false);
 
     if !has_upstream {
-        println!("No upstream configured for current branch, skipping pull.");
+        crate::output::info("No upstream configured for current branch, skipping pull.");
         return Ok(());
     }
 
@@ -30,5 +30,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     if args.ff_only {
         pull_args.push("--ff-only");
     }
-    crate::git::run(&pull_args)
+    crate::git::run(&pull_args)?;
+    crate::output::success("Synced.");
+    Ok(())
 }

@@ -22,15 +22,17 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
         );
     }
     if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
-        println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
+        crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, wt_path.display()));
         return Ok(());
     }
-    crate::git::run(&["checkout", branch])
+    crate::git::run(&["checkout", branch])?;
+    crate::output::success(&format!("Switched to branch '{branch}'"));
+    Ok(())
 }
 
 fn checkout_worktree(branch: &str) -> Result<(), String> {
     if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
-        println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
+        crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, wt_path.display()));
         return Ok(());
     }
     let wt_path = crate::git::worktree_path(branch)?;
@@ -40,7 +42,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
             let canonical = std::fs::canonicalize(&wt_path)
                 .unwrap_or_else(|_| wt_path.clone());
             crate::output::emit_cd(&canonical);
-            println!("worktree already exists at {}", wt_path.display());
+            crate::output::info(&format!("worktree already exists at {}", wt_path.display()));
             return Ok(());
         } else {
             return Err(format!(
@@ -56,6 +58,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     }
 
     let canonical = crate::git::add_worktree(&wt_path, &[branch])?;
+    crate::output::success(&format!("Checked out '{branch}' at {}", canonical.display()));
     crate::output::emit_cd(&canonical);
     Ok(())
 }
