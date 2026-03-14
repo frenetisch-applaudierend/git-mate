@@ -1,6 +1,5 @@
 #[derive(clap::Args)]
 pub struct NewArgs {
-    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::git::branch_completer))]
     pub branch: String,
     #[arg(long, add = clap_complete::engine::ArgValueCompleter::new(crate::git::branch_completer))]
     pub from: Option<String>,
