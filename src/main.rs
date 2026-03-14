@@ -16,10 +16,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Switch to an existing branch
     Checkout(cmd::checkout::CheckoutArgs),
+    /// Merge branch into main and clean up
     Finish(cmd::finish::FinishArgs),
+    /// Set up shell integration
     Init(cmd::init::InitArgs),
+    /// Create and switch to a new branch
     New(cmd::new::NewArgs),
+    /// Fetch and merge the latest changes
     Sync(cmd::sync::SyncArgs),
 }
 
