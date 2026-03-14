@@ -1,7 +1,7 @@
 #[derive(clap::Args)]
 pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
-    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::git::branch_completer))]
+    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: Option<String>,
     #[arg(long)]
     pub delete_branch: bool,
@@ -36,7 +36,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
 
     match target_wt {
         Some(wt) if wt.path == main_wt.path => {
-            let default = detect_default_branch()?;
+            let default = crate::git::detect_default_branch(false)?;
             if target_branch == default {
                 return Err(format!(
                     "nothing to finish: {target_branch:?} is the default branch"
@@ -51,10 +51,10 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                 .ok_or("worktree path is not valid UTF-8")?;
             let in_this_wt = cwd.starts_with(&wt.path);
             crate::git::run(&["worktree", "remove", wt_path_str])?;
-            if in_this_wt && crate::git::called_from_wrapper() {
+            if in_this_wt {
                 let canonical = std::fs::canonicalize(&main_wt.path)
                     .map_err(|e| format!("could not canonicalize path: {e}"))?;
-                println!("_MATE_CD:{}", canonical.display());
+                crate::output::emit_cd(&canonical);
             }
         }
         None => {
@@ -71,33 +71,4 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn detect_default_branch() -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))?;
-
-    if output.status.success() {
-        let raw = String::from_utf8_lossy(&output.stdout);
-        let trimmed = raw.trim();
-        let prefix = "refs/remotes/origin/";
-        if let Some(branch) = trimmed.strip_prefix(prefix) {
-            return Ok(branch.to_string());
-        }
-    }
-
-    for candidate in ["main", "master"] {
-        let ok = std::process::Command::new("git")
-            .args(["rev-parse", "--verify", candidate])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if ok {
-            return Ok(candidate.to_string());
-        }
-    }
-
-    Err("could not detect default branch".to_string())
 }

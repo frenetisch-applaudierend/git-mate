@@ -1,7 +1,9 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::CompleteEnv;
 mod cmd;
+mod complete;
 mod git;
+mod output;
 
 #[derive(Parser)]
 #[command(name = "git-mate")]

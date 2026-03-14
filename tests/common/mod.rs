@@ -3,6 +3,10 @@
 use std::process::Command;
 use tempfile::TempDir;
 
+pub fn git_mate() -> Command {
+    Command::new(assert_cmd::cargo::cargo_bin!("git-mate"))
+}
+
 pub struct RepoWithoutRemote {
     pub dir: TempDir,
 }
@@ -35,6 +39,16 @@ impl RepoWithoutRemote {
 
     pub fn head_commit(&self) -> String {
         rev_parse_output(self.path(), &["rev-parse", "HEAD"])
+    }
+
+    pub fn branch_exists(&self, branch: &str) -> bool {
+        Command::new("git")
+            .args(["rev-parse", "--verify", branch])
+            .current_dir(self.path())
+            .output()
+            .unwrap()
+            .status
+            .success()
     }
 }
 

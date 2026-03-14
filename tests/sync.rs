@@ -1,17 +1,12 @@
 mod common;
 
 use assert_cmd::prelude::*;
-use std::process::Command;
-
-fn git_mate() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("git-mate"))
-}
 
 #[test]
 fn no_upstream() {
     // Repo with no remote → fetch is a no-op; upstream check fails → prints notice and exits 0.
     let repo = common::RepoWithoutRemote::new();
-    git_mate()
+    common::git_mate()
         .arg("sync")
         .current_dir(repo.path())
         .assert()
@@ -24,7 +19,7 @@ fn fetch_and_pull() {
     let setup = common::RepoWithRemote::new();
     let before = setup.local_head_commit();
     setup.push_commit_to_remote("second commit");
-    git_mate()
+    common::git_mate()
         .arg("sync")
         .current_dir(setup.local_path())
         .assert()
@@ -37,7 +32,7 @@ fn rebase_flag() {
     let setup = common::RepoWithRemote::new();
     let before = setup.local_head_commit();
     setup.push_commit_to_remote("second commit");
-    git_mate()
+    common::git_mate()
         .args(["sync", "--rebase"])
         .current_dir(setup.local_path())
         .assert()
@@ -61,7 +56,7 @@ fn prune_deleted_branch() {
     setup.delete_remote_branch("feature/old");
 
     // sync runs `git fetch --all --prune`, which should remove the stale tracking ref.
-    git_mate()
+    common::git_mate()
         .arg("sync")
         .current_dir(setup.local_path())
         .assert()

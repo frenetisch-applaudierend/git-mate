@@ -28,20 +28,17 @@ pub fn run(args: InitArgs) -> Result<(), String> {
         ));
     }
 
-    match args.shell {
-        Shell::Zsh => print!("{}", shell_init(&name, "zsh")),
-        Shell::Bash => print!("{}", shell_init(&name, "bash")),
-    }
+    print!("{}", shell_init(&name, &args.shell));
     Ok(())
 }
 
-fn shell_init(name: &str, shell: &str) -> String {
-    let completion = match shell {
-        "zsh" => ZSH_COMPLETION,
-        _ => BASH_COMPLETION,
+fn shell_init(name: &str, shell: &Shell) -> String {
+    let (shell_name, completion) = match shell {
+        Shell::Zsh => ("zsh", ZSH_COMPLETION),
+        Shell::Bash => ("bash", BASH_COMPLETION),
     };
     INIT_TEMPLATE
-        .replace("{SHELL}", shell)
+        .replace("{SHELL}", shell_name)
         .replace("{COMPLETION_SETUP}", completion)
         .replace("{NAME}", name)
 }

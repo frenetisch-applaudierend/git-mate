@@ -5,14 +5,10 @@ use predicates::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
-fn git_mate() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("git-mate"))
-}
-
 #[test]
 fn explicit_from() {
     let repo = common::RepoWithoutRemote::new();
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x", "--from", "main"])
         .current_dir(repo.path())
         .assert()
@@ -23,7 +19,7 @@ fn explicit_from() {
 #[test]
 fn detects_main() {
     let repo = common::RepoWithoutRemote::new();
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(repo.path())
         .assert()
@@ -35,7 +31,7 @@ fn detects_main() {
 fn detects_master() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["branch", "-m", "main", "master"]);
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(repo.path())
         .assert()
@@ -48,7 +44,7 @@ fn prefers_origin_head() {
     // Remote HEAD points to "develop"; local clone has no main/master branch,
     // so detect_default_branch must succeed via the origin/HEAD path.
     let setup = common::RepoWithRemote::with_default_branch("develop");
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(setup.local_path())
         .assert()
@@ -63,7 +59,7 @@ fn no_default_branch() {
     let sha = repo.head_commit();
     repo.git(&["checkout", "--detach", &sha]);
     repo.git(&["branch", "-D", "main"]);
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(repo.path())
         .assert()
@@ -79,7 +75,7 @@ fn worktree_mode_creates_worktree() {
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
 
-    let output = git_mate()
+    let output = common::git_mate()
         .args(["new", "feature/login", "-w", "--from", "main"])
         .env("GIT_MATE_SHELL", "1")
         .current_dir(repo.path())
@@ -112,7 +108,7 @@ fn fetch_updates_before_branch() {
     // Push a new commit to the remote after the local clone was made.
     setup.push_commit_to_remote("remote update");
 
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(setup.local_path())
         .assert()
@@ -129,7 +125,7 @@ fn no_fetch_flag_skips_fetch() {
 
     setup.push_commit_to_remote("remote update");
 
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x", "--no-fetch"])
         .current_dir(setup.local_path())
         .assert()
@@ -146,7 +142,7 @@ fn fetch_config_false_skips_fetch() {
     setup.push_commit_to_remote("remote update");
     setup.local_git(&["config", "mate.fetch", "false"]);
 
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(setup.local_path())
         .assert()
@@ -158,7 +154,7 @@ fn fetch_config_false_skips_fetch() {
 #[test]
 fn no_remote_skips_fetch_silently() {
     let repo = common::RepoWithoutRemote::new();
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x", "--from", "main"])
         .current_dir(repo.path())
         .assert()
@@ -171,7 +167,7 @@ fn assert_fetch_skipped_with_config(value: &str) {
     let old_head = setup.local_head_commit();
     setup.push_commit_to_remote("remote update");
     setup.local_git(&["config", "mate.fetch", value]);
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(setup.local_path())
         .assert()
@@ -201,7 +197,7 @@ fn non_origin_remote_skips_fetch_silently() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["remote", "add", "upstream", "https://example.com/repo.git"]);
 
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x", "--from", "main"])
         .current_dir(repo.path())
         .assert()
@@ -215,7 +211,7 @@ fn worktree_mode_invalid_branch_name_fails() {
     let wt_root = TempDir::new().unwrap();
     repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
 
-    git_mate()
+    common::git_mate()
         .args(["new", "../evil", "-w", "--from", "main"])
         .current_dir(repo.path())
         .assert()
@@ -226,7 +222,7 @@ fn worktree_mode_invalid_branch_name_fails() {
 #[test]
 fn worktree_mode_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
-    git_mate()
+    common::git_mate()
         .args(["new", "feat/x", "-w", "--from", "main"])
         .current_dir(repo.path())
         .assert()

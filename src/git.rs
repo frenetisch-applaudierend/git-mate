@@ -14,11 +14,11 @@ pub fn read_worktree_root() -> Result<std::path::PathBuf, String> {
     Ok(expand_tilde(&value))
 }
 
-pub fn expand_tilde(path: &str) -> std::path::PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return std::path::PathBuf::from(home).join(rest);
-        }
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return std::path::PathBuf::from(home).join(rest);
     }
     std::path::PathBuf::from(path)
 }
@@ -66,11 +66,11 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
-        if stderr.is_empty() {
-            return Err("`git worktree list` failed".to_string());
+        return Err(if stderr.is_empty() {
+            "`git worktree list` failed".to_string()
         } else {
-            return Err(format!("`git worktree list` failed: {stderr}"));
-        }
+            format!("`git worktree list` failed: {stderr}")
+        });
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut worktrees = Vec::new();
@@ -94,27 +94,48 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
     Ok(worktrees)
 }
 
-pub fn list_branches() -> Vec<String> {
-    let output = std::process::Command::new("git")
-        .args(["branch", "--format=%(refname:short)"])
-        .output();
-    match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => vec![],
-    }
+pub fn worktree_path(branch: &str) -> Result<std::path::PathBuf, String> {
+    let main_wt = find_main_worktree()?;
+    let root = read_worktree_root()?;
+    let project_name = main_wt
+        .file_name()
+        .ok_or("main worktree path has no directory name")?
+        .to_str()
+        .ok_or("main worktree directory name is not valid UTF-8")?;
+    Ok(root.join(project_name).join(branch))
 }
 
-pub fn branch_completer(
-    _current: &std::ffi::OsStr,
-) -> Vec<clap_complete::engine::CompletionCandidate> {
-    list_branches()
-        .into_iter()
-        .map(clap_complete::engine::CompletionCandidate::new)
-        .collect()
+pub fn detect_default_branch(remote: bool) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+
+    if output.status.success() {
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let trimmed = raw.trim();
+        let prefix = "refs/remotes/origin/";
+        if let Some(branch) = trimmed.strip_prefix(prefix) {
+            return Ok(if remote {
+                format!("origin/{branch}")
+            } else {
+                branch.to_string()
+            });
+        }
+    }
+
+    for candidate in ["main", "master"] {
+        let ok = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", candidate])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return Ok(candidate.to_string());
+        }
+    }
+
+    Err("could not detect default branch; use --from to specify one".to_string())
 }
 
 pub fn called_from_wrapper() -> bool {

@@ -1,6 +1,6 @@
 #[derive(clap::Args)]
 pub struct CheckoutArgs {
-    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::git::branch_completer))]
+    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: String,
     #[arg(short = 'w', long)]
     pub worktree: bool,
@@ -42,22 +42,13 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
         println!("Branch '{}' is already checked out at {}", branch, wt_path.display());
         return Ok(());
     }
-    let main_wt = crate::git::find_main_worktree()?;
-    let root = crate::git::read_worktree_root()?;
-    let project_name = main_wt
-        .file_name()
-        .ok_or("main worktree path has no directory name")?
-        .to_str()
-        .ok_or("main worktree directory name is not valid UTF-8")?;
-    let wt_path = root.join(project_name).join(branch);
+    let wt_path = crate::git::worktree_path(branch)?;
 
     if wt_path.is_dir() {
         if wt_path.join(".git").exists() {
             let canonical = std::fs::canonicalize(&wt_path)
                 .unwrap_or_else(|_| wt_path.clone());
-            if crate::git::called_from_wrapper() {
-                println!("_MATE_CD:{}", canonical.display());
-            }
+            crate::output::emit_cd(&canonical);
             println!("worktree already exists at {}", wt_path.display());
             return Ok(());
         } else {
@@ -82,8 +73,6 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     crate::git::run(&["worktree", "add", wt_path_str, branch])?;
     let canonical = std::fs::canonicalize(&wt_path)
         .unwrap_or_else(|_| wt_path.clone());
-    if crate::git::called_from_wrapper() {
-        println!("_MATE_CD:{}", canonical.display());
-    }
+    crate::output::emit_cd(&canonical);
     Ok(())
 }
