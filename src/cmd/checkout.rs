@@ -25,7 +25,7 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
         crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, wt_path.display()));
         return Ok(());
     }
-    crate::git::run(&["checkout", branch])?;
+    crate::git::checkout(branch)?;
     crate::output::success(&format!("Switched to branch '{branch}'"));
     Ok(())
 }

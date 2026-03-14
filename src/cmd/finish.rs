@@ -42,16 +42,12 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                     "nothing to finish: {target_branch:?} is the default branch"
                 ));
             }
-            crate::git::run(&["-C", &main_wt_path, "checkout", &default])?;
+            crate::git::checkout_in(&main_wt_path, &default)?;
             crate::output::success(&format!("Finished '{target_branch}', back on '{default}'"));
         }
         Some(wt) => {
-            let wt_path_str = wt
-                .path
-                .to_str()
-                .ok_or("worktree path is not valid UTF-8")?;
             let in_this_wt = cwd.starts_with(&wt.path);
-            crate::git::run(&["worktree", "remove", wt_path_str])?;
+            crate::git::remove_worktree(&wt.path)?;
             crate::output::success(&format!("Removed worktree for '{target_branch}'"));
             if in_this_wt {
                 let canonical = std::fs::canonicalize(&main_wt.path)
@@ -69,7 +65,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
     }
 
     if args.delete_branch {
-        crate::git::run(&["-C", &main_wt_path, "branch", "-d", &target_branch])?;
+        crate::git::delete_branch_in(&main_wt_path, &target_branch)?;
         crate::output::success(&format!("Deleted branch '{target_branch}'"));
     }
 

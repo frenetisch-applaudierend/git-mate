@@ -8,7 +8,7 @@ pub struct SyncArgs {
 
 pub fn run(args: SyncArgs) -> Result<(), String> {
     // 1. git fetch --all --prune
-    crate::git::run(&["fetch", "--all", "--prune"])?;
+    crate::git::fetch_all()?;
 
     // 2. Check for upstream
     let has_upstream = std::process::Command::new("git")
@@ -23,14 +23,14 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     }
 
     // 3. git pull [--rebase | --ff-only]
-    let mut pull_args = vec!["pull"];
+    let mut extra_flags = vec![];
     if args.rebase {
-        pull_args.push("--rebase");
+        extra_flags.push("--rebase");
     }
     if args.ff_only {
-        pull_args.push("--ff-only");
+        extra_flags.push("--ff-only");
     }
-    crate::git::run(&pull_args)?;
+    crate::git::pull(&extra_flags)?;
     crate::output::success("Synced.");
     Ok(())
 }

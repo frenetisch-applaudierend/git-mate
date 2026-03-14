@@ -72,7 +72,42 @@ fn is_verbose() -> bool {
     *VERBOSE.get().unwrap_or(&false)
 }
 
-pub fn run(args: &[&str]) -> Result<(), String> {
+pub fn checkout(branch: &str) -> Result<(), String> {
+    run(&["checkout", branch])
+}
+
+pub fn checkout_new(branch: &str, from: &str) -> Result<(), String> {
+    run(&["checkout", "-b", branch, from])
+}
+
+pub fn fetch(remote: &str) -> Result<(), String> {
+    run(&["fetch", remote])
+}
+
+pub fn fetch_all() -> Result<(), String> {
+    run(&["fetch", "--all", "--prune"])
+}
+
+pub fn pull(extra_args: &[&str]) -> Result<(), String> {
+    let mut args = vec!["pull"];
+    args.extend_from_slice(extra_args);
+    run(&args)
+}
+
+pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
+    run(&["-C", path, "checkout", branch])
+}
+
+pub fn remove_worktree(path: &std::path::Path) -> Result<(), String> {
+    let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
+    run(&["worktree", "remove", path_str])
+}
+
+pub fn delete_branch_in(path: &str, branch: &str) -> Result<(), String> {
+    run(&["-C", path, "branch", "-d", branch])
+}
+
+fn run(args: &[&str]) -> Result<(), String> {
     if is_verbose() {
         let status = std::process::Command::new("git")
             .args(args)

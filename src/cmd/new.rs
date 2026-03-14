@@ -18,7 +18,7 @@ pub fn run(args: NewArgs) -> Result<(), String> {
     if args.worktree {
         create_worktree(&args.branch, &from_ref)
     } else {
-        crate::git::run(&["checkout", "-b", &args.branch, &from_ref])?;
+        crate::git::checkout_new(&args.branch, &from_ref)?;
         crate::output::success(&format!("Created and switched to branch '{}'", args.branch));
         Ok(())
     }
@@ -45,7 +45,7 @@ fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
     if !remotes.lines().any(|r| r.trim() == "origin") {
         return Ok(());
     }
-    crate::git::run(&["fetch", "origin"])
+    crate::git::fetch("origin")
 }
 
 fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
