@@ -4,22 +4,6 @@ A Git CLI extension for my personal workflow around git worktrees.
 
 Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is not supported, WSL should work fine.
 
-## Installation
-
-```bash
-cargo install git-mate
-```
-
-### Shell Integration
-
-Optionally add this to your shell config for completion and automatic `cd` support:
-
-```bash
-# ~/.zshrc  or  ~/.bashrc
-eval "$(git mate init zsh)"   # zsh
-eval "$(git mate init bash)"  # bash
-```
-
 ## Commands
 
 The installed binary is named `git-mate`, which means git's extension mechanism picks it up and allows it to be called using `git mate`.
@@ -89,18 +73,27 @@ For the commands add it to the relevant command config, e.g. for checkout:
 git config --global mate.checkout.shorthand "co" # enables `git mate co` and if configured `gm co`
 ```
 
-## Worktree location
+For the executable shorthand to work, shell integration is required.
 
-By default, worktrees are created under a root directory named after the repo:
+## Installation
 
-```
-~/worktrees/
-  my-repo/
-    feature-login/    ← worktree for feature/login
-    feature-auth/     ← worktree for feature/auth
+```bash
+cargo install git-mate
 ```
 
-Override the root path in the git configuration:
+### Shell Integration
+
+Optionally add this to your shell config for completion and automatic `cd` support:
+
+```bash
+# ~/.zshrc  or  ~/.bashrc
+eval "$(git mate init zsh)"   # zsh
+eval "$(git mate init bash)"  # bash
+```
+
+### Worktree location
+
+Worktrees are created under a root directory, organized by repository and branch names. Set the root path in the git configuration:
 
 ```bash
 # Set global defaults
