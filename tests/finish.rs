@@ -126,6 +126,38 @@ fn finish_branch_not_checked_out_no_delete_fails() {
 }
 
 #[test]
+fn finish_removes_empty_parent_dirs_from_slash_branch() {
+    use tempfile::TempDir;
+
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+
+    let project_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let feature_dir = wt_root.path().join(project_name).join("feature");
+    let wt_path = feature_dir.join("login");
+    std::fs::create_dir_all(&feature_dir).unwrap();
+
+    repo.git(&["worktree", "add", "-b", "feature/login", wt_path.to_str().unwrap(), "main"]);
+
+    common::git_mate()
+        .args(["finish", "feature/login"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    assert!(!wt_path.exists(), "worktree dir should be removed");
+    assert!(!feature_dir.exists(), "empty 'feature' dir should be cleaned up");
+    assert!(
+        !wt_root.path().join(project_name).exists(),
+        "empty project container dir should be cleaned up"
+    );
+    assert!(wt_root.path().exists(), "worktree root itself must not be deleted");
+}
+
+#[test]
 fn finish_branch_not_checked_out_with_delete_deletes_it() {
     let repo = common::RepoWithoutRemote::new();
     // Create a branch (merged, same commit as main) and stay on main

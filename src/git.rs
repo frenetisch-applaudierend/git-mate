@@ -106,6 +106,22 @@ pub fn remove_worktree(path: &std::path::Path) -> Result<(), String> {
     run(&["worktree", "remove", path_str])
 }
 
+pub fn remove_empty_parent_dirs(path: &std::path::Path, stop_at: &std::path::Path) {
+    let mut current = path.to_path_buf();
+    loop {
+        current = match current.parent() {
+            Some(p) => p.to_path_buf(),
+            None => break,
+        };
+        if current == stop_at || !current.starts_with(stop_at) {
+            break;
+        }
+        if std::fs::remove_dir(&current).is_err() {
+            break;
+        }
+    }
+}
+
 pub fn delete_branch_in(path: &str, branch: &str) -> Result<(), String> {
     run(&["-C", path, "branch", "-d", branch])
 }
