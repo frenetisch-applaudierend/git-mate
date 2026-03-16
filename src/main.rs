@@ -6,7 +6,7 @@ mod git;
 mod output;
 
 #[derive(Parser)]
-#[command(name = "git-mate")]
+#[command(name = "mate")]
 struct Cli {
     #[arg(long, global = true, help = "Show raw git output")]
     verbose: bool,
@@ -29,14 +29,7 @@ enum Commands {
 }
 
 fn build_cli() -> clap::Command {
-    let mut cmd = Cli::command();
-    for name in &["checkout", "finish", "init", "new", "sync"] {
-        if let Some(alias) = crate::git::config::read_string(&format!("mate.{name}.shorthand")) {
-            let alias: &'static str = Box::leak(alias.into_boxed_str());
-            cmd = cmd.mut_subcommand(name, |c| c.alias(alias));
-        }
-    }
-    cmd
+    Cli::command()
 }
 
 fn main() {
@@ -53,6 +46,7 @@ fn main() {
         Commands::New(args) => cmd::new::run(args),
         Commands::Sync(args) => cmd::sync::run(args),
     };
+
     if let Err(e) = result {
         crate::output::error(&e);
         std::process::exit(1);

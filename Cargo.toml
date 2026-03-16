@@ -10,10 +10,14 @@ readme = "README.md"
 keywords = ["git", "cli", "workflow", "branch"]
 categories = ["command-line-utilities", "development-tools"]
 
+[[bin]]
+name = "mate"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
-console = "0.15"
+console = "0.16"
 
 [dev-dependencies]
 assert_cmd = "2"
