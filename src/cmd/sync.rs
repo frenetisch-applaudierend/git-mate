@@ -1,8 +1,8 @@
 #[derive(clap::Args)]
 pub struct SyncArgs {
-    #[arg(long)]
+    #[arg(long, help = "Pull with --rebase")]
     pub rebase: bool,
-    #[arg(long)]
+    #[arg(long, help = "Pull with --ff-only")]
     pub ff_only: bool,
 }
 

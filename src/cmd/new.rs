@@ -1,11 +1,11 @@
 #[derive(clap::Args)]
 pub struct NewArgs {
     pub branch: String,
-    #[arg(long, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
+    #[arg(long, help = "Branch or ref to create from (default: repo default branch)", add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub from: Option<String>,
-    #[arg(short = 'w', long)]
+    #[arg(short = 'w', long, help = "Create a linked worktree instead of a checkout")]
     pub worktree: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip fetching from origin before branching")]
     pub no_fetch: bool,
 }
 
@@ -26,9 +26,6 @@ pub fn run(args: NewArgs) -> Result<(), String> {
 
 fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
     if no_fetch {
-        return Ok(());
-    }
-    if crate::git::config::read_bool("mate.fetch") == Some(false) {
         return Ok(());
     }
     let remotes = std::process::Command::new("git")

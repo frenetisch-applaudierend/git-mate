@@ -18,7 +18,7 @@ struct Cli {
 enum Commands {
     /// Switch to an existing branch
     Checkout(cmd::checkout::CheckoutArgs),
-    /// Merge branch into main and clean up
+    /// Leave a branch and clean up its worktree
     Finish(cmd::finish::FinishArgs),
     /// Set up shell integration
     Init(cmd::init::InitArgs),

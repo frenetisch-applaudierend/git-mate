@@ -2,7 +2,7 @@
 pub struct CheckoutArgs {
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: String,
-    #[arg(short = 'w', long)]
+    #[arg(short = 'w', long, help = "Create a linked worktree instead of a checkout")]
     pub worktree: bool,
 }
 

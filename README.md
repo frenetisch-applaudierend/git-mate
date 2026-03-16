@@ -2,7 +2,7 @@
 
 A Git CLI extension for my personal workflow around git worktrees.
 
-Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is not supported, WSL should work fine.
+Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is not supported, WSL should work fine though.
 
 ## Commands
 
@@ -37,12 +37,9 @@ You're done with a branch. Depending on where the branch is checked out:
 - If it's in a linked worktree: removes the worktree and navigates back to the main worktree
 - If it's checked out in the main worktree: switches to the default branch
 
-Optionally pass `--delete-branch` to also delete the local branch. Git will refuse if the branch has not been merged.
-
 ```bash
 mate finish                     # finish current branch/worktree
 mate finish feature/login       # finish a specific branch from anywhere
-mate finish --delete-branch     # also delete the local branch
 ```
 
 ### `mate sync`

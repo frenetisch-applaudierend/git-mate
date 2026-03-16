@@ -3,8 +3,6 @@ pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: Option<String>,
-    #[arg(long)]
-    pub delete_branch: bool,
 }
 
 pub fn run(args: FinishArgs) -> Result<(), String> {
@@ -59,17 +57,10 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             }
         }
         None => {
-            if !args.delete_branch {
-                return Err(format!(
-                    "branch {target_branch:?} is not checked out anywhere; use --delete-branch to delete it directly"
-                ));
-            }
+            return Err(format!(
+                "branch {target_branch:?} is not checked out anywhere"
+            ));
         }
-    }
-
-    if args.delete_branch {
-        crate::git::delete_branch_in(&main_wt_path, &target_branch)?;
-        crate::output::success(&format!("Deleted branch '{target_branch}'"));
     }
 
     Ok(())

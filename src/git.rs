@@ -122,10 +122,6 @@ pub fn remove_empty_parent_dirs(path: &std::path::Path, stop_at: &std::path::Pat
     }
 }
 
-pub fn delete_branch_in(path: &str, branch: &str) -> Result<(), String> {
-    run(&["-C", path, "branch", "-d", branch])
-}
-
 fn run(args: &[&str]) -> Result<(), String> {
     if is_verbose() {
         let status = std::process::Command::new("git")
@@ -261,12 +257,4 @@ pub mod config {
         }
     }
 
-    pub fn read_bool(key: &str) -> Option<bool> {
-        let value = read_string(key)?;
-        match value.to_ascii_lowercase().as_str() {
-            "true" | "yes" | "on" | "1" => Some(true),
-            "false" | "no" | "off" | "0" => Some(false),
-            _ => None,
-        }
-    }
 }
