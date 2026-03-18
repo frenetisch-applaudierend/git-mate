@@ -20,7 +20,7 @@ fn checkout_in_place_from_main_worktree() {
 }
 
 #[test]
-fn checkout_in_place_from_linked_worktree_fails() {
+fn checkout_in_place_from_linked_worktree_cds_to_main_and_switches() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     let wt_path = wt_root.path().join("linked");
@@ -28,12 +28,49 @@ fn checkout_in_place_from_linked_worktree_fails() {
     repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "-b", "linked-branch", "main"]);
     repo.git(&["branch", "other-branch"]);
 
-    common::git_mate()
+    let output = common::git_mate()
         .args(["checkout", "other-branch"])
+        .env("GIT_MATE_SHELL", "1")
         .current_dir(&wt_path)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("main worktree"));
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let main_path = repo.path().to_str().unwrap();
+    assert!(
+        stdout.contains("_MATE_CD:") && stdout.contains(main_path),
+        "stdout should contain _MATE_CD: pointing to main worktree, got: {stdout:?}"
+    );
+
+    assert_eq!(repo.current_branch(), "other-branch");
+}
+
+#[test]
+fn checkout_in_place_from_linked_worktree_navigates_to_existing_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_a = wt_root.path().join("a");
+    let wt_b = wt_root.path().join("b");
+
+    repo.git(&["branch", "branch-a"]);
+    repo.git(&["branch", "branch-b"]);
+    repo.git(&["worktree", "add", wt_a.to_str().unwrap(), "branch-a"]);
+    repo.git(&["worktree", "add", wt_b.to_str().unwrap(), "branch-b"]);
+
+    let output = common::git_mate()
+        .args(["checkout", "branch-b"])
+        .env("GIT_MATE_SHELL", "1")
+        .current_dir(&wt_a)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("_MATE_CD:") && stdout.contains(wt_b.to_str().unwrap()),
+        "stdout should contain _MATE_CD: pointing to branch-b worktree, got: {stdout:?}"
+    );
 }
 
 #[test]
@@ -145,6 +182,7 @@ fn checkout_worktree_missing_config_fails() {
 
     common::git_mate()
         .args(["checkout", "some-branch", "-w"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .assert()
         .failure()

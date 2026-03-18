@@ -22,11 +22,13 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
         crate::output::emit_cd(&canonical);
         return Ok(());
     }
+    let main_wt = crate::git::find_main_worktree()?;
     if !crate::git::is_main_worktree()? {
-        return Err(
-            "checkout is only supported from the main worktree; use --worktree to open this branch in a linked worktree"
-                .to_string(),
-        );
+        let main_str = main_wt.to_str().ok_or("main worktree path is not valid UTF-8")?;
+        crate::git::checkout_in(main_str, branch)?;
+        crate::output::emit_cd(&main_wt);
+        crate::output::success(&format!("Switched to branch '{branch}'"));
+        return Ok(());
     }
     crate::git::checkout(branch)?;
     crate::output::success(&format!("Switched to branch '{branch}'"));
