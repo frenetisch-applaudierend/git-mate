@@ -17,6 +17,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Switch to an existing branch
+    #[command(alias = "co")]
     Checkout(cmd::checkout::CheckoutArgs),
     /// Leave a branch and clean up its worktree
     Finish(cmd::finish::FinishArgs),
