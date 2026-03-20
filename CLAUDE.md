@@ -51,3 +51,11 @@ The release workflow (release-plz) reads these commit messages to:
 2. Populate CHANGELOG.md automatically
 
 Non-conventional commits are silently ignored by the release tooling.
+
+## Build and test hygiene
+
+Before committing, pushing, or creating a PR, always ensure:
+1. `cargo build` succeeds with no errors
+2. `cargo test` passes with no failures
+
+Fix all build errors and test failures before proceeding, unless explicitly instructed otherwise.
