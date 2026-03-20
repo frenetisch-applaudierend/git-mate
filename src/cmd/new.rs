@@ -28,6 +28,11 @@ fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
     if no_fetch {
         return Ok(());
     }
+    if let Some(val) = crate::git::config::read_string("mate.fetch") {
+        if matches!(val.to_lowercase().as_str(), "false" | "no" | "off" | "0") {
+            return Ok(());
+        }
+    }
     let remotes = std::process::Command::new("git")
         .args(["remote"])
         .output()
