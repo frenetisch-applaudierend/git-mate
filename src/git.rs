@@ -381,17 +381,24 @@ pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Resul
             "--others",
             "--ignored",
             "--exclude-standard",
+            "--directory",
+            "-z",
         ])
         .output()
         .map_err(|e| format!("failed to list ignored files: {e}"))?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        crate::output::info(&format!(
+            "skipping local config copy: git ls-files failed: {}",
+            stderr.trim()
+        ));
         return Ok(());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut copied = 0usize;
-    for rel_path in stdout.lines() {
+    for rel_path in stdout.split('\0').filter(|s| !s.is_empty()) {
         if path_is_blacklisted(rel_path) {
             continue;
         }
@@ -414,9 +421,15 @@ fn copy_file(src: &std::path::Path, dst: &std::path::Path, rel_path: &str) -> bo
         return false;
     }
     if let Some(parent) = dst_file.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
     }
-    std::fs::copy(&src_file, &dst_file).is_ok()
+    if let Err(e) = std::fs::copy(&src_file, &dst_file) {
+        crate::output::info(&format!("could not copy {rel_path}: {e}"));
+        return false;
+    }
+    true
 }
 
 fn copy_dir(src: &std::path::Path, dst: &std::path::Path, rel_dir: &str) -> usize {
