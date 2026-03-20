@@ -57,11 +57,13 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             }
         }
         None => {
-            return Err(format!(
-                "branch {target_branch:?} is not checked out anywhere"
-            ));
+            // Branch exists but is not checked out anywhere — delete it directly.
+            crate::git::delete_branch_in(&main_wt_path, &target_branch)?;
+            crate::output::success(&format!("Deleted '{target_branch}'"));
+            return Ok(());
         }
     }
 
+    crate::git::delete_branch_in(&main_wt_path, &target_branch)?;
     Ok(())
 }

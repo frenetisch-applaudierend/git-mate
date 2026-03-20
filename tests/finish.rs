@@ -13,6 +13,7 @@ fn finish_feature_branch_switches_to_main() {
         .assert()
         .success();
     assert_eq!(repo.current_branch(), "main");
+    assert!(!repo.branch_exists("feature/x"), "feature/x should have been deleted");
 }
 
 #[test]
@@ -27,12 +28,12 @@ fn finish_on_default_branch_fails() {
 }
 
 #[test]
-fn finish_delete_branch_switches_and_deletes() {
+fn finish_deletes_branch_after_switching() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["checkout", "-b", "feature/x"]);
-    // feature/x is at the same commit as main, so -d will succeed
+    // feature/x is at the same commit as main, so safe delete succeeds
     common::git_mate()
-        .args(["finish", "--delete-branch"])
+        .args(["finish"])
         .current_dir(repo.path())
         .assert()
         .success();
@@ -41,13 +42,13 @@ fn finish_delete_branch_switches_and_deletes() {
 }
 
 #[test]
-fn finish_delete_branch_unmerged_fails() {
+fn finish_unmerged_branch_fails() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["checkout", "-b", "feature/x"]);
     // Make an unmerged commit
     repo.git(&["commit", "--allow-empty", "-m", "unmerged work"]);
     common::git_mate()
-        .args(["finish", "--delete-branch"])
+        .args(["finish"])
         .current_dir(repo.path())
         .assert()
         .failure();
@@ -76,6 +77,7 @@ fn finish_linked_worktree_removes_it_and_prints_mate_cd() {
         "stdout should contain _MATE_CD:<main_path>, got: {stdout:?}"
     );
     assert!(!wt_canonical.exists(), "worktree directory should be removed");
+    assert!(!repo.branch_exists("feature/x"), "branch should have been deleted");
 }
 
 #[test]
@@ -92,10 +94,11 @@ fn finish_branch_name_from_main_worktree_removes_linked_wt() {
         .assert()
         .success();
     assert!(!wt_canonical.exists(), "worktree directory should be removed");
+    assert!(!repo.branch_exists("feature/y"), "branch should have been deleted");
 }
 
 #[test]
-fn finish_linked_worktree_with_delete_branch_removes_wt_and_deletes_branch() {
+fn finish_linked_worktree_removes_wt_and_deletes_branch() {
     let repo = common::RepoWithoutRemote::new();
     let wt_path = repo.path().join("feature-del-wt");
     let wt_path_str = wt_path.to_str().unwrap();
@@ -103,26 +106,26 @@ fn finish_linked_worktree_with_delete_branch_removes_wt_and_deletes_branch() {
     let wt_canonical = std::fs::canonicalize(&wt_path).unwrap();
 
     let output = common::git_mate()
-        .args(["finish", "--delete-branch"])
+        .args(["finish"])
         .current_dir(&wt_canonical)
         .output()
         .unwrap();
-    assert!(output.status.success(), "finish --delete-branch should succeed");
+    assert!(output.status.success(), "finish should succeed");
     assert!(!wt_canonical.exists(), "worktree directory should be removed");
     assert!(!repo.branch_exists("feature/del"), "feature/del should have been deleted");
 }
 
 #[test]
-fn finish_branch_not_checked_out_no_delete_fails() {
+fn finish_branch_not_checked_out_deletes_it() {
     let repo = common::RepoWithoutRemote::new();
-    // Create a branch and switch back to main without a worktree
+    // Create a branch (merged, same commit as main) and stay on main
     repo.git(&["branch", "feature/z"]);
     common::git_mate()
         .args(["finish", "feature/z"])
         .current_dir(repo.path())
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not checked out anywhere"));
+        .success();
+    assert!(!repo.branch_exists("feature/z"), "feature/z should have been deleted");
 }
 
 #[test]
@@ -155,17 +158,4 @@ fn finish_removes_empty_parent_dirs_from_slash_branch() {
         "empty project container dir should be cleaned up"
     );
     assert!(wt_root.path().exists(), "worktree root itself must not be deleted");
-}
-
-#[test]
-fn finish_branch_not_checked_out_with_delete_deletes_it() {
-    let repo = common::RepoWithoutRemote::new();
-    // Create a branch (merged, same commit as main) and stay on main
-    repo.git(&["branch", "feature/z"]);
-    common::git_mate()
-        .args(["finish", "feature/z", "--delete-branch"])
-        .current_dir(repo.path())
-        .assert()
-        .success();
-    assert!(!repo.branch_exists("feature/z"), "feature/z should have been deleted");
 }
