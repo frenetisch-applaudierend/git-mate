@@ -224,8 +224,42 @@ fn worktree_mode_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     common::git_mate()
         .args(["new", "feat/x", "-w", "--from", "main"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("mate.worktreeRoot"));
+}
+
+#[test]
+fn worktree_mode_copies_ignored_files() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+
+    // Commit a .gitignore that ignores .env.local and node_modules/
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\nnode_modules/\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+
+    // Create ignored files in the main worktree
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+    std::fs::create_dir(repo.path().join("node_modules")).unwrap();
+    std::fs::write(repo.path().join("node_modules").join("pkg.json"), "{}").unwrap();
+
+    common::git_mate()
+        .args(["new", "feat/x", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feat/x");
+
+    // Ignored file was copied
+    assert!(wt_path.join(".env.local").exists(), ".env.local should be copied");
+    assert_eq!(std::fs::read_to_string(wt_path.join(".env.local")).unwrap(), "SECRET=test");
+
+    // Blacklisted directory was NOT copied
+    assert!(!wt_path.join("node_modules").exists(), "node_modules should not be copied");
 }

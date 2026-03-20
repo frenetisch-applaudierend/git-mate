@@ -207,6 +207,78 @@ fn checkout_in_place_navigates_to_existing_worktree() {
 }
 
 #[test]
+fn checkout_worktree_copies_ignored_files() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+
+    // Commit a .gitignore that ignores .env.local and node_modules/
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\nnode_modules/\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+
+    // Create the branch to check out
+    repo.git(&["branch", "feature/copy-test"]);
+
+    // Create ignored files in the main worktree
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+    std::fs::create_dir(repo.path().join("node_modules")).unwrap();
+    std::fs::write(repo.path().join("node_modules").join("pkg.json"), "{}").unwrap();
+
+    common::git_mate()
+        .args(["checkout", "feature/copy-test", "-w"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/copy-test");
+
+    // Ignored file was copied
+    assert!(wt_path.join(".env.local").exists(), ".env.local should be copied");
+    assert_eq!(std::fs::read_to_string(wt_path.join(".env.local")).unwrap(), "SECRET=test");
+
+    // Blacklisted directory was NOT copied
+    assert!(!wt_path.join("node_modules").exists(), "node_modules should not be copied");
+}
+
+#[test]
+fn checkout_worktree_does_not_overwrite_existing_files() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+
+    // Commit .env.local on a branch (before it was gitignored)
+    std::fs::write(repo.path().join(".env.local"), "COMMITTED=value").unwrap();
+    repo.git(&["add", ".env.local"]);
+    repo.git(&["commit", "-m", "add env"]);
+
+    // Now gitignore it and switch back to main
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "gitignore env"]);
+    repo.git(&["branch", "feature/no-overwrite", "HEAD~1"]);
+
+    // Put a different .env.local in main worktree
+    std::fs::write(repo.path().join(".env.local"), "LOCAL=override").unwrap();
+
+    common::git_mate()
+        .args(["checkout", "feature/no-overwrite", "-w"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/no-overwrite");
+
+    // The committed version should be preserved, not overwritten by the main worktree copy
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "COMMITTED=value"
+    );
+}
+
+#[test]
 fn checkout_worktree_navigates_to_existing_worktree() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
