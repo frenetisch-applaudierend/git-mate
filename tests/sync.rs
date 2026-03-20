@@ -67,3 +67,109 @@ fn prune_deleted_branch() {
         "tracking ref should be pruned after sync"
     );
 }
+
+// --- Fast-forward non-current branches ---
+
+#[test]
+fn fast_forwards_non_current_branch() {
+    let setup = common::RepoWithRemote::new();
+
+    // Push a feature branch to remote and create a local tracking branch.
+    setup.push_branch_to_remote("feature/ff");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/ff");
+
+    let before = setup.branch_tip("feature/ff");
+
+    // Push a new commit to the remote feature branch.
+    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/ff: fast-forwarded"));
+
+    assert_ne!(
+        setup.branch_tip("feature/ff"),
+        before,
+        "local branch should have been fast-forwarded"
+    );
+    assert_eq!(
+        setup.branch_tip("feature/ff"),
+        setup.branch_tip("origin/feature/ff"),
+        "local branch should match remote"
+    );
+}
+
+#[test]
+fn skips_diverged_non_current_branch() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/div");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/div");
+
+    // Make a local commit on the branch (diverges from remote).
+    setup.make_local_commit_on("feature/div", "local-only commit");
+    // Push a different commit to the remote branch.
+    setup.push_commit_to_remote_branch("feature/div", "remote-only commit");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("cannot fast-forward"));
+}
+
+// --- Deletion of local branches whose remote was pruned ---
+
+#[test]
+fn deletes_local_branch_when_remote_pruned() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    assert!(setup.local_branch_exists("feature/gone"));
+
+    setup.delete_remote_branch("feature/gone");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/gone: deleted"));
+
+    assert!(
+        !setup.local_branch_exists("feature/gone"),
+        "local branch should have been deleted"
+    );
+}
+
+#[test]
+fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/keep");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/keep");
+    setup.make_local_commit_on("feature/keep", "unpushed work");
+
+    setup.delete_remote_branch("feature/keep");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("unpushed commits"));
+
+    assert!(
+        setup.local_branch_exists("feature/keep"),
+        "local branch with unpushed commits should be kept"
+    );
+}

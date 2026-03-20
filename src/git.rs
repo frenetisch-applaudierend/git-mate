@@ -83,6 +83,100 @@ pub fn checkout_new(branch: &str, from: &str) -> Result<(), String> {
     run(&["checkout", "-b", branch, from])
 }
 
+pub fn list_remote_tracking_refs() -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("git")
+        .args(["for-each-ref", "--format=%(refname:short)", "refs/remotes/"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("git for-each-ref failed".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|s| !s.ends_with("/HEAD"))
+        .map(|s| s.to_string())
+        .collect())
+}
+
+pub fn list_local_branches_with_upstream() -> Result<Vec<(String, Option<String>)>, String> {
+    let output = std::process::Command::new("git")
+        .args([
+            "for-each-ref",
+            "--format=%(refname:short)\t%(upstream:short)",
+            "refs/heads/",
+        ])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("git for-each-ref failed".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let branch = parts.next().unwrap_or("").to_string();
+            let upstream = parts
+                .next()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            (branch, upstream)
+        })
+        .collect())
+}
+
+pub fn current_branch() -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("failed to get current branch".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub fn resolve_ref(refname: &str) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", refname])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("failed to resolve ref {refname}"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+pub fn is_ancestor(ancestor: &str, descendant: &str) -> Result<bool, String> {
+    let output = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    Ok(output.status.success())
+}
+
+pub fn update_ref(refname: &str, new_sha: &str) -> Result<(), String> {
+    run(&["update-ref", refname, new_sha])
+}
+
+pub fn delete_branch_force_in(git_dir: &str, branch: &str) -> Result<(), String> {
+    run(&["-C", git_dir, "branch", "-D", branch])
+}
+
+pub fn delete_branch_in(git_dir: &str, branch: &str) -> Result<(), String> {
+    run(&["-C", git_dir, "branch", "-d", branch])
+}
+
+pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", path, "status", "--porcelain"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("failed to check status in {path}"));
+    }
+    Ok(output.stdout.is_empty())
+}
+
 pub fn fetch(remote: &str) -> Result<(), String> {
     run(&["fetch", remote])
 }

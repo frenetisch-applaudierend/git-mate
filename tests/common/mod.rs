@@ -142,6 +142,21 @@ impl RepoWithRemote {
         git_silent(scratch.path(), &["push"]);
     }
 
+    /// Push a new empty commit onto a specific remote branch.
+    pub fn push_commit_to_remote_branch(&self, branch: &str, message: &str) {
+        let scratch = TempDir::new().unwrap();
+        let bare_url = self.bare_path().to_str().unwrap().to_string();
+        git_silent(scratch.path(), &["clone", &bare_url, "."]);
+        git_silent(scratch.path(), &["config", "user.email", "test@test.com"]);
+        git_silent(scratch.path(), &["config", "user.name", "Test"]);
+        git_silent(scratch.path(), &["checkout", branch]);
+        git_silent(
+            scratch.path(),
+            &["commit", "--allow-empty", "-m", message],
+        );
+        git_silent(scratch.path(), &["push"]);
+    }
+
     /// Create a new branch on the remote via a scratch clone.
     pub fn push_branch_to_remote(&self, branch: &str) {
         let scratch = TempDir::new().unwrap();
@@ -160,6 +175,43 @@ impl RepoWithRemote {
     /// Delete a branch directly from the bare repo.
     pub fn delete_remote_branch(&self, branch: &str) {
         git_silent(self.bare_path(), &["branch", "-D", branch]);
+    }
+
+    /// Fetch from remote so the tracking ref exists locally.
+    pub fn local_fetch(&self) {
+        git_silent(self.local_path(), &["fetch", "--prune"]);
+    }
+
+    /// Create a local branch tracking origin/<branch> (must already be fetched).
+    /// Leaves the repo on its original branch.
+    pub fn create_local_tracking_branch(&self, branch: &str) {
+        let current = self.local_current_branch();
+        git_silent(
+            self.local_path(),
+            &["checkout", "-b", branch, &format!("origin/{branch}")],
+        );
+        git_silent(self.local_path(), &["checkout", &current]);
+    }
+
+    pub fn local_branch_exists(&self, branch: &str) -> bool {
+        Command::new("git")
+            .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
+            .current_dir(self.local_path())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    }
+
+    /// Make a local commit on <branch> that has NOT been pushed.
+    pub fn make_local_commit_on(&self, branch: &str, message: &str) {
+        let current = self.local_current_branch();
+        git_silent(self.local_path(), &["checkout", branch]);
+        git_silent(
+            self.local_path(),
+            &["commit", "--allow-empty", "-m", message],
+        );
+        git_silent(self.local_path(), &["checkout", &current]);
     }
 }
 
