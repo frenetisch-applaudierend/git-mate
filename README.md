@@ -15,27 +15,28 @@ Creates a new branch from the default branch (e.g. `main`) and switches to it.
 Choose to either check the branch out in the main worktree, or create a new linked worktree for it. Optionally,
 you may specify a different parent ref.
 
+Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.fetch = false` in git config to skip permanently.
+
 ```bash
 mate new feature/login          # checkout in main worktree
 mate new feature/login -w       # create a linked worktree
 mate new feature/login -w --from v2.1.0  # branch from a specific ref
+mate new feature/login --no-fetch        # skip fetch
 ```
 
-### `mate checkout <branch>`
+### `mate checkout <branch>` (alias: `co`)
 
 Checks out an existing branch — local or remote. If the branch already exists in a worktree, navigates there instead.
 
 ```bash
 mate checkout feature/login           # checkout in main worktree
+mate co feature/login                 # same, using the alias
 mate checkout feature/login -w        # create a linked worktree and cd into it
 ```
 
 ### `mate finish [<branch>]`
 
-You're done with a branch. Depending on where the branch is checked out:
-
-- If it's in a linked worktree: removes the worktree and navigates back to the main worktree
-- If it's checked out in the main worktree: switches to the default branch
+You're done with a branch. Removes the worktree (if linked) or switches to the default branch (if in main worktree), then deletes the local branch ref.
 
 ```bash
 mate finish                     # finish current branch/worktree
@@ -44,7 +45,11 @@ mate finish feature/login       # finish a specific branch from anywhere
 
 ### `mate sync`
 
-Fetches all remotes and prunes stale local tracking references, then pulls the current branch if an upstream is configured.
+Fetches all remotes and prunes stale remote-tracking references, then:
+
+- Fast-forwards other local branches whose upstream is still present and has no diverged commits
+- Auto-deletes local branches whose remote was deleted (if they have no unpushed commits and a clean working tree)
+- Pulls the current branch if an upstream is configured
 
 ```bash
 mate sync                       # fetch + prune, then pull
@@ -79,3 +84,10 @@ git config --global mate.worktreeRoot "~/worktrees"
 # Override for a specific repo (run inside that repo)
 git config mate.worktreeRoot "../worktrees"
 ```
+
+### Configuration reference
+
+| Key | Values | Effect |
+|-----|--------|--------|
+| `mate.worktreeRoot` | path | Root directory for linked worktrees |
+| `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `mate new` |
