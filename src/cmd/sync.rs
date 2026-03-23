@@ -209,7 +209,7 @@ fn handle_pruned_branch(
             crate::git::checkout_in(main_wt_path, &default)?;
         } else {
             // Branch is in a linked worktree — remove it.
-            crate::git::remove_worktree(wt_path)?;
+            crate::git::remove_worktree(wt_path, false)?;
             if let Ok(root) = crate::git::read_worktree_root() {
                 crate::git::remove_empty_parent_dirs(wt_path, &root);
             }

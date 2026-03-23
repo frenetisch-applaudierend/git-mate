@@ -42,16 +42,81 @@ fn finish_deletes_branch_after_switching() {
 }
 
 #[test]
-fn finish_unmerged_branch_fails() {
+fn finish_unmerged_branch_without_remote_succeeds() {
+    // No remote → no "unpushed" concept; finish always succeeds
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["checkout", "-b", "feature/x"]);
-    // Make an unmerged commit
     repo.git(&["commit", "--allow-empty", "-m", "unmerged work"]);
     common::git_mate()
         .args(["finish"])
         .current_dir(repo.path())
         .assert()
+        .success();
+    assert!(!repo.branch_exists("feature/x"), "feature/x should have been deleted");
+}
+
+#[test]
+fn finish_unpushed_commits_requires_force() {
+    let repo = common::RepoWithRemote::new();
+    repo.local_git(&["checkout", "-b", "feature/x"]);
+    repo.local_git(&["commit", "--allow-empty", "-m", "local only"]);
+
+    // Without --force: should fail with a clear message
+    common::git_mate()
+        .args(["finish", "feature/x"])
+        .current_dir(repo.local_path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unpushed commits"));
+
+    // With --force: should succeed
+    common::git_mate()
+        .args(["finish", "--force", "feature/x"])
+        .current_dir(repo.local_path())
+        .assert()
+        .success();
+    assert!(!repo.local_branch_exists("feature/x"), "feature/x should have been deleted");
+}
+
+#[test]
+fn finish_pushed_branch_succeeds_without_force() {
+    // Branch created from origin/main (same commit) — no unpushed commits
+    let repo = common::RepoWithRemote::new();
+    repo.local_git(&["checkout", "-b", "feature/x", "origin/main"]);
+
+    common::git_mate()
+        .args(["finish", "feature/x"])
+        .current_dir(repo.local_path())
+        .assert()
+        .success();
+    assert!(!repo.local_branch_exists("feature/x"), "feature/x should have been deleted");
+}
+
+#[test]
+fn finish_force_removes_dirty_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_path = repo.path().join("feature-dirty-wt");
+    let wt_path_str = wt_path.to_str().unwrap();
+    repo.git(&["worktree", "add", "-b", "feature/dirty", wt_path_str, "main"]);
+    let wt_canonical = std::fs::canonicalize(&wt_path).unwrap();
+    // Create an untracked file in the worktree to make it dirty
+    std::fs::write(wt_canonical.join("untracked.txt"), "dirty").unwrap();
+
+    // Without --force it should fail
+    common::git_mate()
+        .args(["finish", "feature/dirty"])
+        .current_dir(repo.path())
+        .assert()
         .failure();
+
+    // With --force it should succeed
+    common::git_mate()
+        .args(["finish", "--force", "feature/dirty"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert!(!wt_canonical.exists(), "worktree directory should be removed");
+    assert!(!repo.branch_exists("feature/dirty"), "branch should have been deleted");
 }
 
 #[test]

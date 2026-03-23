@@ -162,9 +162,26 @@ pub fn delete_branch_force_in(git_dir: &str, branch: &str) -> Result<(), String>
     run(&["-C", git_dir, "branch", "-D", branch])
 }
 
-pub fn delete_branch_in(git_dir: &str, branch: &str) -> Result<(), String> {
-    run(&["-C", git_dir, "branch", "-d", branch])
+pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String> {
+    // If there are no remotes, nothing can be "unpushed"
+    let remotes = std::process::Command::new("git")
+        .args(["-C", git_dir, "remote"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    if remotes.trim().is_empty() {
+        return Ok(false);
+    }
+    let output = std::process::Command::new("git")
+        .args(["-C", git_dir, "log", branch, "--not", "--remotes", "--oneline"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    Ok(!output.stdout.is_empty())
 }
+
 
 pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
     let output = std::process::Command::new("git")
@@ -195,9 +212,13 @@ pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
     run(&["-C", path, "checkout", branch])
 }
 
-pub fn remove_worktree(path: &std::path::Path) -> Result<(), String> {
+pub fn remove_worktree(path: &std::path::Path, force: bool) -> Result<(), String> {
     let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
-    run(&["worktree", "remove", path_str])
+    if force {
+        run(&["worktree", "remove", "--force", path_str])
+    } else {
+        run(&["worktree", "remove", path_str])
+    }
 }
 
 pub fn remove_empty_parent_dirs(path: &std::path::Path, stop_at: &std::path::Path) {

@@ -3,6 +3,9 @@ pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: Option<String>,
+    /// Force removal even if the worktree has modified or untracked files
+    #[arg(long, short = 'f')]
+    pub force: bool,
 }
 
 pub fn run(args: FinishArgs) -> Result<(), String> {
@@ -32,6 +35,12 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         .iter()
         .find(|wt| wt.branch.as_deref() == Some(&target_branch));
 
+    if !args.force && crate::git::has_unpushed_commits(&main_wt_path, &target_branch)? {
+        return Err(format!(
+            "branch '{target_branch}' has unpushed commits; use --force to delete anyway"
+        ));
+    }
+
     match target_wt {
         Some(wt) if wt.path == main_wt.path => {
             let default = crate::git::detect_default_branch(false)?;
@@ -45,7 +54,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         }
         Some(wt) => {
             let in_this_wt = cwd.starts_with(&wt.path);
-            crate::git::remove_worktree(&wt.path)?;
+            crate::git::remove_worktree(&wt.path, args.force)?;
             if let Ok(root) = crate::git::read_worktree_root() {
                 crate::git::remove_empty_parent_dirs(&wt.path, &root);
             }
@@ -58,12 +67,12 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         }
         None => {
             // Branch exists but is not checked out anywhere — delete it directly.
-            crate::git::delete_branch_in(&main_wt_path, &target_branch)?;
+            crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
             crate::output::success(&format!("Deleted '{target_branch}'"));
             return Ok(());
         }
     }
 
-    crate::git::delete_branch_in(&main_wt_path, &target_branch)?;
+    crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
     Ok(())
 }
