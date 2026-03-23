@@ -19,9 +19,27 @@ pub fn run(args: NewArgs) -> Result<(), String> {
         create_worktree(&args.branch, &from_ref)
     } else {
         crate::git::checkout_new(&args.branch, &from_ref)?;
+        set_push_tracking(&args.branch);
         crate::output::success(&format!("Created and switched to branch '{}'", args.branch));
         Ok(())
     }
+}
+
+fn set_push_tracking(branch: &str) {
+    let remotes = std::process::Command::new("git")
+        .args(["remote"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    if !remotes.lines().any(|r| r.trim() == "origin") {
+        return;
+    }
+    let _ = std::process::Command::new("git")
+        .args(["config", &format!("branch.{branch}.remote"), "origin"])
+        .status();
+    let _ = std::process::Command::new("git")
+        .args(["config", &format!("branch.{branch}.merge"), &format!("refs/heads/{branch}")])
+        .status();
 }
 
 fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
