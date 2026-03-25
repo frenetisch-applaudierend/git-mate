@@ -135,6 +135,25 @@ pub fn current_branch() -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+pub fn stash_push(message: &str) -> Result<String, String> {
+    run(&["stash", "push", "-u", "-m", message])?;
+
+    let output = std::process::Command::new("git")
+        .args(["stash", "list", "--format=%gd", "-1"])
+        .output()
+        .map_err(|e| format!("failed to run git: {e}"))?;
+    if !output.status.success() {
+        return Err("created stash but could not determine stash ref".to_string());
+    }
+
+    let stash_ref = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stash_ref.is_empty() {
+        return Err("created stash but could not determine stash ref".to_string());
+    }
+
+    Ok(stash_ref)
+}
+
 pub fn resolve_ref(refname: &str) -> Result<String, String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", refname])
@@ -206,6 +225,10 @@ pub fn pull(extra_args: &[&str]) -> Result<(), String> {
     let mut args = vec!["pull"];
     args.extend_from_slice(extra_args);
     run(&args)
+}
+
+pub fn stash_pop_in(path: &str) -> Result<(), String> {
+    run(&["-C", path, "stash", "pop"])
 }
 
 pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
@@ -489,5 +512,4 @@ pub mod config {
             None
         }
     }
-
 }

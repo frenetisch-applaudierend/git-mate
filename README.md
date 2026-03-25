@@ -34,6 +34,23 @@ mate co feature/login                 # same, using the alias
 mate checkout feature/login -w        # create a linked worktree and cd into it
 ```
 
+### `mate move`
+
+Moves the currently checked out branch out of the main worktree and into its own linked worktree.
+
+This only works when:
+
+- you are in the main worktree
+- the current branch is not the default branch
+
+If the main worktree has local changes, use `--stash` to move them too. This stashes tracked and
+untracked changes before the move, creates the linked worktree, then restores the stash there.
+
+```bash
+mate move
+mate move --stash
+```
+
 ### `mate finish [<branch>]`
 
 You're done with a branch. Removes the worktree (if linked) or switches to the default branch (if in main worktree), then deletes the local branch ref.
