@@ -11,7 +11,7 @@ fn zsh_output_includes_mate_wrapper() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("function mate()"));
+        .stdout(predicate::str::contains("function git-mate()"));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn zsh_output_includes_completion() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("source <(COMPLETE=zsh command mate)"));
+        .stdout(predicate::str::contains("source <(COMPLETE=zsh command git-mate)"));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn bash_output_includes_mate_wrapper() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("mate()"));
+        .stdout(predicate::str::contains("git-mate()"));
 }
 
 #[test]
@@ -68,5 +68,5 @@ fn bash_output_includes_completion() {
         .current_dir(repo.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("source <(COMPLETE=bash command mate)"));
+        .stdout(predicate::str::contains("source <(COMPLETE=bash command git-mate)"));
 }

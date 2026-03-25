@@ -8,35 +8,35 @@ Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is no
 
 **Note:** Some commands automatically `cd` into a different directory. This is only supported if you configure shell integration.
 
-### `mate new <branch>`
+### `git-mate new <branch>`
 
 Creates a new branch from the default branch (e.g. `main`) and switches to it.
 
 By default this operates in the main worktree. Set `mate.defaultBranchMode = linked` if you want
-`mate new` and `mate co` to create linked worktrees by default. Use explicit override flags to force
+`git-mate new` and `git-mate co` to create linked worktrees by default. Use explicit override flags to force
 either mode for a single invocation. Optionally, you may specify a different parent ref.
 
 Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.fetch = false` in git config to skip permanently.
 
 ```bash
-mate new feature/login          # checkout in main worktree
-mate new feature/login -w       # same as --linked-worktree
-mate new feature/login -m --from v2.1.0  # same as --main-worktree
-mate new feature/login --no-fetch                   # skip fetch
+git-mate new feature/login          # checkout in main worktree
+git-mate new feature/login -w       # same as --linked-worktree
+git-mate new feature/login -m --from v2.1.0  # same as --main-worktree
+git-mate new feature/login --no-fetch                   # skip fetch
 ```
 
-### `mate checkout <branch>` (alias: `co`)
+### `git-mate checkout <branch>` (alias: `co`)
 
 Checks out an existing branch — local or remote. If the branch already exists in a worktree, navigates there instead.
 
 ```bash
-mate checkout feature/login           # checkout in main worktree
-mate co feature/login                 # same, using the alias
-mate checkout feature/login -w        # same as --linked-worktree
-mate checkout feature/login -m        # same as --main-worktree
+git-mate checkout feature/login           # checkout in main worktree
+git-mate co feature/login                 # same, using the alias
+git-mate checkout feature/login -w        # same as --linked-worktree
+git-mate checkout feature/login -m        # same as --main-worktree
 ```
 
-### `mate move`
+### `git-mate move`
 
 Moves the currently checked out branch out of the main worktree and into its own linked worktree.
 
@@ -49,20 +49,20 @@ If the main worktree has local changes, use `--stash` to move them too. This sta
 untracked changes before the move, creates the linked worktree, then restores the stash there.
 
 ```bash
-mate move
-mate move --stash
+git-mate move
+git-mate move --stash
 ```
 
-### `mate finish [<branch>]`
+### `git-mate finish [<branch>]`
 
 You're done with a branch. Removes the worktree (if linked) or switches to the default branch (if in main worktree), then deletes the local branch ref.
 
 ```bash
-mate finish                     # finish current branch/worktree
-mate finish feature/login       # finish a specific branch from anywhere
+git-mate finish                     # finish current branch/worktree
+git-mate finish feature/login       # finish a specific branch from anywhere
 ```
 
-### `mate sync`
+### `git-mate sync`
 
 Fetches all remotes and prunes stale remote-tracking references, then:
 
@@ -71,9 +71,9 @@ Fetches all remotes and prunes stale remote-tracking references, then:
 - Pulls the current branch if an upstream is configured
 
 ```bash
-mate sync                       # fetch + prune, then pull
-mate sync --rebase              # pull with --rebase
-mate sync --ff-only             # pull with --ff-only
+git-mate sync                       # fetch + prune, then pull
+git-mate sync --rebase              # pull with --rebase
+git-mate sync --ff-only             # pull with --ff-only
 ```
 
 ## Installation
@@ -88,8 +88,8 @@ Optionally add this to your shell config for shell completion and automatic `cd`
 
 ```bash
 # ~/.zshrc  or  ~/.bashrc
-eval "$(command mate init zsh)"   # zsh
-eval "$(command mate init bash)"  # bash
+eval "$(command git-mate init zsh)"   # zsh
+eval "$(command git-mate init bash)"  # bash
 ```
 
 ### Worktree location
@@ -109,5 +109,5 @@ git config mate.worktreeRoot "../worktrees"
 | Key | Values | Effect |
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
-| `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `mate new` |
-| `mate.defaultBranchMode` | `main` / `linked` | Default target for `mate new` and `mate checkout` |
+| `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `git-mate new` |
+| `mate.defaultBranchMode` | `main` / `linked` | Default target for `git-mate new` and `git-mate checkout` |
