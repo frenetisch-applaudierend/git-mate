@@ -3,8 +3,10 @@ pub struct NewArgs {
     pub branch: String,
     #[arg(long, help = "Branch or ref to create from (default: repo default branch)", add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub from: Option<String>,
-    #[arg(short = 'w', long, help = "Create a linked worktree instead of a checkout")]
-    pub worktree: bool,
+    #[arg(short = 'm', long, conflicts_with = "linked_worktree", help = "Force the branch into the main worktree")]
+    pub main_worktree: bool,
+    #[arg(short = 'w', long, conflicts_with = "main_worktree", help = "Force the branch into a linked worktree")]
+    pub linked_worktree: bool,
     #[arg(long, help = "Skip fetching from origin before branching")]
     pub no_fetch: bool,
 }
@@ -15,13 +17,14 @@ pub fn run(args: NewArgs) -> Result<(), String> {
         None => crate::git::detect_default_branch(true)?,
     };
     fetch_if_needed(args.no_fetch)?;
-    if args.worktree {
-        create_worktree(&args.branch, &from_ref)
-    } else {
-        crate::git::checkout_new(&args.branch, &from_ref)?;
-        set_push_tracking(&args.branch);
-        crate::output::success(&format!("Created and switched to branch '{}'", args.branch));
-        Ok(())
+    match crate::git::resolve_operation_target(args.main_worktree, args.linked_worktree)? {
+        crate::git::OperationTarget::LinkedWorktree => create_worktree(&args.branch, &from_ref),
+        crate::git::OperationTarget::MainWorktree => {
+            crate::git::checkout_new(&args.branch, &from_ref)?;
+            set_push_tracking(&args.branch);
+            crate::output::success(&format!("Created and switched to branch '{}'", args.branch));
+            Ok(())
+        }
     }
 }
 

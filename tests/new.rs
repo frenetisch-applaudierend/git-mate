@@ -101,6 +101,49 @@ fn worktree_mode_creates_worktree() {
 }
 
 #[test]
+fn default_worktree_mode_from_config_creates_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+
+    let output = common::git_mate()
+        .args(["new", "feature/default-worktree", "--from", "main"])
+        .env("GIT_MATE_SHELL", "1")
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/default-worktree");
+    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+}
+
+#[test]
+fn main_worktree_flag_overrides_configured_worktree_default() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+
+    common::git_mate()
+        .args(["new", "feature/override-main", "-m", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/override-main");
+    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert_eq!(repo.current_branch(), "feature/override-main");
+}
+
+#[test]
 fn fetch_updates_before_branch() {
     let setup = common::RepoWithRemote::new();
     let old_head = setup.local_head_commit();
@@ -212,7 +255,7 @@ fn worktree_mode_invalid_branch_name_fails() {
     repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
 
     common::git_mate()
-        .args(["new", "../evil", "-w", "--from", "main"])
+        .args(["new", "../evil", "--linked-worktree", "--from", "main"])
         .current_dir(repo.path())
         .assert()
         .failure()
@@ -223,12 +266,25 @@ fn worktree_mode_invalid_branch_name_fails() {
 fn worktree_mode_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     common::git_mate()
-        .args(["new", "feat/x", "-w", "--from", "main"])
+        .args(["new", "feat/x", "--linked-worktree", "--from", "main"])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("mate.worktreeRoot"));
+}
+
+#[test]
+fn invalid_default_location_config_fails() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.defaultLocation", "banana"]);
+
+    common::git_mate()
+        .args(["new", "feat/x", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mate.defaultLocation"));
 }
 
 #[test]
@@ -248,7 +304,7 @@ fn worktree_mode_copies_ignored_files() {
     std::fs::write(repo.path().join("node_modules").join("pkg.json"), "{}").unwrap();
 
     common::git_mate()
-        .args(["new", "feat/x", "-w", "--from", "main"])
+        .args(["new", "feat/x", "--linked-worktree", "--from", "main"])
         .current_dir(repo.path())
         .assert()
         .success();

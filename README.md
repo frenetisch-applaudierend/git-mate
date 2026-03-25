@@ -12,16 +12,17 @@ Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is no
 
 Creates a new branch from the default branch (e.g. `main`) and switches to it.
 
-Choose to either check the branch out in the main worktree, or create a new linked worktree for it. Optionally,
-you may specify a different parent ref.
+By default this operates in the main worktree. Set `mate.defaultLocation = worktree` if you want
+`mate new` and `mate co` to create linked worktrees by default. Use explicit override flags to force
+either mode for a single invocation. Optionally, you may specify a different parent ref.
 
 Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.fetch = false` in git config to skip permanently.
 
 ```bash
 mate new feature/login          # checkout in main worktree
-mate new feature/login -w       # create a linked worktree
-mate new feature/login -w --from v2.1.0  # branch from a specific ref
-mate new feature/login --no-fetch        # skip fetch
+mate new feature/login -w       # same as --linked-worktree
+mate new feature/login -m --from v2.1.0  # same as --main-worktree
+mate new feature/login --no-fetch                   # skip fetch
 ```
 
 ### `mate checkout <branch>` (alias: `co`)
@@ -31,7 +32,8 @@ Checks out an existing branch — local or remote. If the branch already exists 
 ```bash
 mate checkout feature/login           # checkout in main worktree
 mate co feature/login                 # same, using the alias
-mate checkout feature/login -w        # create a linked worktree and cd into it
+mate checkout feature/login -w        # same as --linked-worktree
+mate checkout feature/login -m        # same as --main-worktree
 ```
 
 ### `mate move`
@@ -108,3 +110,4 @@ git config mate.worktreeRoot "../worktrees"
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
 | `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `mate new` |
+| `mate.defaultLocation` | `main` / `worktree` | Default target for `mate new` and `mate checkout` |

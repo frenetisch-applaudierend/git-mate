@@ -65,6 +65,46 @@ pub fn is_main_worktree() -> Result<bool, String> {
     Ok(current == main)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OperationTarget {
+    MainWorktree,
+    LinkedWorktree,
+}
+
+impl OperationTarget {
+    fn from_config_value(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "main" | "main-worktree" => Some(Self::MainWorktree),
+            "worktree" | "linked" | "linked-worktree" => Some(Self::LinkedWorktree),
+            _ => None,
+        }
+    }
+}
+
+pub fn default_operation_target() -> Result<OperationTarget, String> {
+    match config::read_string("mate.defaultLocation") {
+        Some(value) => OperationTarget::from_config_value(&value).ok_or_else(|| {
+            format!(
+                "invalid value for mate.defaultLocation: {value:?}; expected 'main' or 'worktree'"
+            )
+        }),
+        None => Ok(OperationTarget::MainWorktree),
+    }
+}
+
+pub fn resolve_operation_target(
+    main_worktree: bool,
+    linked_worktree: bool,
+) -> Result<OperationTarget, String> {
+    if main_worktree {
+        return Ok(OperationTarget::MainWorktree);
+    }
+    if linked_worktree {
+        return Ok(OperationTarget::LinkedWorktree);
+    }
+    default_operation_target()
+}
+
 static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 pub fn set_verbose(v: bool) {

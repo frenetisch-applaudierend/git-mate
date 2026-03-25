@@ -2,15 +2,16 @@
 pub struct CheckoutArgs {
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: String,
-    #[arg(short = 'w', long, help = "Create a linked worktree instead of a checkout")]
-    pub worktree: bool,
+    #[arg(short = 'm', long, conflicts_with = "linked_worktree", help = "Force the branch into the main worktree")]
+    pub main_worktree: bool,
+    #[arg(short = 'w', long, conflicts_with = "main_worktree", help = "Force the branch into a linked worktree")]
+    pub linked_worktree: bool,
 }
 
 pub fn run(args: CheckoutArgs) -> Result<(), String> {
-    if args.worktree {
-        checkout_worktree(&args.branch)
-    } else {
-        checkout_in_place(&args.branch)
+    match crate::git::resolve_operation_target(args.main_worktree, args.linked_worktree)? {
+        crate::git::OperationTarget::LinkedWorktree => checkout_worktree(&args.branch),
+        crate::git::OperationTarget::MainWorktree => checkout_in_place(&args.branch),
     }
 }
 

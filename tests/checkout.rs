@@ -106,6 +106,49 @@ fn checkout_worktree_creates_worktree() {
 }
 
 #[test]
+fn checkout_uses_configured_worktree_default() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+    repo.git(&["branch", "feature/default-checkout"]);
+
+    common::git_mate()
+        .args(["checkout", "feature/default-checkout"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/default-checkout");
+    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+}
+
+#[test]
+fn main_worktree_flag_overrides_configured_checkout_worktree_default() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+    repo.git(&["branch", "feature/override-main"]);
+
+    common::git_mate()
+        .args(["checkout", "feature/override-main", "-m"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/override-main");
+    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert_eq!(repo.current_branch(), "feature/override-main");
+}
+
+#[test]
 fn checkout_worktree_noop_if_path_exists() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
@@ -116,14 +159,14 @@ fn checkout_worktree_noop_if_path_exists() {
 
     // First call creates the worktree
     common::git_mate()
-        .args(["checkout", "existing", "-w"])
+        .args(["checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success();
 
     // Second call should be a no-op
     common::git_mate()
-        .args(["checkout", "existing", "-w"])
+        .args(["checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success()
@@ -145,7 +188,7 @@ fn checkout_worktree_fails_if_directory_exists_but_is_not_worktree() {
     std::fs::create_dir_all(&wt_path).unwrap();
 
     common::git_mate()
-        .args(["checkout", "existing", "-w"])
+        .args(["checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .failure()
@@ -168,7 +211,7 @@ fn checkout_worktree_fails_if_file_exists_at_path() {
     std::fs::write(&wt_path, "not a directory").unwrap();
 
     common::git_mate()
-        .args(["checkout", "existing", "-w"])
+        .args(["checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .failure()
@@ -181,7 +224,7 @@ fn checkout_worktree_missing_config_fails() {
     repo.git(&["branch", "some-branch"]);
 
     common::git_mate()
-        .args(["checkout", "some-branch", "-w"])
+        .args(["checkout", "some-branch", "--linked-worktree"])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .assert()
@@ -226,7 +269,7 @@ fn checkout_worktree_copies_ignored_files() {
     std::fs::write(repo.path().join("node_modules").join("pkg.json"), "{}").unwrap();
 
     common::git_mate()
-        .args(["checkout", "feature/copy-test", "-w"])
+        .args(["checkout", "feature/copy-test", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success();
@@ -263,7 +306,7 @@ fn checkout_worktree_does_not_overwrite_existing_files() {
     std::fs::write(repo.path().join(".env.local"), "LOCAL=override").unwrap();
 
     common::git_mate()
-        .args(["checkout", "feature/no-overwrite", "-w"])
+        .args(["checkout", "feature/no-overwrite", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success();
@@ -288,7 +331,7 @@ fn checkout_worktree_navigates_to_existing_worktree() {
     repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/x"]);
 
     common::git_mate()
-        .args(["checkout", "feature/x", "-w"])
+        .args(["checkout", "feature/x", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success()
