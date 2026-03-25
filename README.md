@@ -92,6 +92,37 @@ eval "$(command git-mate init zsh)"   # zsh
 eval "$(command git-mate init bash)"  # bash
 ```
 
+Direct `git-mate ...` auto-`cd` support is always included in that generated shell snippet.
+
+`git mate ...` auto-`cd` is separate and off by default. Enable it with:
+
+```bash
+git config --global mate.gitAutoCd true
+```
+
+If you want a safer mode, use this instead:
+
+```bash
+git config --global mate.gitAutoCd if-safe
+```
+
+Then reload your shell so `git-mate init` can emit the optional `git()` wrapper too.
+
+With `mate.gitAutoCd=true`, the generated wrapper overrides `git` in your interactive shell, does
+not preserve aliases, and bypasses any existing `git()` shell function by calling `command git`
+directly. If that breaks another customization, disable it with:
+
+```bash
+git config --global --unset mate.gitAutoCd
+```
+
+Then reload your shell. If you pasted the generated shell code manually instead of using
+`eval "$(command git-mate init ...)"`, remove the generated `git()` block as well.
+
+With `mate.gitAutoCd=if-safe`, the generated shell code skips the wrapper when `git` is already a
+shell function and prints a warning on shell startup so you can see why `git mate ...` auto-`cd`
+was not enabled.
+
 ### Worktree location
 
 Worktrees are created under a root directory, organized by repository and branch names. Set the root path in the git configuration:
@@ -111,3 +142,4 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
 | `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `git-mate new` |
 | `mate.defaultBranchMode` | `main` / `linked` | Default target for `git-mate new` and `git-mate checkout` |
+| `mate.gitAutoCd` | `true` / `yes` / `on` / `1` / `if-safe` | Make `git-mate init` emit an optional `git()` wrapper so `git mate ...` can auto-`cd`; `if-safe` skips the wrapper when `git` is already a function |

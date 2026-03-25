@@ -1,6 +1,14 @@
-pub fn emit_init_script() {
+use super::GitAutoCdMode;
+
+pub fn emit_init_script(git_auto_cd: GitAutoCdMode) {
     print!("{}", HEADER);
+    print!("{}", AUTO_CD_HELPERS);
     print!("{}", AUTO_CD_WRAPPER);
+    match git_auto_cd {
+        GitAutoCdMode::Off => {}
+        GitAutoCdMode::Always => print!("{}", GIT_WRAPPER_ALWAYS),
+        GitAutoCdMode::IfSafe => print!("{}", GIT_WRAPPER_IF_SAFE),
+    }
     print!("{}", COMPLETION);
 }
 
@@ -10,12 +18,11 @@ const HEADER: &str = r#"
 #   eval "$(command git-mate init bash)"
 "#;
 
-const AUTO_CD_WRAPPER: &str = r#"
-# Auto-cd support
-git-mate() {
+const AUTO_CD_HELPERS: &str = r#"
+_git_mate_capture_and_cd() {
     local tmpfile exit_code target_dir
     tmpfile=$(mktemp) || return 1
-    GIT_MATE_SHELL=1 command git-mate "$@" > "$tmpfile"
+    "$@" > "$tmpfile"
     exit_code=$?
     target_dir=$(grep '^_MATE_CD:' "$tmpfile" | tail -n1 | sed 's/^_MATE_CD://')
     grep -v '^_MATE_CD:' "$tmpfile"
@@ -25,6 +32,72 @@ git-mate() {
     fi
     return $exit_code
 }
+
+_git_mate_run_binary() {
+    GIT_MATE_SHELL=1 command git-mate "$@"
+}
+"#;
+
+const AUTO_CD_WRAPPER: &str = r#"
+# Auto-cd support for direct `git-mate` invocations
+git-mate() {
+    _git_mate_capture_and_cd _git_mate_run_binary "$@"
+}
+"#;
+
+const GIT_WRAPPER_ALWAYS: &str = r#"
+# Optional auto-cd support for `git mate`
+# WARNING: This wraps `git()` in your shell. Existing aliases are not preserved,
+# and any existing git() shell function will be bypassed in favor of `command git`.
+if [[ -z "${_GIT_MATE_GIT_WRAPPED:-}" ]]; then
+    _GIT_MATE_GIT_WRAPPED=1
+fi
+
+_git_mate_call_git() {
+    command git "$@"
+}
+
+_git_mate_run_git_mate() {
+    GIT_MATE_SHELL=1 _git_mate_call_git mate "$@"
+}
+
+git() {
+    if [[ "$1" == "mate" ]]; then
+        shift
+        _git_mate_capture_and_cd _git_mate_run_git_mate "$@"
+    else
+        _git_mate_call_git "$@"
+    fi
+}
+"#;
+
+const GIT_WRAPPER_IF_SAFE: &str = r#"
+# Optional auto-cd support for `git mate`
+# Safe mode: skip wrapping when `git` is already a shell function.
+    if [[ -z "${_GIT_MATE_GIT_WRAPPED:-}" ]]; then
+    if [[ "$(type -t git 2>/dev/null)" == "function" ]]; then
+        echo "git-mate: mate.gitAutoCd=if-safe skipped git() wrapper because git is already a shell function" >&2
+    else
+        _GIT_MATE_GIT_WRAPPED=1
+
+        _git_mate_call_git() {
+            command git "$@"
+        }
+
+        _git_mate_run_git_mate() {
+            GIT_MATE_SHELL=1 _git_mate_call_git mate "$@"
+        }
+
+        git() {
+            if [[ "$1" == "mate" ]]; then
+                shift
+                _git_mate_capture_and_cd _git_mate_run_git_mate "$@"
+            else
+                _git_mate_call_git "$@"
+            fi
+        }
+    fi
+fi
 "#;
 
 const COMPLETION: &str = r#"
