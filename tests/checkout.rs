@@ -337,3 +337,28 @@ fn checkout_worktree_navigates_to_existing_worktree() {
         .success()
         .stderr(predicate::str::contains(wt_path.to_str().unwrap()));
 }
+
+#[test]
+fn checkout_worktree_existing_worktree_emits_cd_for_shell_wrapper() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_path = wt_root.path().join("linked");
+
+    repo.git(&["branch", "feature/shell-cd"]);
+    repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/shell-cd"]);
+
+    let output = common::git_mate()
+        .args(["checkout", "feature/shell-cd", "--linked-worktree"])
+        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("_MATE_CD:") && stdout.contains(wt_path.to_str().unwrap()),
+        "stdout should contain _MATE_CD: pointing to feature/shell-cd worktree, got: {stdout:?}"
+    );
+}
