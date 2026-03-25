@@ -74,18 +74,18 @@ pub enum OperationTarget {
 impl OperationTarget {
     fn from_config_value(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "main" | "main-worktree" => Some(Self::MainWorktree),
-            "worktree" | "linked" | "linked-worktree" => Some(Self::LinkedWorktree),
+            "main" => Some(Self::MainWorktree),
+            "linked" => Some(Self::LinkedWorktree),
             _ => None,
         }
     }
 }
 
 pub fn default_operation_target() -> Result<OperationTarget, String> {
-    match config::read_string("mate.defaultLocation") {
+    match config::read_string("mate.defaultBranchMode") {
         Some(value) => OperationTarget::from_config_value(&value).ok_or_else(|| {
             format!(
-                "invalid value for mate.defaultLocation: {value:?}; expected 'main' or 'worktree'"
+                "invalid value for mate.defaultBranchMode: {value:?}; expected 'main' or 'linked'"
             )
         }),
         None => Ok(OperationTarget::MainWorktree),

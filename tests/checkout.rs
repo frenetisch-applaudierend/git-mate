@@ -112,7 +112,7 @@ fn checkout_uses_configured_worktree_default() {
     let wt_root_str = wt_root.path().to_str().unwrap();
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
-    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
     repo.git(&["branch", "feature/default-checkout"]);
 
     common::git_mate()
@@ -133,7 +133,7 @@ fn main_worktree_flag_overrides_configured_checkout_worktree_default() {
     let wt_root_str = wt_root.path().to_str().unwrap();
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
-    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
     repo.git(&["branch", "feature/override-main"]);
 
     common::git_mate()

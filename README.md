@@ -12,7 +12,7 @@ Built for Bash/Zsh in Linux. Likely works on macOS too. Windows/Powershell is no
 
 Creates a new branch from the default branch (e.g. `main`) and switches to it.
 
-By default this operates in the main worktree. Set `mate.defaultLocation = worktree` if you want
+By default this operates in the main worktree. Set `mate.defaultBranchMode = linked` if you want
 `mate new` and `mate co` to create linked worktrees by default. Use explicit override flags to force
 either mode for a single invocation. Optionally, you may specify a different parent ref.
 
@@ -110,4 +110,4 @@ git config mate.worktreeRoot "../worktrees"
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
 | `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `mate new` |
-| `mate.defaultLocation` | `main` / `worktree` | Default target for `mate new` and `mate checkout` |
+| `mate.defaultBranchMode` | `main` / `linked` | Default target for `mate new` and `mate checkout` |

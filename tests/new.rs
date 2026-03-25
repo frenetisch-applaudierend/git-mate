@@ -107,7 +107,7 @@ fn default_worktree_mode_from_config_creates_worktree() {
     let wt_root_str = wt_root.path().to_str().unwrap();
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
-    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
 
     let output = common::git_mate()
         .args(["new", "feature/default-worktree", "--from", "main"])
@@ -129,7 +129,7 @@ fn main_worktree_flag_overrides_configured_worktree_default() {
     let wt_root_str = wt_root.path().to_str().unwrap();
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
-    repo.git(&["config", "mate.defaultLocation", "worktree"]);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
 
     common::git_mate()
         .args(["new", "feature/override-main", "-m", "--from", "main"])
@@ -275,16 +275,16 @@ fn worktree_mode_missing_config_fails() {
 }
 
 #[test]
-fn invalid_default_location_config_fails() {
+fn invalid_default_branch_mode_config_fails() {
     let repo = common::RepoWithoutRemote::new();
-    repo.git(&["config", "mate.defaultLocation", "banana"]);
+    repo.git(&["config", "mate.defaultBranchMode", "banana"]);
 
     common::git_mate()
         .args(["new", "feat/x", "--from", "main"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.defaultLocation"));
+        .stderr(predicate::str::contains("mate.defaultBranchMode"));
 }
 
 #[test]
