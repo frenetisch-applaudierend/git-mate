@@ -4,7 +4,7 @@ use std::process::Command;
 use tempfile::TempDir;
 
 pub fn git_mate() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("mate"))
+    Command::new(assert_cmd::cargo::cargo_bin!("git-mate"))
 }
 
 pub struct RepoWithoutRemote {

@@ -6,7 +6,7 @@ pub struct MoveArgs {
 
 pub fn run(args: MoveArgs) -> Result<(), String> {
     if !crate::git::is_main_worktree()? {
-        return Err("`mate move` can only be run from the main worktree".to_string());
+        return Err("`git-mate move` can only be run from the main worktree".to_string());
     }
 
     let main_wt = crate::git::find_main_worktree()?;
@@ -63,7 +63,7 @@ fn maybe_stash_changes(main_wt: &str, allow_stash: bool) -> Result<Option<String
     }
     if !allow_stash {
         return Err(
-            "worktree has uncommitted changes; re-run `mate move --stash` to move them too"
+            "worktree has uncommitted changes; re-run `git-mate move --stash` to move them too"
                 .to_string(),
         );
     }
