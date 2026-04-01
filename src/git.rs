@@ -422,6 +422,16 @@ pub fn detect_default_branch(remote: bool) -> Result<String, String> {
     Err("could not detect default branch; use --from to specify one".to_string())
 }
 
+pub fn ensure_branch_allowed_in_linked_worktree(branch: &str) -> Result<(), String> {
+    let default_branch = detect_default_branch(false)?;
+    if branch == default_branch {
+        return Err(format!(
+            "cannot use a linked worktree for the default branch '{default_branch}'; keep it in the main worktree"
+        ));
+    }
+    Ok(())
+}
+
 const COPY_BLACKLIST: &[&str] = &[
     "node_modules",
     "target",

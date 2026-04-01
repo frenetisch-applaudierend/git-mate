@@ -319,3 +319,28 @@ fn worktree_mode_copies_ignored_files() {
     // Blacklisted directory was NOT copied
     assert!(!wt_path.join("node_modules").exists(), "node_modules should not be copied");
 }
+
+#[test]
+fn worktree_mode_rejects_default_branch() {
+    let setup = common::RepoWithRemote::new();
+    let wt_root = TempDir::new().unwrap();
+
+    setup.local_git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+    setup.local_git(&["config", "mate.defaultBranchMode", "linked"]);
+    setup.local_git(&["checkout", "-b", "feature/current"]);
+    setup.local_git(&["branch", "-D", "main"]);
+
+    common::git_mate()
+        .args(["new", "main"])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("default branch"))
+        .stderr(predicate::str::contains("main worktree"));
+
+    let repo_name = setup.local_path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("main");
+    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert_eq!(setup.local_current_branch(), "feature/current");
+    assert!(!setup.local_branch_exists("main"));
+}

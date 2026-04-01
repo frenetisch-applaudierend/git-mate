@@ -16,6 +16,8 @@ By default this operates in the main worktree. Set `mate.defaultBranchMode = lin
 `mate new` and `mate co` to create linked worktrees by default. Use explicit override flags to force
 either mode for a single invocation. Optionally, you may specify a different parent ref.
 
+The default branch always stays in the main worktree, even when linked mode is configured.
+
 Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.fetch = false` in git config to skip permanently.
 
 ```bash
@@ -28,6 +30,8 @@ mate new feature/login --no-fetch                   # skip fetch
 ### `mate checkout <branch>` (alias: `co`)
 
 Checks out an existing branch — local or remote. If the branch already exists in a worktree, navigates there instead.
+
+The default branch is only allowed in the main worktree, so linked-worktree mode rejects it.
 
 ```bash
 mate checkout feature/login           # checkout in main worktree

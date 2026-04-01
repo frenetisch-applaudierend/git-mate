@@ -362,3 +362,27 @@ fn checkout_worktree_existing_worktree_emits_cd_for_shell_wrapper() {
         "stdout should contain _MATE_CD: pointing to feature/shell-cd worktree, got: {stdout:?}"
     );
 }
+
+#[test]
+fn checkout_worktree_rejects_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
+    repo.git(&["checkout", "-b", "feature/current"]);
+
+    common::git_mate()
+        .args(["checkout", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("default branch"))
+        .stderr(predicate::str::contains("main worktree"));
+
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("main");
+    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert_eq!(repo.current_branch(), "feature/current");
+}

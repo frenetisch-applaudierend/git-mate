@@ -80,6 +80,7 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     if !valid {
         return Err(format!("invalid branch name: {branch:?}"));
     }
+    crate::git::ensure_branch_allowed_in_linked_worktree(branch)?;
     let wt_path = crate::git::worktree_path(branch)?;
     let canonical = crate::git::add_worktree(&wt_path, &["-b", branch, from_ref])?;
     let main_wt = crate::git::find_main_worktree()?;
