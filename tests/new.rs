@@ -101,6 +101,44 @@ fn worktree_mode_creates_worktree() {
 }
 
 #[test]
+fn worktree_mode_sets_push_tracking_to_branch_name() {
+    let setup = common::RepoWithRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    setup.local_git(&["config", "mate.worktreeRoot", wt_root_str]);
+
+    common::git_mate()
+        .args(["new", "feature/login", "-w"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success();
+
+    let repo_name = setup.local_path().file_name().unwrap().to_str().unwrap();
+    let wt_path = wt_root.path().join(repo_name).join("feature/login");
+    let remote = Command::new("git")
+        .args(["config", "--get", "branch.feature/login.remote"])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    let merge = Command::new("git")
+        .args(["config", "--get", "branch.feature/login.merge"])
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(remote.status.success(), "expected branch remote to be configured");
+    assert!(merge.status.success(), "expected branch merge ref to be configured");
+    assert_eq!(
+        String::from_utf8(remote.stdout).unwrap().trim(),
+        "origin"
+    );
+    assert_eq!(
+        String::from_utf8(merge.stdout).unwrap().trim(),
+        "refs/heads/feature/login"
+    );
+}
+
+#[test]
 fn default_worktree_mode_from_config_creates_worktree() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
