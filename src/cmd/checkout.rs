@@ -20,14 +20,14 @@ fn checkout_in_place(branch: &str) -> Result<(), String> {
         let canonical = std::fs::canonicalize(&wt_path)
             .unwrap_or_else(|_| wt_path.clone());
         crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, canonical.display()));
-        crate::output::emit_cd(&canonical);
+        crate::shell_protocol::emit_cd(&canonical);
         return Ok(());
     }
     let main_wt = crate::git::find_main_worktree()?;
     if !crate::git::is_main_worktree()? {
         let main_str = main_wt.to_str().ok_or("main worktree path is not valid UTF-8")?;
         crate::git::checkout_in(main_str, branch)?;
-        crate::output::emit_cd(&main_wt);
+        crate::shell_protocol::emit_cd(&main_wt);
         crate::output::success(&format!("Switched to branch '{branch}'"));
         return Ok(());
     }
@@ -40,7 +40,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     if let Some(wt_path) = crate::git::find_worktree_for_branch(branch)? {
         let canonical = std::fs::canonicalize(&wt_path)
             .unwrap_or_else(|_| wt_path.clone());
-        crate::output::emit_cd(&canonical);
+        crate::shell_protocol::emit_cd(&canonical);
         crate::output::info(&format!("Branch '{}' is already checked out at {}", branch, wt_path.display()));
         return Ok(());
     }
@@ -50,7 +50,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
         if wt_path.join(".git").exists() {
             let canonical = std::fs::canonicalize(&wt_path)
                 .unwrap_or_else(|_| wt_path.clone());
-            crate::output::emit_cd(&canonical);
+            crate::shell_protocol::emit_cd(&canonical);
             crate::output::info(&format!("worktree already exists at {}", wt_path.display()));
             return Ok(());
         } else {
@@ -71,6 +71,6 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     let main_wt = crate::git::find_main_worktree()?;
     crate::git::copy_ignored_files(&main_wt, &canonical)?;
     crate::output::success(&format!("Checked out '{branch}' at {}", canonical.display()));
-    crate::output::emit_cd(&canonical);
+    crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }

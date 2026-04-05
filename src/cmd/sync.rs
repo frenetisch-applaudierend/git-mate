@@ -217,7 +217,7 @@ fn handle_pruned_branch(
             if current_wt.as_deref() == Some(wt_path.as_path()) {
                 let canonical = std::fs::canonicalize(main_wt)
                     .map_err(|e| format!("could not canonicalize path: {e}"))?;
-                crate::output::emit_cd(&canonical);
+                crate::shell_protocol::emit_cd(&canonical);
             }
         }
     }

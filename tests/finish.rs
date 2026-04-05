@@ -138,8 +138,8 @@ fn finish_linked_worktree_removes_it_and_prints_mate_cd() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let main_path = std::fs::canonicalize(repo.path()).unwrap();
     assert!(
-        stdout.contains(&format!("_MATE_CD:{}", main_path.display())),
-        "stdout should contain _MATE_CD:<main_path>, got: {stdout:?}"
+        stdout.contains(&format!("_MATE_CMD:CD:{}", main_path.display())),
+        "stdout should contain _MATE_CMD:CD:<main_path>, got: {stdout:?}"
     );
     assert!(!wt_canonical.exists(), "worktree directory should be removed");
     assert!(!repo.branch_exists("feature/x"), "branch should have been deleted");

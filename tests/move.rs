@@ -28,8 +28,8 @@ fn move_creates_worktree_and_returns_main_to_default_branch() {
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/move");
     assert!(
-        stdout.contains(&format!("_MATE_CD:{}", wt_path.display())),
-        "stdout should contain _MATE_CD pointing to the new worktree, got: {stdout:?}"
+        stdout.contains(&format!("_MATE_CMD:CD:{}", wt_path.display())),
+        "stdout should contain _MATE_CMD:CD: pointing to the new worktree, got: {stdout:?}"
     );
 
     assert_eq!(repo.current_branch(), "main");

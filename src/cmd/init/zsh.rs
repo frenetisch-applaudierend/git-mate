@@ -13,17 +13,13 @@ const HEADER: &str = r#"
 const AUTO_CD_WRAPPER: &str = r#"
 # Auto-cd support
 function mate() {
-    local tmpfile exit_code target_dir
-    tmpfile=$(mktemp) || return 1
-    GIT_MATE_SHELL=1 command mate "$@" > "$tmpfile"
-    exit_code=$?
-    target_dir=$(grep '^_MATE_CD:' "$tmpfile" | tail -n1 | sed 's/^_MATE_CD://')
-    grep -v '^_MATE_CD:' "$tmpfile"
-    rm -f "$tmpfile"
-    if [[ -n "$target_dir" ]]; then
-        builtin cd "$target_dir"
-    fi
-    return $exit_code
+    local _proto _exit
+    _proto=$(mktemp) || return 1
+    GIT_MATE_SHELL=1 command mate "$@" | command mate _protocol collect "$_proto"
+    _exit=$pipestatus[1]
+    eval "$(command mate _protocol interpret --zsh "$_proto")"
+    rm -f "$_proto"
+    return $_exit
 }
 "#;
 

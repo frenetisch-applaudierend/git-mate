@@ -52,6 +52,11 @@ The release workflow (release-plz) reads these commit messages to:
 
 Non-conventional commits are silently ignored by the release tooling.
 
+## Code structure
+
+`mod.rs` files must never contain logic — only `pub mod`/`mod` declarations and `pub use` re-exports.
+Put all implementation in named submodule files.
+
 ## Build and test hygiene
 
 Before committing, pushing, or creating a PR, always ensure:

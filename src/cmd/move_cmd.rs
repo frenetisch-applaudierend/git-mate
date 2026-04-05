@@ -43,7 +43,7 @@ pub fn run(args: MoveArgs) -> Result<(), String> {
             .to_str()
             .ok_or("worktree path is not valid UTF-8")?;
         if let Err(e) = crate::git::stash_pop_in(canonical_str) {
-            crate::output::emit_cd(&canonical);
+            crate::shell_protocol::emit_cd(&canonical);
             return Err(format!(
                 "Moved '{branch}' to {} but failed to restore stashed changes: {e}. The stash was kept as {stash_ref}.",
                 canonical.display()
@@ -53,7 +53,7 @@ pub fn run(args: MoveArgs) -> Result<(), String> {
     }
 
     crate::output::success(&format!("Moved '{branch}' to {}", canonical.display()));
-    crate::output::emit_cd(&canonical);
+    crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }
 

@@ -87,6 +87,6 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     let main_wt = crate::git::find_main_worktree()?;
     crate::git::copy_ignored_files(&main_wt, &canonical)?;
     crate::output::success(&format!("Created worktree for '{branch}' at {}", canonical.display()));
-    crate::output::emit_cd(&canonical);
+    crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }

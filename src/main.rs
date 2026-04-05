@@ -4,6 +4,7 @@ mod cmd;
 mod complete;
 mod git;
 mod output;
+mod shell_protocol;
 
 #[derive(Parser)]
 #[command(name = "mate")]
@@ -29,6 +30,9 @@ enum Commands {
     New(cmd::new::NewArgs),
     /// Fetch and merge the latest changes
     Sync(cmd::sync::SyncArgs),
+    /// Internal: shell protocol helpers (collect / interpret)
+    #[command(name = "_protocol", hide = true)]
+    Protocol(cmd::protocol::ProtocolArgs),
 }
 
 fn build_cli() -> clap::Command {
@@ -49,6 +53,7 @@ fn main() {
         Commands::Move(args) => cmd::move_cmd::run(args),
         Commands::New(args) => cmd::new::run(args),
         Commands::Sync(args) => cmd::sync::run(args),
+        Commands::Protocol(args) => cmd::protocol::run(args),
     };
 
     if let Err(e) = result {

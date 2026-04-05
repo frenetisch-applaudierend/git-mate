@@ -39,8 +39,8 @@ fn checkout_in_place_from_linked_worktree_cds_to_main_and_switches() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let main_path = repo.path().to_str().unwrap();
     assert!(
-        stdout.contains("_MATE_CD:") && stdout.contains(main_path),
-        "stdout should contain _MATE_CD: pointing to main worktree, got: {stdout:?}"
+        stdout.contains("_MATE_CMD:CD:") && stdout.contains(main_path),
+        "stdout should contain _MATE_CMD:CD: pointing to main worktree, got: {stdout:?}"
     );
 
     assert_eq!(repo.current_branch(), "other-branch");
@@ -68,8 +68,8 @@ fn checkout_in_place_from_linked_worktree_navigates_to_existing_worktree() {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("_MATE_CD:") && stdout.contains(wt_b.to_str().unwrap()),
-        "stdout should contain _MATE_CD: pointing to branch-b worktree, got: {stdout:?}"
+        stdout.contains("_MATE_CMD:CD:") && stdout.contains(wt_b.to_str().unwrap()),
+        "stdout should contain _MATE_CMD:CD: pointing to branch-b worktree, got: {stdout:?}"
     );
 }
 
@@ -90,7 +90,7 @@ fn checkout_worktree_creates_worktree() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("_MATE_CD:"), "stdout should contain _MATE_CD:, got: {stdout:?}");
+    assert!(stdout.contains("_MATE_CMD:CD:"), "stdout should contain _MATE_CMD:CD:, got: {stdout:?}");
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/checkout");
@@ -358,8 +358,8 @@ fn checkout_worktree_existing_worktree_emits_cd_for_shell_wrapper() {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("_MATE_CD:") && stdout.contains(wt_path.to_str().unwrap()),
-        "stdout should contain _MATE_CD: pointing to feature/shell-cd worktree, got: {stdout:?}"
+        stdout.contains("_MATE_CMD:CD:") && stdout.contains(wt_path.to_str().unwrap()),
+        "stdout should contain _MATE_CMD:CD: pointing to feature/shell-cd worktree, got: {stdout:?}"
     );
 }
 
