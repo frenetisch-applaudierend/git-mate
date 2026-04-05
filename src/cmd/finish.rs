@@ -56,7 +56,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             let in_this_wt = cwd.starts_with(&wt.path);
             crate::git::remove_worktree(&wt.path, args.force)?;
             if let Ok(root) = crate::git::read_worktree_root() {
-                crate::git::remove_empty_parent_dirs(&wt.path, &root);
+                crate::fs::remove_empty_parent_dirs(&wt.path, &root);
             }
             crate::output::success(&format!("Removed worktree for '{target_branch}'"));
             if in_this_wt {

@@ -36,7 +36,7 @@ pub fn run(args: MoveArgs) -> Result<(), String> {
         }
     };
 
-    crate::git::copy_ignored_files(&main_wt, &canonical)?;
+    crate::fs::copy_ignored_files(&main_wt, &canonical)?;
 
     if let Some(stash_ref) = stash_ref.as_deref() {
         let canonical_str = canonical

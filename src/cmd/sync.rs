@@ -211,7 +211,7 @@ fn handle_pruned_branch(
             // Branch is in a linked worktree — remove it.
             crate::git::remove_worktree(wt_path, false)?;
             if let Ok(root) = crate::git::read_worktree_root() {
-                crate::git::remove_empty_parent_dirs(wt_path, &root);
+                crate::fs::remove_empty_parent_dirs(wt_path, &root);
             }
             // If the user was inside that worktree, navigate them to main.
             if current_wt.as_deref() == Some(wt_path.as_path()) {

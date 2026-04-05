@@ -69,7 +69,7 @@ fn checkout_worktree(branch: &str) -> Result<(), String> {
     crate::git::ensure_branch_allowed_in_linked_worktree(branch)?;
     let canonical = crate::git::add_worktree(&wt_path, &[branch])?;
     let main_wt = crate::git::find_main_worktree()?;
-    crate::git::copy_ignored_files(&main_wt, &canonical)?;
+    crate::fs::copy_ignored_files(&main_wt, &canonical)?;
     crate::output::success(&format!("Checked out '{branch}' at {}", canonical.display()));
     crate::shell_protocol::emit_cd(&canonical);
     Ok(())

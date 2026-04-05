@@ -2,6 +2,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::CompleteEnv;
 mod cmd;
 mod complete;
+mod fs;
 mod git;
 mod output;
 mod shell_protocol;
