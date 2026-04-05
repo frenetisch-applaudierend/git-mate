@@ -15,9 +15,9 @@ const AUTO_CD_WRAPPER: &str = r#"
 mate() {
     local _proto _exit
     _proto=$(mktemp) || return 1
-    GIT_MATE_SHELL=1 command mate "$@" | command mate _protocol collect "$_proto"
-    _exit=${PIPESTATUS[0]}
-    eval "$(command mate _protocol interpret --bash "$_proto")"
+    GIT_MATE_PROTO="$_proto" command mate "$@"
+    _exit=$?
+    eval "$(command mate _protocol --bash "$_proto")"
     rm -f "$_proto"
     return $_exit
 }

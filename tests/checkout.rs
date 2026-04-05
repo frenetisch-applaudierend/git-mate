@@ -28,19 +28,20 @@ fn checkout_in_place_from_linked_worktree_cds_to_main_and_switches() {
     repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "-b", "linked-branch", "main"]);
     repo.git(&["branch", "other-branch"]);
 
+    let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
         .args(["checkout", "other-branch"])
-        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_MATE_PROTO", &proto_path)
         .current_dir(&wt_path)
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
     let main_path = repo.path().to_str().unwrap();
     assert!(
-        stdout.contains("_MATE_CMD:CD:") && stdout.contains(main_path),
-        "stdout should contain _MATE_CMD:CD: pointing to main worktree, got: {stdout:?}"
+        proto.contains("CD:") && proto.contains(main_path),
+        "protocol file should contain CD: pointing to main worktree, got: {proto:?}"
     );
 
     assert_eq!(repo.current_branch(), "other-branch");
@@ -58,18 +59,19 @@ fn checkout_in_place_from_linked_worktree_navigates_to_existing_worktree() {
     repo.git(&["worktree", "add", wt_a.to_str().unwrap(), "branch-a"]);
     repo.git(&["worktree", "add", wt_b.to_str().unwrap(), "branch-b"]);
 
+    let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
         .args(["checkout", "branch-b"])
-        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_MATE_PROTO", &proto_path)
         .current_dir(&wt_a)
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
     assert!(
-        stdout.contains("_MATE_CMD:CD:") && stdout.contains(wt_b.to_str().unwrap()),
-        "stdout should contain _MATE_CMD:CD: pointing to branch-b worktree, got: {stdout:?}"
+        proto.contains("CD:") && proto.contains(wt_b.to_str().unwrap()),
+        "protocol file should contain CD: pointing to branch-b worktree, got: {proto:?}"
     );
 }
 
@@ -82,15 +84,16 @@ fn checkout_worktree_creates_worktree() {
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
     repo.git(&["branch", "feature/checkout"]);
 
+    let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
         .args(["checkout", "feature/checkout", "-w"])
-        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_MATE_PROTO", &proto_path)
         .current_dir(repo.path())
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("_MATE_CMD:CD:"), "stdout should contain _MATE_CMD:CD:, got: {stdout:?}");
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert!(proto.contains("CD:"), "protocol file should contain CD:, got: {proto:?}");
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/checkout");
@@ -347,19 +350,20 @@ fn checkout_worktree_existing_worktree_emits_cd_for_shell_wrapper() {
     repo.git(&["branch", "feature/shell-cd"]);
     repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/shell-cd"]);
 
+    let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
         .args(["checkout", "feature/shell-cd", "--linked-worktree"])
-        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_MATE_PROTO", &proto_path)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .output()
         .unwrap();
     assert!(output.status.success());
 
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
     assert!(
-        stdout.contains("_MATE_CMD:CD:") && stdout.contains(wt_path.to_str().unwrap()),
-        "stdout should contain _MATE_CMD:CD: pointing to feature/shell-cd worktree, got: {stdout:?}"
+        proto.contains("CD:") && proto.contains(wt_path.to_str().unwrap()),
+        "protocol file should contain CD: pointing to feature/shell-cd worktree, got: {proto:?}"
     );
 }
 

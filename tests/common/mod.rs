@@ -7,6 +7,14 @@ pub fn git_mate() -> Command {
     Command::new(assert_cmd::cargo::cargo_bin!("mate"))
 }
 
+/// Create a temporary protocol file and return a guard (keeps the file alive) and its path.
+/// Pass the path as `GIT_MATE_PROTO` to activate shell integration.
+pub fn proto_file() -> (tempfile::NamedTempFile, std::path::PathBuf) {
+    let f = tempfile::NamedTempFile::new().unwrap();
+    let path = f.path().to_path_buf();
+    (f, path)
+}
+
 pub struct RepoWithoutRemote {
     pub dir: TempDir,
 }

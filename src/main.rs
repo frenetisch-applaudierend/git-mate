@@ -31,7 +31,7 @@ enum Commands {
     New(cmd::new::NewArgs),
     /// Fetch and merge the latest changes
     Sync(cmd::sync::SyncArgs),
-    /// Internal: shell protocol helpers (collect / interpret)
+    /// Internal: interpret shell protocol messages
     #[command(name = "_protocol", hide = true)]
     Protocol(cmd::protocol::ProtocolArgs),
 }

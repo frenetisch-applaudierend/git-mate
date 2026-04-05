@@ -8,38 +8,31 @@
 //! directory.  A plain exit code is not enough, and writing instructions to stderr
 //! would pollute error output visible to the user.
 //!
-//! The shell protocol solves this by embedding structured messages in the
-//! command's **stdout** stream.  The shell wrapper pipes that stream through
-//! `mate _protocol collect`, which strips the protocol lines and writes them to a
-//! temporary file, while forwarding all other output directly to the terminal.
-//! After the command exits, the wrapper runs `mate _protocol interpret` to turn
-//! the collected messages into shell statements and `eval`s them.
+//! The shell protocol solves this by writing structured messages directly to a
+//! **protocol file** whose path is passed via the `GIT_MATE_PROTO` environment
+//! variable.  The shell wrapper creates a temporary file, sets `GIT_MATE_PROTO` to
+//! its path, then invokes `mate` normally — stdout and stdin remain connected to
+//! the terminal.  After `mate` exits, the wrapper runs `mate _protocol interpret`
+//! to turn the collected messages into shell statements and `eval`s them.
 //!
 //! # Wire format
 //!
-//! Every protocol line on stdout looks like:
+//! Every line in the protocol file is a bare message, e.g.:
 //!
 //! ```text
-//! _MATE_CMD:<MESSAGE>
+//! CD:<path>
 //! ```
 //!
-//! where `<MESSAGE>` is one of:
-//!
-//! | Message        | Meaning                                      |
-//! |----------------|----------------------------------------------|
-//! | `CD:<path>`    | Ask the shell to `cd` to `<path>`            |
-//!
-//! `collect` strips the `_MATE_CMD:` prefix and writes bare messages (e.g.
-//! `CD:/some/path`) to the protocol file, one per line.  `interpret` reads that
-//! file and emits the corresponding shell statements.
+//! | Message     | Meaning                           |
+//! |-------------|-----------------------------------|
+//! | `CD:<path>` | Ask the shell to `cd` to `<path>` |
 //!
 //! # Activation
 //!
-//! Protocol output is only emitted when the `GIT_MATE_SHELL` environment variable
-//! is set (to any value).  The shell wrapper sets this variable before invoking
-//! `mate`, so direct invocations never emit protocol lines.
+//! Protocol messages are only written when the `GIT_MATE_PROTO` environment variable
+//! is set to a writable file path.  Direct invocations (without the wrapper) never
+//! produce protocol output.
 
-pub mod collect;
 pub mod emit;
 pub mod interpreter;
 pub mod message;

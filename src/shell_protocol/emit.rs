@@ -1,13 +1,18 @@
-use super::message::{Message, PREFIX};
+use std::io::Write;
 
-/// Returns true when the shell protocol is active (i.e. `mate` was invoked from a wrapper).
-pub fn is_active() -> bool {
-    std::env::var("GIT_MATE_SHELL").is_ok()
-}
+use super::message::Message;
 
-/// Emit a `CD` protocol message on stdout if the shell protocol is active.
+/// Emit a `CD` protocol message to the protocol file if shell integration is active
+/// (i.e. `GIT_MATE_PROTO` is set to a file path).
 pub fn emit_cd(path: &std::path::Path) {
-    if is_active() {
-        println!("{}{}", PREFIX, Message::Cd(path.to_path_buf()).to_wire());
+    let Some(proto_path) = std::env::var_os("GIT_MATE_PROTO") else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(proto_path)
+    {
+        let _ = writeln!(file, "{}", Message::Cd(path.to_path_buf()).to_wire());
     }
 }

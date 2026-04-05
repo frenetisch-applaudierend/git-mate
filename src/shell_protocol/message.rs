@@ -7,9 +7,6 @@ pub enum Message {
     Cd(PathBuf),
 }
 
-/// The prefix that identifies a protocol line on stdout.
-pub const PREFIX: &str = "_MATE_CMD:";
-
 impl Message {
     /// Parse a bare message string (prefix already stripped), e.g. `"CD:/some/path"`.
     pub fn parse(s: &str) -> Option<Self> {

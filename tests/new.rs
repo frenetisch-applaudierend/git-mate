@@ -75,15 +75,16 @@ fn worktree_mode_creates_worktree() {
 
     repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
 
+    let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
         .args(["new", "feature/login", "-w", "--from", "main"])
-        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_MATE_PROTO", &proto_path)
         .current_dir(repo.path())
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("_MATE_CMD:CD:"), "stdout should contain _MATE_CMD:CD:, got: {stdout:?}");
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert!(proto.contains("CD:"), "protocol file should contain CD:, got: {proto:?}");
 
     // Derive expected path: <wt_root>/<repo-dir-name>/feature/login
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
@@ -149,7 +150,6 @@ fn default_worktree_mode_from_config_creates_worktree() {
 
     let output = common::git_mate()
         .args(["new", "feature/default-worktree", "--from", "main"])
-        .env("GIT_MATE_SHELL", "1")
         .current_dir(repo.path())
         .output()
         .unwrap();

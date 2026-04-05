@@ -16,20 +16,21 @@ fn move_creates_worktree_and_returns_main_to_default_branch() {
     ]);
     repo.git(&["checkout", "-b", "feature/move"]);
 
+    let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
         .arg("move")
-        .env("GIT_MATE_SHELL", "1")
+        .env("GIT_MATE_PROTO", &proto_path)
         .current_dir(repo.path())
         .output()
         .unwrap();
     assert!(output.status.success(), "move should succeed");
 
-    let stdout = String::from_utf8(output.stdout).unwrap();
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/move");
     assert!(
-        stdout.contains(&format!("_MATE_CMD:CD:{}", wt_path.display())),
-        "stdout should contain _MATE_CMD:CD: pointing to the new worktree, got: {stdout:?}"
+        proto.contains(&format!("CD:{}", wt_path.display())),
+        "protocol file should contain CD: pointing to the new worktree, got: {proto:?}"
     );
 
     assert_eq!(repo.current_branch(), "main");
