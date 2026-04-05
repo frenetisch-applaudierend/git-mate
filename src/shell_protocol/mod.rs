@@ -1,8 +1,8 @@
-//! Shell protocol — out-of-band communication between `mate` and its shell wrappers.
+//! Shell protocol — out-of-band communication between `git-mate` and its shell wrappers.
 //!
 //! # Overview
 //!
-//! When `mate` is invoked through a shell wrapper (e.g. the function installed by
+//! When `git-mate` is invoked through a shell wrapper (e.g. the function installed by
 //! `mate init zsh`), it needs to instruct the *shell* to perform actions that a
 //! child process cannot do by itself — most notably changing the shell's working
 //! directory.  A plain exit code is not enough, and writing instructions to stderr
@@ -11,8 +11,8 @@
 //! The shell protocol solves this by writing structured messages directly to a
 //! **protocol file** whose path is passed via the `GIT_MATE_PROTO` environment
 //! variable.  The shell wrapper creates a temporary file, sets `GIT_MATE_PROTO` to
-//! its path, then invokes `mate` normally — stdout and stdin remain connected to
-//! the terminal.  After `mate` exits, the wrapper runs `mate _protocol interpret`
+//! its path, then invokes `git-mate` normally — stdout and stdin remain connected to
+//! the terminal.  After `git-mate` exits, the wrapper runs `mate _protocol interpret`
 //! to turn the collected messages into shell statements and `eval`s them.
 //!
 //! # Wire format

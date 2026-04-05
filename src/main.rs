@@ -8,7 +8,7 @@ mod output;
 mod shell_protocol;
 
 #[derive(Parser)]
-#[command(name = "mate")]
+#[command(name = "git-mate")]
 struct Cli {
     #[arg(long, global = true, help = "Show raw git output")]
     verbose: bool,
