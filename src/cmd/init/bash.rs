@@ -47,6 +47,11 @@ fi
 "#;
 
 const COMPLETION: &str = r#"
-# Shell completions
+# Shell completions for `git-mate` and `git mate`
 source <(COMPLETE=bash command git-mate)
+_git_mate() {
+    local COMP_WORDS=("git-mate" "${COMP_WORDS[@]:2}")
+    local COMP_CWORD=$((COMP_CWORD - 1))
+    _clap_complete_git_mate "" "${COMP_WORDS[$COMP_CWORD]}"
+}
 "#;

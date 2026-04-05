@@ -47,6 +47,17 @@ fi
 "#;
 
 const COMPLETION: &str = r#"
-# Shell completions
+# Shell completions for `git-mate` and `git mate`
 source <(COMPLETE=zsh command git-mate)
+_git-mate() {
+    words[1]="git-mate"
+    _clap_dynamic_completer_git_mate
+}
+# Register 'mate' as a known git subcommand (for `git ma<TAB>`)
+() {
+    local -a _cmds
+    zstyle -a ':completion:*:*:git:*' user-commands _cmds
+    (( ${_cmds[(I)mate:*]} )) || _cmds+=('mate:manage git worktrees')
+    zstyle ':completion:*:*:git:*' user-commands $_cmds
+}
 "#;
