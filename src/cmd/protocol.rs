@@ -22,6 +22,10 @@ pub struct ShellArgs {
     /// Emit zsh-compatible shell statements.
     #[arg(long)]
     pub zsh: bool,
+
+    /// Emit PowerShell-compatible shell statements.
+    #[arg(long)]
+    pub pwsh: bool,
 }
 
 pub fn run(args: ProtocolArgs) -> Result<(), String> {
@@ -30,8 +34,10 @@ pub fn run(args: ProtocolArgs) -> Result<(), String> {
 
     let emit: fn(&Message) -> String = if args.shell.bash {
         interpreter::interpret_bash
-    } else {
+    } else if args.shell.zsh {
         interpreter::interpret_zsh
+    } else {
+        interpreter::interpret_pwsh
     };
 
     for line in content.lines() {
