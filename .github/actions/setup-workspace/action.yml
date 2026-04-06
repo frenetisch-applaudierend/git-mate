@@ -4,6 +4,10 @@ description: Set up Rust toolchain with caching (run after checkout)
 runs:
   using: composite
   steps:
+    - name: Install shells for testing
+      shell: bash
+      run: sudo apt-get install -y zsh
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
