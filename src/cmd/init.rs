@@ -1,10 +1,12 @@
 mod bash;
+mod pwsh;
 mod zsh;
 
 #[derive(clap::ValueEnum, Clone)]
 pub enum Shell {
-    Zsh,
     Bash,
+    Pwsh,
+    Zsh,
 }
 
 #[derive(clap::Args)]
@@ -32,8 +34,9 @@ pub fn run(args: InitArgs) -> Result<(), String> {
         _ => ShellIntegration::False,
     };
     match args.shell {
-        Shell::Zsh => zsh::emit_init_script(integration),
         Shell::Bash => bash::emit_init_script(integration),
+        Shell::Pwsh => pwsh::emit_init_script(integration),
+        Shell::Zsh => zsh::emit_init_script(integration),
     }
     Ok(())
 }
