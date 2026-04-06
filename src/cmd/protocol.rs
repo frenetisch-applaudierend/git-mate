@@ -34,10 +34,12 @@ pub fn run(args: ProtocolArgs) -> Result<(), String> {
 
     let emit: fn(&Message) -> String = if args.shell.bash {
         interpreter::interpret_bash
+    } else if args.shell.pwsh {
+        interpreter::interpret_pwsh
     } else if args.shell.zsh {
         interpreter::interpret_zsh
     } else {
-        interpreter::interpret_pwsh
+        unreachable!("clap group requires exactly one shell flag")
     };
 
     for line in content.lines() {
