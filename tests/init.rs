@@ -39,9 +39,12 @@ fn pwsh_init_script_is_valid_shell() {
     let script = String::from_utf8(output.stdout).unwrap();
 
     // Write to a temp .ps1 file so PowerShell's AST parser can check syntax
-    // without executing the script.
-    let tmp = tempfile::Builder::new().suffix(".ps1").tempfile().unwrap();
-    std::fs::write(tmp.path(), &script).unwrap();
+    // without executing the script. Write via the file handle (not std::fs::write)
+    // so the same open handle is reused — avoids locking issues on Windows.
+    use std::io::Write;
+    let mut tmp = tempfile::Builder::new().suffix(".ps1").tempfile().unwrap();
+    tmp.write_all(script.as_bytes()).unwrap();
+    tmp.flush().unwrap();
     let path = tmp.path().to_string_lossy().replace('\'', "''");
     let parse_cmd = format!(
         "$e = @(); $null = [System.Management.Automation.Language.Parser]::ParseFile('{path}', [ref]$null, [ref]$e); exit $e.Count"

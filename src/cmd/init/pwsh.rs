@@ -20,13 +20,17 @@ const FORCE_WRAPPER: &str = r#"
 # Auto-cd support
 function git {
     $proto = [System.IO.Path]::GetTempFileName()
-    $env:GIT_MATE_PROTO = $proto
-    & (Get-Command -Name git -CommandType Application) @args
-    $exitCode = $LASTEXITCODE
-    $env:GIT_MATE_PROTO = $null
-    & git-mate _protocol --pwsh $proto | Invoke-Expression
-    Remove-Item $proto -ErrorAction SilentlyContinue
-    $global:LASTEXITCODE = $exitCode
+    $exitCode = -1
+    try {
+        $env:GIT_MATE_PROTO = $proto
+        & (Get-Command -Name git -CommandType Application) @args
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $env:GIT_MATE_PROTO = $null
+        & git-mate _protocol --pwsh $proto | Invoke-Expression
+        Remove-Item $proto -ErrorAction SilentlyContinue
+        $global:LASTEXITCODE = $exitCode
+    }
 }
 "#;
 
@@ -37,13 +41,17 @@ if ((Get-Command git -ErrorAction SilentlyContinue).CommandType -eq 'Function') 
 } else {
     function git {
         $proto = [System.IO.Path]::GetTempFileName()
-        $env:GIT_MATE_PROTO = $proto
-        & (Get-Command -Name git -CommandType Application) @args
-        $exitCode = $LASTEXITCODE
-        $env:GIT_MATE_PROTO = $null
-        & git-mate _protocol --pwsh $proto | Invoke-Expression
-        Remove-Item $proto -ErrorAction SilentlyContinue
-        $global:LASTEXITCODE = $exitCode
+        $exitCode = -1
+        try {
+            $env:GIT_MATE_PROTO = $proto
+            & (Get-Command -Name git -CommandType Application) @args
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $env:GIT_MATE_PROTO = $null
+            & git-mate _protocol --pwsh $proto | Invoke-Expression
+            Remove-Item $proto -ErrorAction SilentlyContinue
+            $global:LASTEXITCODE = $exitCode
+        }
     }
 }
 "#;
