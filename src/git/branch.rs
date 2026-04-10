@@ -13,8 +13,11 @@ pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
 }
 
 pub fn current_branch() -> Result<String, String> {
-    run_output(&["rev-parse", "--abbrev-ref", "HEAD"])
-        .map(|s| s.trim().to_string())
+    run_output(&["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string())
+}
+
+pub fn branch_exists(branch: &str) -> Result<bool, String> {
+    Ok(run_output(&["rev-parse", "--verify", &format!("refs/heads/{branch}")]).is_ok())
 }
 
 pub fn list_local_branches_with_upstream() -> Result<Vec<(String, Option<String>)>, String> {
@@ -80,9 +83,15 @@ pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String>
     if no_remotes {
         return Ok(false);
     }
-    Ok(
-        run_output(&["-C", git_dir, "log", branch, "--not", "--remotes", "--oneline"])
-            .map(|o| !o.trim().is_empty())
-            .unwrap_or(false),
-    )
+    Ok(run_output(&[
+        "-C",
+        git_dir,
+        "log",
+        branch,
+        "--not",
+        "--remotes",
+        "--oneline",
+    ])
+    .map(|o| !o.trim().is_empty())
+    .unwrap_or(false))
 }
