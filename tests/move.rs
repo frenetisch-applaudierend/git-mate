@@ -6,14 +6,10 @@ use std::process::Command;
 use tempfile::TempDir;
 
 #[test]
-fn move_creates_worktree_and_returns_main_to_default_branch() {
+fn move_current_branch_from_main_to_linked_worktree() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
-    repo.git(&[
-        "config",
-        "mate.worktreeRoot",
-        wt_root.path().to_str().unwrap(),
-    ]);
+    configure_worktree_root(&repo, &wt_root);
     repo.git(&["checkout", "-b", "feature/move"]);
 
     let (_proto_guard, proto_path) = common::proto_file();
@@ -26,8 +22,7 @@ fn move_creates_worktree_and_returns_main_to_default_branch() {
     assert!(output.status.success(), "move should succeed");
 
     let proto = std::fs::read_to_string(&proto_path).unwrap();
-    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
-    let wt_path = wt_root.path().join(repo_name).join("feature/move");
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feature/move");
     assert!(
         proto.contains(&format!("CD:{}", wt_path.display())),
         "protocol file should contain CD: pointing to the new worktree, got: {proto:?}"
@@ -49,24 +44,45 @@ fn move_creates_worktree_and_returns_main_to_default_branch() {
 }
 
 #[test]
-fn move_fails_from_linked_worktree() {
+fn move_current_branch_from_linked_to_main_worktree() {
     let repo = common::RepoWithoutRemote::new();
-    let wt_path = repo.path().join("feature-linked");
-    repo.git(&[
-        "worktree",
-        "add",
-        "-b",
-        "feature/linked",
-        wt_path.to_str().unwrap(),
-        "main",
-    ]);
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
+
+    let (_proto_guard, proto_path) = common::proto_file();
+    let output = common::git_mate()
+        .arg("move")
+        .env("GIT_MATE_PROTO", &proto_path)
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "move should succeed");
+
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert!(
+        proto.contains(&format!("CD:{}", repo.path().display())),
+        "protocol file should contain CD: pointing to the main worktree, got: {proto:?}"
+    );
+    assert_eq!(repo.current_branch(), "feature/linked");
+    assert!(!wt_path.exists(), "linked worktree should be removed");
+}
+
+#[test]
+fn move_explicit_branch_from_linked_to_main() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
 
     common::git_mate()
-        .arg("move")
-        .current_dir(&wt_path)
+        .args(["move", "feature/linked"])
+        .current_dir(repo.path())
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("main worktree"));
+        .success();
+
+    assert_eq!(repo.current_branch(), "feature/linked");
+    assert!(!wt_path.exists(), "linked worktree should be removed");
 }
 
 #[test]
@@ -96,14 +112,38 @@ fn move_fails_on_detached_head() {
 }
 
 #[test]
-fn move_dirty_worktree_requires_stash_flag() {
+fn move_missing_branch_fails() {
+    let repo = common::RepoWithoutRemote::new();
+
+    common::git_mate()
+        .args(["move", "feature/missing"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not exist"));
+}
+
+#[test]
+fn move_branch_not_checked_out_anywhere_fails() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-b", "feature/free"]);
+    repo.git(&["checkout", "main"]);
+
+    common::git_mate()
+        .args(["move", "feature/free"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "is not checked out in any worktree",
+        ));
+}
+
+#[test]
+fn move_dirty_source_worktree_fails() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
-    repo.git(&[
-        "config",
-        "mate.worktreeRoot",
-        wt_root.path().to_str().unwrap(),
-    ]);
+    configure_worktree_root(&repo, &wt_root);
 
     std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
     repo.git(&["add", "tracked.txt"]);
@@ -116,51 +156,132 @@ fn move_dirty_worktree_requires_stash_flag() {
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--stash"));
+        .stderr(predicate::str::contains("uncommitted changes"));
 
     assert_eq!(repo.current_branch(), "feature/dirty");
 }
 
 #[test]
-fn move_with_stash_restores_tracked_and_untracked_changes() {
+fn move_dirty_main_worktree_fails_when_moving_from_linked() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
+
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    common::git_mate()
+        .arg("move")
+        .current_dir(&wt_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "main worktree has uncommitted changes",
+        ));
+}
+
+#[test]
+fn move_to_main_fails_when_main_is_on_another_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["checkout", "-b", "feature/main-side"]);
+    let wt_path =
+        create_linked_worktree_from(&repo, &wt_root, "feature/linked", "feature/main-side");
+
+    common::git_mate()
+        .arg("move")
+        .current_dir(&wt_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("switch main back to 'main' first"));
+}
+
+#[test]
+fn move_fails_if_linked_worktree_path_does_not_match_configured_location() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+
+    let other_root = TempDir::new().unwrap();
+    let wt_path = other_root.path().join("feature-linked");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature/linked",
+        wt_path.to_str().unwrap(),
+        "main",
+    ]);
+
+    common::git_mate()
+        .arg("move")
+        .current_dir(&wt_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unexpected linked worktree path"));
+}
+
+#[test]
+fn move_to_linked_fails_if_expected_directory_already_exists() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["checkout", "-b", "feature/move"]);
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feature/move");
+    std::fs::create_dir_all(&wt_path).unwrap();
+
+    common::git_mate()
+        .arg("move")
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("directory already exists"));
+}
+
+fn configure_worktree_root(repo: &common::RepoWithoutRemote, wt_root: &TempDir) {
     repo.git(&[
         "config",
         "mate.worktreeRoot",
         wt_root.path().to_str().unwrap(),
     ]);
+}
 
-    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
-    repo.git(&["add", "tracked.txt"]);
-    repo.git(&["commit", "-m", "add tracked file"]);
-    repo.git(&["checkout", "-b", "feature/stash"]);
-
-    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
-    std::fs::write(repo.path().join("notes.txt"), "local notes\n").unwrap();
-
-    common::git_mate()
-        .args(["move", "--stash"])
-        .current_dir(repo.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("Stashed local changes"))
-        .stderr(predicate::str::contains("Restored stashed changes"));
-
-    assert_eq!(repo.current_branch(), "main");
-
+fn expected_worktree_path(
+    repo: &common::RepoWithoutRemote,
+    wt_root: &TempDir,
+    branch: &str,
+) -> std::path::PathBuf {
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
-    let wt_path = wt_root.path().join(repo_name).join("feature/stash");
-    assert!(
-        wt_path.exists(),
-        "worktree directory should exist at {wt_path:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
-        "changed\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(wt_path.join("notes.txt")).unwrap(),
-        "local notes\n"
-    );
+    wt_root.path().join(repo_name).join(branch)
+}
+
+fn create_linked_worktree(
+    repo: &common::RepoWithoutRemote,
+    wt_root: &TempDir,
+    branch: &str,
+) -> std::path::PathBuf {
+    create_linked_worktree_from(repo, wt_root, branch, "main")
+}
+
+fn create_linked_worktree_from(
+    repo: &common::RepoWithoutRemote,
+    wt_root: &TempDir,
+    branch: &str,
+    from_ref: &str,
+) -> std::path::PathBuf {
+    let wt_path = expected_worktree_path(repo, wt_root, branch);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        wt_path.to_str().unwrap(),
+        from_ref,
+    ]);
+    wt_path
 }

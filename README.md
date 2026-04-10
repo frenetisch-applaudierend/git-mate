@@ -42,19 +42,25 @@ git mate checkout feature/login -m        # same as --main-worktree
 
 ### `git mate move`
 
-Moves the currently checked out branch out of the main worktree and into its own linked worktree.
+Moves a branch between the main worktree and its linked worktree.
+
+Without an argument, it moves the current branch. With a branch name, it moves that specific
+branch.
 
 This only works when:
 
-- you are in the main worktree
-- the current branch is not the default branch
+- the branch exists and is checked out in a worktree
+- the branch is not the default branch
+- the source worktree is clean
+- the destination is safe to use (for example, a linked branch can only move back into a clean main
+  worktree that is currently on the default branch)
 
-If the main worktree has local changes, use `--stash` to move them too. This stashes tracked and
-untracked changes before the move, creates the linked worktree, then restores the stash there.
+Moving from main to linked creates the linked worktree at the configured `mate.worktreeRoot`.
+Moving from linked back to main removes the linked worktree directory.
 
 ```bash
 git mate move
-git mate move --stash
+git mate move feature/login
 ```
 
 ### `git mate finish [<branch>]`

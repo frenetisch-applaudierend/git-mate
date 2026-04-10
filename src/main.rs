@@ -25,7 +25,7 @@ enum Commands {
     Finish(cmd::finish::FinishArgs),
     /// Set up shell integration
     Init(cmd::init::InitArgs),
-    /// Move the current branch into a linked worktree
+    /// Move a branch between the main and linked worktrees
     Move(cmd::move_cmd::MoveArgs),
     /// Create and switch to a new branch
     New(cmd::new::NewArgs),
