@@ -25,8 +25,6 @@ enum Commands {
     Finish(cmd::finish::FinishArgs),
     /// Set up shell integration
     Init(cmd::init::InitArgs),
-    /// Move a branch between the main and linked worktrees
-    Move(cmd::move_cmd::MoveArgs),
     /// Create and switch to a new branch
     New(cmd::new::NewArgs),
     /// Fetch and merge the latest changes
@@ -51,7 +49,6 @@ fn main() {
         Commands::Checkout(args) => cmd::checkout::run(args),
         Commands::Finish(args) => cmd::finish::run(args),
         Commands::Init(args) => cmd::init::run(args),
-        Commands::Move(args) => cmd::move_cmd::run(args),
         Commands::New(args) => cmd::new::run(args),
         Commands::Sync(args) => cmd::sync::run(args),
         Commands::Protocol(args) => cmd::protocol::run(args),

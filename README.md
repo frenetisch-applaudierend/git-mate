@@ -29,38 +29,30 @@ git mate new feature/login --no-fetch        # skip fetch
 
 ### `git mate checkout <branch>` (alias: `co`)
 
-Checks out an existing branch — local or remote. If the branch already exists in a worktree, navigates there instead.
+Checks out an existing branch — local or remote.
 
-The default branch is only allowed in the main worktree, so linked-worktree mode rejects it.
+Without `-m` or `-w`, this follows `mate.defaultBranchMode` for branches that are not checked out yet.
+If the branch is already checked out in any worktree, it navigates there instead.
 
-```bash
-git mate checkout feature/login           # checkout in main worktree
-git mate co feature/login                 # same, using the alias
-git mate checkout feature/login -w        # same as --linked-worktree
-git mate checkout feature/login -m        # same as --main-worktree
-```
+Use `-m` or `-w` to make the destination explicit:
 
-### `git mate move`
+- `-m` ensures the branch ends up in the main worktree
+- `-w` ensures the branch ends up in a linked worktree
 
-Moves a branch between the main worktree and its linked worktree.
+When relocating a dirty branch between worktrees, add `--stash` to stash changes in the source
+worktree and reapply them in the destination. If reapplying fails, the stash entry is kept.
 
-Without an argument, it moves the current branch. With a branch name, it moves that specific
-branch.
-
-This only works when:
-
-- the branch exists and is checked out in a worktree
-- the branch is not the default branch
-- the source worktree is clean
-- the destination is safe to use (for example, a linked branch can only move back into a clean main
-  worktree that is currently on the default branch)
-
-Moving from main to linked creates the linked worktree at the configured `mate.worktreeRoot`.
-Moving from linked back to main removes the linked worktree directory.
+The default branch is only allowed in the main worktree, so `-w` rejects it.
 
 ```bash
-git mate move
-git mate move feature/login
+git mate checkout feature/login                 # follow default placement, or jump to where it's already checked out
+git mate co feature/login                       # same, using the alias
+git mate checkout -w                            # move the current branch into a linked worktree
+git mate checkout -m                            # move the current branch into the main worktree
+git mate checkout feature/login -w              # ensure the branch is in a linked worktree
+git mate checkout feature/login -m              # ensure the branch is in the main worktree
+git mate checkout feature/login -w --stash      # move dirty changes from main to linked
+git mate checkout feature/login -m --stash      # move dirty changes from linked to main
 ```
 
 ### `git mate finish [<branch>]`
