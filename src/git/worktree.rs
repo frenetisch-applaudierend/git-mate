@@ -34,15 +34,6 @@ pub fn list_worktrees() -> Result<Vec<WorktreeEntry>, String> {
     Ok(worktrees)
 }
 
-pub fn find_worktree_for_branch(branch: &str) -> Result<Option<std::path::PathBuf>, String> {
-    let path = list_worktrees()?
-        .into_iter()
-        .skip(1)
-        .find(|wt| wt.branch.as_deref() == Some(branch))
-        .map(|wt| wt.path);
-    Ok(path)
-}
-
 pub fn find_main_worktree() -> Result<std::path::PathBuf, String> {
     list_worktrees()?
         .into_iter()

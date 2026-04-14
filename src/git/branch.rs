@@ -16,10 +16,6 @@ pub fn current_branch() -> Result<String, String> {
     run_output(&["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string())
 }
 
-pub fn branch_exists(branch: &str) -> Result<bool, String> {
-    Ok(run_output(&["rev-parse", "--verify", &format!("refs/heads/{branch}")]).is_ok())
-}
-
 pub fn list_local_branches_with_upstream() -> Result<Vec<(String, Option<String>)>, String> {
     let output = run_output(&[
         "for-each-ref",
@@ -73,6 +69,22 @@ pub fn ensure_branch_allowed_in_linked_worktree(branch: &str) -> Result<(), Stri
 
 pub fn delete_branch_force_in(git_dir: &str, branch: &str) -> Result<(), String> {
     run(&["-C", git_dir, "branch", "-D", branch])
+}
+
+pub fn stash_push_in(path: &str, message: &str) -> Result<(), String> {
+    run(&[
+        "-C",
+        path,
+        "stash",
+        "push",
+        "--include-untracked",
+        "-m",
+        message,
+    ])
+}
+
+pub fn stash_pop_in(path: &str, stash_ref: &str) -> Result<(), String> {
+    run(&["-C", path, "stash", "pop", stash_ref])
 }
 
 pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String> {
