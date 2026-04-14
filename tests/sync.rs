@@ -24,7 +24,11 @@ fn fetch_and_pull() {
         .current_dir(setup.local_path())
         .assert()
         .success();
-    assert_ne!(setup.local_head_commit(), before, "HEAD should have advanced");
+    assert_ne!(
+        setup.local_head_commit(),
+        before,
+        "HEAD should have advanced"
+    );
 }
 
 #[test]
@@ -37,7 +41,11 @@ fn rebase_flag() {
         .current_dir(setup.local_path())
         .assert()
         .success();
-    assert_ne!(setup.local_head_commit(), before, "HEAD should have advanced");
+    assert_ne!(
+        setup.local_head_commit(),
+        before,
+        "HEAD should have advanced"
+    );
 }
 
 #[test]

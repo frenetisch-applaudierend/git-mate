@@ -80,10 +80,10 @@ fn copy_file(src: &std::path::Path, dst: &std::path::Path, rel_path: &str) -> bo
     if dst_file.exists() {
         return false;
     }
-    if let Some(parent) = dst_file.parent() {
-        if std::fs::create_dir_all(parent).is_err() {
-            return false;
-        }
+    if let Some(parent) = dst_file.parent()
+        && std::fs::create_dir_all(parent).is_err()
+    {
+        return false;
     }
     if let Err(e) = std::fs::copy(&src_file, &dst_file) {
         crate::output::info(&format!("could not copy {rel_path}: {e}"));

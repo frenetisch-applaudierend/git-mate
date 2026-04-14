@@ -52,8 +52,7 @@ pub fn find_main_worktree() -> Result<std::path::PathBuf, String> {
 }
 
 pub fn current_worktree_root() -> Result<std::path::PathBuf, String> {
-    run_output(&["rev-parse", "--show-toplevel"])
-        .map(|s| std::path::PathBuf::from(s.trim()))
+    run_output(&["rev-parse", "--show-toplevel"]).map(|s| std::path::PathBuf::from(s.trim()))
 }
 
 pub fn is_main_worktree() -> Result<bool, String> {
@@ -115,8 +114,7 @@ pub fn remove_worktree(path: &std::path::Path, force: bool) -> Result<(), String
 }
 
 pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
-    run_output(&["-C", path, "status", "--porcelain"])
-        .map(|o| o.is_empty())
+    run_output(&["-C", path, "status", "--porcelain"]).map(|o| o.is_empty())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

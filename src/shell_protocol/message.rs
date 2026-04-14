@@ -34,7 +34,10 @@ mod tests {
         let msg = Message::Cd(PathBuf::from("/some/path"));
         let wire = msg.to_wire();
         assert_eq!(wire, "CD:/some/path");
-        assert_eq!(Message::parse(&wire), Some(Message::Cd(PathBuf::from("/some/path"))));
+        assert_eq!(
+            Message::parse(&wire),
+            Some(Message::Cd(PathBuf::from("/some/path")))
+        );
     }
 
     #[test]

@@ -14,12 +14,16 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
 
     // 2. Fetch everything and prune stale remote-tracking refs.
     let tracking_before: std::collections::HashSet<String> =
-        crate::git::list_remote_tracking_refs()?.into_iter().collect();
+        crate::git::list_remote_tracking_refs()?
+            .into_iter()
+            .collect();
 
     crate::git::fetch_all()?;
 
     let tracking_after: std::collections::HashSet<String> =
-        crate::git::list_remote_tracking_refs()?.into_iter().collect();
+        crate::git::list_remote_tracking_refs()?
+            .into_iter()
+            .collect();
 
     let pruned: std::collections::HashSet<&String> =
         tracking_before.difference(&tracking_after).collect();
@@ -61,9 +65,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
                     // The branch had unique commits if its tip was NOT an ancestor of
                     // (i.e., was ahead of) the upstream tip at snapshot time.
                     match (local_sha, upstream_sha) {
-                        (Some(l), Some(u)) => {
-                            !crate::git::is_ancestor(l, u).unwrap_or(false)
-                        }
+                        (Some(l), Some(u)) => !crate::git::is_ancestor(l, u).unwrap_or(false),
                         // No upstream SHA recorded means we couldn't check → be safe.
                         _ => true,
                     }
@@ -152,7 +154,9 @@ fn fast_forward_branch(branch: &str, upstream: &str) -> Result<(), String> {
             crate::output::info(&format!("{branch}: fast-forwarded"));
         }
         false => {
-            crate::output::info(&format!("{branch}: cannot fast-forward (diverged), skipping"));
+            crate::output::info(&format!(
+                "{branch}: cannot fast-forward (diverged), skipping"
+            ));
         }
     }
     Ok(())
@@ -191,13 +195,13 @@ fn handle_pruned_branch(
     }
 
     // For the current branch, ask before acting.
-    if is_current {
-        if !prompt_yes_no(&format!(
+    if is_current
+        && !prompt_yes_no(&format!(
             "Remote for '{branch}' was deleted. Delete local branch?"
-        )) {
-            crate::output::info(&format!("{branch}: kept"));
-            return Ok(());
-        }
+        ))
+    {
+        crate::output::info(&format!("{branch}: kept"));
+        return Ok(());
     }
 
     // Perform the finish-like action for checked-out branches.

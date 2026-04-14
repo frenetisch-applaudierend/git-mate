@@ -25,7 +25,14 @@ fn checkout_in_place_from_linked_worktree_cds_to_main_and_switches() {
     let wt_root = TempDir::new().unwrap();
     let wt_path = wt_root.path().join("linked");
 
-    repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "-b", "linked-branch", "main"]);
+    repo.git(&[
+        "worktree",
+        "add",
+        wt_path.to_str().unwrap(),
+        "-b",
+        "linked-branch",
+        "main",
+    ]);
     repo.git(&["branch", "other-branch"]);
 
     let (_proto_guard, proto_path) = common::proto_file();
@@ -93,11 +100,17 @@ fn checkout_worktree_creates_worktree() {
         .unwrap();
     assert!(output.status.success());
     let proto = std::fs::read_to_string(&proto_path).unwrap();
-    assert!(proto.contains("CD:"), "protocol file should contain CD:, got: {proto:?}");
+    assert!(
+        proto.contains("CD:"),
+        "protocol file should contain CD:, got: {proto:?}"
+    );
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/checkout");
-    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+    assert!(
+        wt_path.exists(),
+        "worktree directory should exist at {wt_path:?}"
+    );
 
     let branch = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -125,8 +138,14 @@ fn checkout_uses_configured_worktree_default() {
         .success();
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
-    let wt_path = wt_root.path().join(repo_name).join("feature/default-checkout");
-    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+    let wt_path = wt_root
+        .path()
+        .join(repo_name)
+        .join("feature/default-checkout");
+    assert!(
+        wt_path.exists(),
+        "worktree directory should exist at {wt_path:?}"
+    );
 }
 
 #[test]
@@ -147,7 +166,10 @@ fn main_worktree_flag_overrides_configured_checkout_worktree_default() {
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/override-main");
-    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert!(
+        !wt_path.exists(),
+        "linked worktree should not be created at {wt_path:?}"
+    );
     assert_eq!(repo.current_branch(), "feature/override-main");
 }
 
@@ -195,7 +217,9 @@ fn checkout_worktree_fails_if_directory_exists_but_is_not_worktree() {
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("does not appear to be a git worktree"));
+        .stderr(predicate::str::contains(
+            "does not appear to be a git worktree",
+        ));
 }
 
 #[test]
@@ -256,10 +280,18 @@ fn checkout_in_place_navigates_to_existing_worktree() {
 fn checkout_worktree_copies_ignored_files() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
-    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
 
     // Commit a .gitignore that ignores .env.local and node_modules/
-    std::fs::write(repo.path().join(".gitignore"), ".env.local\nnode_modules/\n").unwrap();
+    std::fs::write(
+        repo.path().join(".gitignore"),
+        ".env.local\nnode_modules/\n",
+    )
+    .unwrap();
     repo.git(&["add", ".gitignore"]);
     repo.git(&["commit", "-m", "add gitignore"]);
 
@@ -281,18 +313,31 @@ fn checkout_worktree_copies_ignored_files() {
     let wt_path = wt_root.path().join(repo_name).join("feature/copy-test");
 
     // Ignored file was copied
-    assert!(wt_path.join(".env.local").exists(), ".env.local should be copied");
-    assert_eq!(std::fs::read_to_string(wt_path.join(".env.local")).unwrap(), "SECRET=test");
+    assert!(
+        wt_path.join(".env.local").exists(),
+        ".env.local should be copied"
+    );
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
 
     // Blacklisted directory was NOT copied
-    assert!(!wt_path.join("node_modules").exists(), "node_modules should not be copied");
+    assert!(
+        !wt_path.join("node_modules").exists(),
+        "node_modules should not be copied"
+    );
 }
 
 #[test]
 fn checkout_worktree_does_not_overwrite_existing_files() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
-    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
 
     // Commit .env.local on a branch (before it was gitignored)
     std::fs::write(repo.path().join(".env.local"), "COMMITTED=value").unwrap();
@@ -348,7 +393,12 @@ fn checkout_worktree_existing_worktree_emits_cd_for_shell_wrapper() {
     let wt_path = wt_root.path().join("linked");
 
     repo.git(&["branch", "feature/shell-cd"]);
-    repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/shell-cd"]);
+    repo.git(&[
+        "worktree",
+        "add",
+        wt_path.to_str().unwrap(),
+        "feature/shell-cd",
+    ]);
 
     let (_proto_guard, proto_path) = common::proto_file();
     let output = common::git_mate()
@@ -387,6 +437,9 @@ fn checkout_worktree_rejects_default_branch() {
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("main");
-    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert!(
+        !wt_path.exists(),
+        "linked worktree should not be created at {wt_path:?}"
+    );
     assert_eq!(repo.current_branch(), "feature/current");
 }

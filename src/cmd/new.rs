@@ -3,9 +3,19 @@ pub struct NewArgs {
     pub branch: String,
     #[arg(long, help = "Branch or ref to create from (default: repo default branch)", add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub from: Option<String>,
-    #[arg(short = 'm', long, conflicts_with = "linked_worktree", help = "Force the branch into the main worktree")]
+    #[arg(
+        short = 'm',
+        long,
+        conflicts_with = "linked_worktree",
+        help = "Force the branch into the main worktree"
+    )]
     pub main_worktree: bool,
-    #[arg(short = 'w', long, conflicts_with = "main_worktree", help = "Force the branch into a linked worktree")]
+    #[arg(
+        short = 'w',
+        long,
+        conflicts_with = "main_worktree",
+        help = "Force the branch into a linked worktree"
+    )]
     pub linked_worktree: bool,
     #[arg(long, help = "Skip fetching from origin before branching")]
     pub no_fetch: bool,
@@ -41,7 +51,11 @@ fn set_push_tracking(branch: &str) {
         .args(["config", &format!("branch.{branch}.remote"), "origin"])
         .status();
     let _ = std::process::Command::new("git")
-        .args(["config", &format!("branch.{branch}.merge"), &format!("refs/heads/{branch}")])
+        .args([
+            "config",
+            &format!("branch.{branch}.merge"),
+            &format!("refs/heads/{branch}"),
+        ])
         .status();
 }
 
@@ -49,10 +63,10 @@ fn fetch_if_needed(no_fetch: bool) -> Result<(), String> {
     if no_fetch {
         return Ok(());
     }
-    if let Some(val) = crate::git::config::read_string("mate.fetch") {
-        if matches!(val.to_lowercase().as_str(), "false" | "no" | "off" | "0") {
-            return Ok(());
-        }
+    if let Some(val) = crate::git::config::read_string("mate.fetch")
+        && matches!(val.to_lowercase().as_str(), "false" | "no" | "off" | "0")
+    {
+        return Ok(());
     }
     let remotes = std::process::Command::new("git")
         .args(["remote"])
@@ -86,7 +100,10 @@ fn create_worktree(branch: &str, from_ref: &str) -> Result<(), String> {
     set_push_tracking(branch);
     let main_wt = crate::git::find_main_worktree()?;
     crate::fs::copy_ignored_files(&main_wt, &canonical)?;
-    crate::output::success(&format!("Created worktree for '{branch}' at {}", canonical.display()));
+    crate::output::success(&format!(
+        "Created worktree for '{branch}' at {}",
+        canonical.display()
+    ));
     crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }

@@ -158,10 +158,7 @@ impl RepoWithRemote {
         git_silent(scratch.path(), &["config", "user.email", "test@test.com"]);
         git_silent(scratch.path(), &["config", "user.name", "Test"]);
         git_silent(scratch.path(), &["checkout", branch]);
-        git_silent(
-            scratch.path(),
-            &["commit", "--allow-empty", "-m", message],
-        );
+        git_silent(scratch.path(), &["commit", "--allow-empty", "-m", message]);
         git_silent(scratch.path(), &["push"]);
     }
 

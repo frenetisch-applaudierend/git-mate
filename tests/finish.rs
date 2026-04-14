@@ -13,7 +13,10 @@ fn finish_feature_branch_switches_to_main() {
         .assert()
         .success();
     assert_eq!(repo.current_branch(), "main");
-    assert!(!repo.branch_exists("feature/x"), "feature/x should have been deleted");
+    assert!(
+        !repo.branch_exists("feature/x"),
+        "feature/x should have been deleted"
+    );
 }
 
 #[test]
@@ -38,7 +41,10 @@ fn finish_deletes_branch_after_switching() {
         .assert()
         .success();
     assert_eq!(repo.current_branch(), "main");
-    assert!(!repo.branch_exists("feature/x"), "feature/x should have been deleted");
+    assert!(
+        !repo.branch_exists("feature/x"),
+        "feature/x should have been deleted"
+    );
 }
 
 #[test]
@@ -52,7 +58,10 @@ fn finish_unmerged_branch_without_remote_succeeds() {
         .current_dir(repo.path())
         .assert()
         .success();
-    assert!(!repo.branch_exists("feature/x"), "feature/x should have been deleted");
+    assert!(
+        !repo.branch_exists("feature/x"),
+        "feature/x should have been deleted"
+    );
 }
 
 #[test]
@@ -75,7 +84,10 @@ fn finish_unpushed_commits_requires_force() {
         .current_dir(repo.local_path())
         .assert()
         .success();
-    assert!(!repo.local_branch_exists("feature/x"), "feature/x should have been deleted");
+    assert!(
+        !repo.local_branch_exists("feature/x"),
+        "feature/x should have been deleted"
+    );
 }
 
 #[test]
@@ -89,7 +101,10 @@ fn finish_pushed_branch_succeeds_without_force() {
         .current_dir(repo.local_path())
         .assert()
         .success();
-    assert!(!repo.local_branch_exists("feature/x"), "feature/x should have been deleted");
+    assert!(
+        !repo.local_branch_exists("feature/x"),
+        "feature/x should have been deleted"
+    );
 }
 
 #[test]
@@ -97,7 +112,14 @@ fn finish_force_removes_dirty_worktree() {
     let repo = common::RepoWithoutRemote::new();
     let wt_path = repo.path().join("feature-dirty-wt");
     let wt_path_str = wt_path.to_str().unwrap();
-    repo.git(&["worktree", "add", "-b", "feature/dirty", wt_path_str, "main"]);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature/dirty",
+        wt_path_str,
+        "main",
+    ]);
     let wt_canonical = std::fs::canonicalize(&wt_path).unwrap();
     // Create an untracked file in the worktree to make it dirty
     std::fs::write(wt_canonical.join("untracked.txt"), "dirty").unwrap();
@@ -115,8 +137,14 @@ fn finish_force_removes_dirty_worktree() {
         .current_dir(repo.path())
         .assert()
         .success();
-    assert!(!wt_canonical.exists(), "worktree directory should be removed");
-    assert!(!repo.branch_exists("feature/dirty"), "branch should have been deleted");
+    assert!(
+        !wt_canonical.exists(),
+        "worktree directory should be removed"
+    );
+    assert!(
+        !repo.branch_exists("feature/dirty"),
+        "branch should have been deleted"
+    );
 }
 
 #[test]
@@ -142,8 +170,14 @@ fn finish_linked_worktree_removes_it_and_prints_mate_cd() {
         proto.contains(&format!("CD:{}", main_path.display())),
         "protocol file should contain CD:<main_path>, got: {proto:?}"
     );
-    assert!(!wt_canonical.exists(), "worktree directory should be removed");
-    assert!(!repo.branch_exists("feature/x"), "branch should have been deleted");
+    assert!(
+        !wt_canonical.exists(),
+        "worktree directory should be removed"
+    );
+    assert!(
+        !repo.branch_exists("feature/x"),
+        "branch should have been deleted"
+    );
 }
 
 #[test]
@@ -159,8 +193,14 @@ fn finish_branch_name_from_main_worktree_removes_linked_wt() {
         .current_dir(repo.path())
         .assert()
         .success();
-    assert!(!wt_canonical.exists(), "worktree directory should be removed");
-    assert!(!repo.branch_exists("feature/y"), "branch should have been deleted");
+    assert!(
+        !wt_canonical.exists(),
+        "worktree directory should be removed"
+    );
+    assert!(
+        !repo.branch_exists("feature/y"),
+        "branch should have been deleted"
+    );
 }
 
 #[test]
@@ -177,8 +217,14 @@ fn finish_linked_worktree_removes_wt_and_deletes_branch() {
         .output()
         .unwrap();
     assert!(output.status.success(), "finish should succeed");
-    assert!(!wt_canonical.exists(), "worktree directory should be removed");
-    assert!(!repo.branch_exists("feature/del"), "feature/del should have been deleted");
+    assert!(
+        !wt_canonical.exists(),
+        "worktree directory should be removed"
+    );
+    assert!(
+        !repo.branch_exists("feature/del"),
+        "feature/del should have been deleted"
+    );
 }
 
 #[test]
@@ -191,7 +237,10 @@ fn finish_branch_not_checked_out_deletes_it() {
         .current_dir(repo.path())
         .assert()
         .success();
-    assert!(!repo.branch_exists("feature/z"), "feature/z should have been deleted");
+    assert!(
+        !repo.branch_exists("feature/z"),
+        "feature/z should have been deleted"
+    );
 }
 
 #[test]
@@ -209,7 +258,14 @@ fn finish_removes_empty_parent_dirs_from_slash_branch() {
     let wt_path = feature_dir.join("login");
     std::fs::create_dir_all(&feature_dir).unwrap();
 
-    repo.git(&["worktree", "add", "-b", "feature/login", wt_path.to_str().unwrap(), "main"]);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature/login",
+        wt_path.to_str().unwrap(),
+        "main",
+    ]);
 
     common::git_mate()
         .args(["finish", "feature/login"])
@@ -218,10 +274,16 @@ fn finish_removes_empty_parent_dirs_from_slash_branch() {
         .success();
 
     assert!(!wt_path.exists(), "worktree dir should be removed");
-    assert!(!feature_dir.exists(), "empty 'feature' dir should be cleaned up");
+    assert!(
+        !feature_dir.exists(),
+        "empty 'feature' dir should be cleaned up"
+    );
     assert!(
         !wt_root.path().join(project_name).exists(),
         "empty project container dir should be cleaned up"
     );
-    assert!(wt_root.path().exists(), "worktree root itself must not be deleted");
+    assert!(
+        wt_root.path().exists(),
+        "worktree root itself must not be deleted"
+    );
 }

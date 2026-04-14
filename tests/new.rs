@@ -84,12 +84,18 @@ fn worktree_mode_creates_worktree() {
         .unwrap();
     assert!(output.status.success());
     let proto = std::fs::read_to_string(&proto_path).unwrap();
-    assert!(proto.contains("CD:"), "protocol file should contain CD:, got: {proto:?}");
+    assert!(
+        proto.contains("CD:"),
+        "protocol file should contain CD:, got: {proto:?}"
+    );
 
     // Derive expected path: <wt_root>/<repo-dir-name>/feature/login
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/login");
-    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+    assert!(
+        wt_path.exists(),
+        "worktree directory should exist at {wt_path:?}"
+    );
 
     // The worktree should have feature/login checked out
     let branch = Command::new("git")
@@ -127,12 +133,15 @@ fn worktree_mode_sets_push_tracking_to_branch_name() {
         .current_dir(&wt_path)
         .output()
         .unwrap();
-    assert!(remote.status.success(), "expected branch remote to be configured");
-    assert!(merge.status.success(), "expected branch merge ref to be configured");
-    assert_eq!(
-        String::from_utf8(remote.stdout).unwrap().trim(),
-        "origin"
+    assert!(
+        remote.status.success(),
+        "expected branch remote to be configured"
     );
+    assert!(
+        merge.status.success(),
+        "expected branch merge ref to be configured"
+    );
+    assert_eq!(String::from_utf8(remote.stdout).unwrap().trim(), "origin");
     assert_eq!(
         String::from_utf8(merge.stdout).unwrap().trim(),
         "refs/heads/feature/login"
@@ -156,8 +165,14 @@ fn default_worktree_mode_from_config_creates_worktree() {
     assert!(output.status.success());
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
-    let wt_path = wt_root.path().join(repo_name).join("feature/default-worktree");
-    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+    let wt_path = wt_root
+        .path()
+        .join(repo_name)
+        .join("feature/default-worktree");
+    assert!(
+        wt_path.exists(),
+        "worktree directory should exist at {wt_path:?}"
+    );
 }
 
 #[test]
@@ -177,7 +192,10 @@ fn main_worktree_flag_overrides_configured_worktree_default() {
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("feature/override-main");
-    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert!(
+        !wt_path.exists(),
+        "linked worktree should not be created at {wt_path:?}"
+    );
     assert_eq!(repo.current_branch(), "feature/override-main");
 }
 
@@ -196,7 +214,11 @@ fn fetch_updates_before_branch() {
         .success();
 
     // The new branch tip should be the remote's latest commit, not the old local HEAD.
-    assert_ne!(setup.branch_tip("feat/x"), old_head, "branch should be rooted at remote's new commit");
+    assert_ne!(
+        setup.branch_tip("feat/x"),
+        old_head,
+        "branch should be rooted at remote's new commit"
+    );
 }
 
 #[test]
@@ -212,7 +234,11 @@ fn no_fetch_flag_skips_fetch() {
         .assert()
         .success();
 
-    assert_eq!(setup.branch_tip("feat/x"), old_head, "branch should be rooted at old local HEAD (fetch skipped)");
+    assert_eq!(
+        setup.branch_tip("feat/x"),
+        old_head,
+        "branch should be rooted at old local HEAD (fetch skipped)"
+    );
 }
 
 #[test]
@@ -229,7 +255,11 @@ fn fetch_config_false_skips_fetch() {
         .assert()
         .success();
 
-    assert_eq!(setup.branch_tip("feat/x"), old_head, "branch should be rooted at old local HEAD (config fetch=false)");
+    assert_eq!(
+        setup.branch_tip("feat/x"),
+        old_head,
+        "branch should be rooted at old local HEAD (config fetch=false)"
+    );
 }
 
 #[test]
@@ -253,7 +283,11 @@ fn assert_fetch_skipped_with_config(value: &str) {
         .current_dir(setup.local_path())
         .assert()
         .success();
-    assert_eq!(setup.branch_tip("feat/x"), old_head, "mate.fetch={value} should skip fetch");
+    assert_eq!(
+        setup.branch_tip("feat/x"),
+        old_head,
+        "mate.fetch={value} should skip fetch"
+    );
 }
 
 #[test]
@@ -290,7 +324,11 @@ fn non_origin_remote_skips_fetch_silently() {
 fn worktree_mode_invalid_branch_name_fails() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
-    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
 
     common::git_mate()
         .args(["new", "../evil", "--linked-worktree", "--from", "main"])
@@ -329,10 +367,18 @@ fn invalid_default_branch_mode_config_fails() {
 fn worktree_mode_copies_ignored_files() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
-    repo.git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
 
     // Commit a .gitignore that ignores .env.local and node_modules/
-    std::fs::write(repo.path().join(".gitignore"), ".env.local\nnode_modules/\n").unwrap();
+    std::fs::write(
+        repo.path().join(".gitignore"),
+        ".env.local\nnode_modules/\n",
+    )
+    .unwrap();
     repo.git(&["add", ".gitignore"]);
     repo.git(&["commit", "-m", "add gitignore"]);
 
@@ -351,11 +397,20 @@ fn worktree_mode_copies_ignored_files() {
     let wt_path = wt_root.path().join(repo_name).join("feat/x");
 
     // Ignored file was copied
-    assert!(wt_path.join(".env.local").exists(), ".env.local should be copied");
-    assert_eq!(std::fs::read_to_string(wt_path.join(".env.local")).unwrap(), "SECRET=test");
+    assert!(
+        wt_path.join(".env.local").exists(),
+        ".env.local should be copied"
+    );
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
 
     // Blacklisted directory was NOT copied
-    assert!(!wt_path.join("node_modules").exists(), "node_modules should not be copied");
+    assert!(
+        !wt_path.join("node_modules").exists(),
+        "node_modules should not be copied"
+    );
 }
 
 #[test]
@@ -363,7 +418,11 @@ fn worktree_mode_rejects_default_branch() {
     let setup = common::RepoWithRemote::new();
     let wt_root = TempDir::new().unwrap();
 
-    setup.local_git(&["config", "mate.worktreeRoot", wt_root.path().to_str().unwrap()]);
+    setup.local_git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
     setup.local_git(&["config", "mate.defaultBranchMode", "linked"]);
     setup.local_git(&["checkout", "-b", "feature/current"]);
     setup.local_git(&["branch", "-D", "main"]);
@@ -378,7 +437,10 @@ fn worktree_mode_rejects_default_branch() {
 
     let repo_name = setup.local_path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("main");
-    assert!(!wt_path.exists(), "linked worktree should not be created at {wt_path:?}");
+    assert!(
+        !wt_path.exists(),
+        "linked worktree should not be created at {wt_path:?}"
+    );
     assert_eq!(setup.local_current_branch(), "feature/current");
     assert!(!setup.local_branch_exists("main"));
 }
