@@ -23,9 +23,7 @@ pub enum ShellIntegration {
 }
 
 pub fn run(args: InitArgs) -> Result<(), String> {
-    let integration = match crate::git::config::read_string("mate.shellIntegration")
-        .as_deref()
-    {
+    let integration = match crate::git::config::read_string("mate.shellIntegration").as_deref() {
         Some("force") => ShellIntegration::Force,
         Some("false") | Some("off") | Some("0") | Some("no") => ShellIntegration::False,
         Some("true") | Some("on") | Some("1") | Some("yes") => ShellIntegration::True,

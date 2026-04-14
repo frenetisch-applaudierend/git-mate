@@ -1,7 +1,7 @@
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::shell_protocol::{interpreter, Message};
+use crate::shell_protocol::{Message, interpreter};
 
 #[derive(Args)]
 pub struct ProtocolArgs {
