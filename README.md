@@ -32,7 +32,8 @@ git mate new feature/login --no-fetch        # skip fetch
 Checks out an existing branch — local or remote.
 
 Without `-m` or `-w`, this follows `mate.defaultBranchMode` for branches that are not checked out yet.
-If the branch is already checked out in any worktree, it navigates there instead.
+If the branch is already checked out in any worktree, it navigates there instead. The default branch
+still implies `-m`, regardless of `mate.defaultBranchMode`.
 
 Use `-m` or `-w` to make the destination explicit:
 

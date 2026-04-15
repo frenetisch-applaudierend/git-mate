@@ -25,8 +25,8 @@ pub struct CheckoutArgs {
 
 pub fn run(args: CheckoutArgs) -> Result<(), String> {
     let branch = resolve_branch(&args)?;
-    let target = crate::git::resolve_operation_target(args.main_worktree, args.linked_worktree)?;
     if args.main_worktree || args.linked_worktree {
+        let target = resolve_checkout_target(&args, &branch)?;
         match target {
             crate::git::OperationTarget::LinkedWorktree => {
                 ensure_checkout_in_linked_worktree(&branch, args.stash)
@@ -36,8 +36,22 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
             }
         }
     } else {
-        default_checkout(&branch, target)
+        default_checkout(&branch)
     }
+}
+
+fn resolve_checkout_target(
+    args: &CheckoutArgs,
+    branch: &str,
+) -> Result<crate::git::OperationTarget, String> {
+    if !args.main_worktree
+        && !args.linked_worktree
+        && branch == crate::git::detect_default_branch(false)?
+    {
+        return Ok(crate::git::OperationTarget::MainWorktree);
+    }
+
+    crate::git::resolve_operation_target(args.main_worktree, args.linked_worktree)
 }
 
 fn resolve_branch(args: &CheckoutArgs) -> Result<String, String> {
@@ -50,16 +64,28 @@ fn resolve_branch(args: &CheckoutArgs) -> Result<String, String> {
 
     let branch = crate::git::current_branch()?;
     if branch == "HEAD" {
-        return Err("cannot infer branch in detached HEAD; specify a branch name explicitly".to_string());
+        return Err(
+            "cannot infer branch in detached HEAD; specify a branch name explicitly".to_string(),
+        );
     }
     Ok(branch)
 }
 
-fn default_checkout(branch: &str, target: crate::git::OperationTarget) -> Result<(), String> {
+fn default_checkout(branch: &str) -> Result<(), String> {
     let worktrees = crate::git::list_worktrees()?;
     if let Some(worktree) = worktree_for_branch(branch, &worktrees) {
         return navigate_to_worktree(branch, &worktree.path);
     }
+
+    let target = resolve_checkout_target(
+        &CheckoutArgs {
+            branch: Some(branch.to_string()),
+            main_worktree: false,
+            linked_worktree: false,
+            stash: false,
+        },
+        branch,
+    )?;
 
     match target {
         crate::git::OperationTarget::MainWorktree => checkout_main_worktree(branch),
@@ -72,7 +98,9 @@ fn ensure_checkout_in_main_worktree(branch: &str, allow_stash: bool) -> Result<(
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
 
     match worktree_for_branch(branch, &worktrees) {
-        Some(worktree) if worktree.path == main_wt.path => navigate_to_worktree(branch, &main_wt.path),
+        Some(worktree) if worktree.path == main_wt.path => {
+            navigate_to_worktree(branch, &main_wt.path)
+        }
         Some(worktree) => move_branch_from_linked_to_main(main_wt, worktree, branch, allow_stash),
         None => checkout_main_worktree(branch),
     }
@@ -85,7 +113,9 @@ fn ensure_checkout_in_linked_worktree(branch: &str, allow_stash: bool) -> Result
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
 
     match worktree_for_branch(branch, &worktrees) {
-        Some(worktree) if worktree.path != main_wt.path => navigate_to_worktree(branch, &worktree.path),
+        Some(worktree) if worktree.path != main_wt.path => {
+            navigate_to_worktree(branch, &worktree.path)
+        }
         Some(_) => move_branch_from_main_to_linked(main_wt, branch, allow_stash),
         None => checkout_linked_worktree(branch),
     }
@@ -198,7 +228,9 @@ fn move_branch_from_main_to_linked(
                     format!("failed to create linked worktree for '{branch}': {e}"),
                 ));
             }
-            return Err(format!("failed to create linked worktree for '{branch}': {e}"));
+            return Err(format!(
+                "failed to create linked worktree for '{branch}': {e}"
+            ));
         }
     };
 
@@ -212,7 +244,10 @@ fn move_branch_from_main_to_linked(
         );
     }
 
-    crate::output::success(&format!("Checked out '{branch}' at {}", canonical.display()));
+    crate::output::success(&format!(
+        "Checked out '{branch}' at {}",
+        canonical.display()
+    ));
     crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }
@@ -357,12 +392,15 @@ fn restore_source_stash(
     failure_message: String,
 ) -> String {
     match stash {
-        Some(stash) => stash.pop_into(path).err().map_or(failure_message.clone(), |e| {
-            format!(
-                "{failure_message}; also failed to restore stashed changes for '{}': {e}",
-                stash.branch
-            )
-        }),
+        Some(stash) => stash
+            .pop_into(path)
+            .err()
+            .map_or(failure_message.clone(), |e| {
+                format!(
+                    "{failure_message}; also failed to restore stashed changes for '{}': {e}",
+                    stash.branch
+                )
+            }),
         None => failure_message,
     }
 }

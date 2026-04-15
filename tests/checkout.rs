@@ -83,6 +83,39 @@ fn checkout_in_place_from_linked_worktree_navigates_to_existing_worktree() {
 }
 
 #[test]
+fn checkout_in_place_prefers_existing_worktree_over_configured_default_location() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let external_root = TempDir::new().unwrap();
+    let external_wt = external_root.path().join("branch-b");
+
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
+    repo.git(&["branch", "branch-a"]);
+    repo.git(&["branch", "branch-b"]);
+    repo.git(&["worktree", "add", external_wt.to_str().unwrap(), "branch-b"]);
+
+    let (_proto_guard, proto_path) = common::proto_file();
+    let output = common::git_mate()
+        .args(["checkout", "branch-b"])
+        .env("GIT_MATE_PROTO", &proto_path)
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert!(
+        proto.contains("CD:") && proto.contains(external_wt.to_str().unwrap()),
+        "protocol file should contain CD: pointing to the existing non-default worktree, got: {proto:?}"
+    );
+    assert!(
+        !expected_worktree_path(&repo, &wt_root, "branch-b").exists(),
+        "plain checkout should navigate to the existing worktree instead of creating one under mate.worktreeRoot"
+    );
+}
+
+#[test]
 fn checkout_worktree_creates_worktree() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
@@ -478,7 +511,7 @@ fn checkout_worktree_existing_worktree_emits_cd_for_shell_wrapper() {
 }
 
 #[test]
-fn checkout_worktree_rejects_default_branch() {
+fn checkout_default_branch_implies_main_worktree_in_main() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     let wt_root_str = wt_root.path().to_str().unwrap();
@@ -491,9 +524,7 @@ fn checkout_worktree_rejects_default_branch() {
         .args(["checkout", "main"])
         .current_dir(repo.path())
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("default branch"))
-        .stderr(predicate::str::contains("main worktree"));
+        .success();
 
     let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("main");
@@ -501,7 +532,36 @@ fn checkout_worktree_rejects_default_branch() {
         !wt_path.exists(),
         "linked worktree should not be created at {wt_path:?}"
     );
-    assert_eq!(repo.current_branch(), "feature/current");
+    assert_eq!(repo.current_branch(), "main");
+}
+
+#[test]
+fn checkout_default_branch_implies_main_worktree_from_linked() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    let wt_root_str = wt_root.path().to_str().unwrap();
+
+    repo.git(&["config", "mate.worktreeRoot", wt_root_str]);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
+    repo.git(&["checkout", "-b", "feature/main-side"]);
+    let wt_path =
+        create_linked_worktree_from(&repo, &wt_root, "feature/linked", "feature/main-side");
+
+    let (_proto_guard, proto_path) = common::proto_file();
+    let output = common::git_mate()
+        .args(["checkout", "main"])
+        .env("GIT_MATE_PROTO", &proto_path)
+        .current_dir(&wt_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert!(
+        proto.contains(&format!("CD:{}", repo.path().display())),
+        "protocol file should contain CD: pointing to the main worktree, got: {proto:?}"
+    );
+    assert_eq!(repo.current_branch(), "main");
 }
 
 #[test]
@@ -528,7 +588,10 @@ fn checkout_linked_flag_moves_branch_from_main_to_linked_worktree() {
     );
 
     assert_eq!(repo.current_branch(), "main");
-    assert!(wt_path.exists(), "worktree directory should exist at {wt_path:?}");
+    assert!(
+        wt_path.exists(),
+        "worktree directory should exist at {wt_path:?}"
+    );
 
     let branch = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -675,7 +738,9 @@ fn checkout_main_flag_still_fails_if_main_worktree_is_dirty() {
         .current_dir(&wt_path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("main worktree has uncommitted changes"));
+        .stderr(predicate::str::contains(
+            "main worktree has uncommitted changes",
+        ));
 }
 
 #[test]
