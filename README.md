@@ -83,11 +83,14 @@ Fetches all remotes and prunes stale remote-tracking references, then:
 - Fast-forwards other local branches whose upstream is still present and has no diverged commits
 - Auto-deletes local branches whose remote was deleted (if they have no unpushed commits and a clean working tree)
 - Pulls the current branch if an upstream is configured
+- Optionally merges the default branch into the current branch
 
 ```bash
 git mate sync                       # fetch + prune, then pull
 git mate sync --rebase              # pull with --rebase
 git mate sync --ff-only             # pull with --ff-only
+git mate sync --merge               # also merge the default branch into the current branch
+git mate sync --no-merge            # skip auto-merge for this run
 ```
 
 ## Installation
@@ -132,5 +135,6 @@ git config mate.worktreeRoot "../worktrees"
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
 | `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `git mate new` |
+| `mate.autoMerge` | `true` / `yes` / `on` / `1`, `false` / `no` / `off` / `0` | Auto-merge the default branch during `git mate sync` |
 | `mate.defaultBranchMode` | `main` / `linked` | Default target for `git mate new` and `git mate checkout` |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |

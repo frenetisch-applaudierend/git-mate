@@ -12,6 +12,12 @@ pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
     run(&["-C", path, "checkout", branch])
 }
 
+pub fn merge(extra_args: &[&str]) -> Result<(), String> {
+    let mut args = vec!["merge"];
+    args.extend_from_slice(extra_args);
+    run(&args)
+}
+
 pub fn current_branch() -> Result<String, String> {
     run_output(&["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string())
 }

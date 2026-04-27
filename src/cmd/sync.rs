@@ -4,6 +4,18 @@ pub struct SyncArgs {
     pub rebase: bool,
     #[arg(long, help = "Pull with --ff-only")]
     pub ff_only: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_merge",
+        help = "Merge the default branch into the current branch"
+    )]
+    pub merge: bool,
+    #[arg(
+        long,
+        conflicts_with = "merge",
+        help = "Skip auto-merge, even if enabled in git config"
+    )]
+    pub no_merge: bool,
 }
 
 pub fn run(args: SyncArgs) -> Result<(), String> {
@@ -95,27 +107,81 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         return Ok(());
     }
 
+    let auto_merge = auto_merge_enabled(&args)?;
     let has_upstream = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
+    let mut synced_current_branch = false;
     if !has_upstream {
         crate::output::info("No upstream configured for current branch, skipping pull.");
-        return Ok(());
+    } else {
+        let mut extra_flags = vec![];
+        if args.rebase {
+            extra_flags.push("--rebase");
+        }
+        if args.ff_only {
+            extra_flags.push("--ff-only");
+        }
+        crate::git::pull(&extra_flags)?;
+        synced_current_branch = true;
     }
 
-    let mut extra_flags = vec![];
-    if args.rebase {
-        extra_flags.push("--rebase");
+    let merged_default = if auto_merge {
+        merge_default_branch(current_branch.as_deref())?
+    } else {
+        false
+    };
+
+    if synced_current_branch || merged_default {
+        crate::output::success("Synced.");
     }
-    if args.ff_only {
-        extra_flags.push("--ff-only");
-    }
-    crate::git::pull(&extra_flags)?;
-    crate::output::success("Synced.");
     Ok(())
+}
+
+fn auto_merge_enabled(args: &SyncArgs) -> Result<bool, String> {
+    if args.merge {
+        return Ok(true);
+    }
+    if args.no_merge {
+        return Ok(false);
+    }
+    let Some(value) = crate::git::config::read_string("mate.autoMerge") else {
+        return Ok(false);
+    };
+
+    match value.to_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Ok(true),
+        "false" | "no" | "off" | "0" => Ok(false),
+        _ => Err(format!(
+            "invalid value for mate.autoMerge: {value:?}; expected a boolean"
+        )),
+    }
+}
+
+fn merge_default_branch(current_branch: Option<&str>) -> Result<bool, String> {
+    let Some(current_branch) = current_branch else {
+        crate::output::info("Could not determine current branch, skipping auto-merge.");
+        return Ok(false);
+    };
+    if current_branch == "HEAD" {
+        crate::output::info("Detached HEAD, skipping auto-merge.");
+        return Ok(false);
+    }
+
+    let default_branch = crate::git::detect_default_branch(false)?;
+    if current_branch == default_branch {
+        crate::output::info("Current branch is the default branch, skipping auto-merge.");
+        return Ok(false);
+    }
+
+    crate::git::merge(&["--no-edit", &default_branch])?;
+    crate::output::info(&format!(
+        "{current_branch}: merged default branch '{default_branch}'"
+    ));
+    Ok(true)
 }
 
 /// Returns (branch, local_sha, upstream_sha) for every local branch that has an upstream.
