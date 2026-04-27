@@ -388,7 +388,14 @@ fn worktree_mode_copies_ignored_files() {
     std::fs::write(repo.path().join("node_modules").join("pkg.json"), "{}").unwrap();
 
     common::git_mate()
-        .args(["new", "feat/x", "--linked-worktree", "--from", "main"])
+        .args([
+            "new",
+            "feat/x",
+            "--linked-worktree",
+            "--from",
+            "main",
+            "--stash",
+        ])
         .current_dir(repo.path())
         .assert()
         .success();
@@ -443,4 +450,300 @@ fn worktree_mode_rejects_default_branch() {
     );
     assert_eq!(setup.local_current_branch(), "feature/current");
     assert!(!setup.local_branch_exists("main"));
+}
+
+#[test]
+fn worktree_mode_does_not_copy_local_config_from_non_worktree_ref() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
+
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+
+    let from_ref = repo.head_commit();
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/from-sha",
+            "--linked-worktree",
+            "--from",
+            &from_ref,
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/from-sha");
+    assert!(
+        !wt_path.join(".env.local").exists(),
+        "local config should stay behind when the starting point is not checked out in a worktree"
+    );
+}
+
+#[test]
+fn worktree_mode_requires_decision_for_dirty_starting_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", ".gitignore", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+
+    common::git_mate()
+        .args(["new", "feat/dirty", "--linked-worktree", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--stash"))
+        .stderr(predicate::str::contains("--ignore"));
+}
+
+#[test]
+fn worktree_mode_ignore_starts_fresh_from_dirty_starting_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", ".gitignore", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/fresh",
+            "--linked-worktree",
+            "--from",
+            "main",
+            "--ignore",
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/fresh");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(
+        !wt_path.join(".env.local").exists(),
+        "ignored local config should not be copied with --ignore"
+    );
+}
+
+#[test]
+fn worktree_mode_stash_carries_dirty_starting_branch_changes() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", ".gitignore", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/continued",
+            "--linked-worktree",
+            "--from",
+            "main",
+            "--stash",
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/continued");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
+}
+
+#[test]
+fn main_worktree_mode_allows_in_place_dirty_starting_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    common::git_mate()
+        .args(["new", "feat/in-place", "--main-worktree", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    assert_eq!(repo.current_branch(), "feat/in-place");
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn main_worktree_mode_rejects_ignore_when_destination_is_dirty() {
+    let repo = common::RepoWithoutRemote::new();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    repo.git(&["branch", "branch-b"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/no-ignore",
+            "--main-worktree",
+            "--from",
+            "branch-b",
+            "--ignore",
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot use --ignore"));
+}
+
+#[test]
+fn main_worktree_flag_creates_branch_in_main_from_linked_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/linked");
+
+    let (_proto_guard, proto_path) = common::proto_file();
+    let output = common::git_mate()
+        .args([
+            "new",
+            "feature/main-dest",
+            "--main-worktree",
+            "--from",
+            "main",
+        ])
+        .env("GIT_MATE_PROTO", &proto_path)
+        .current_dir(&linked_wt)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert!(
+        proto.contains(&format!("CD:{}", repo.path().display())),
+        "protocol file should navigate back to the main worktree, got: {proto:?}"
+    );
+    assert_eq!(repo.current_branch(), "feature/main-dest");
+
+    let linked_branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&linked_wt)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(linked_branch.stdout).unwrap().trim(),
+        "feature/linked"
+    );
+}
+
+#[test]
+fn main_worktree_mode_stash_moves_changes_from_dirty_linked_starting_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", ".gitignore", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/source");
+    std::fs::write(linked_wt.join("tracked.txt"), "changed\n").unwrap();
+    std::fs::write(linked_wt.join(".env.local"), "SECRET=test").unwrap();
+
+    let (_proto_guard, proto_path) = common::proto_file();
+    let output = common::git_mate()
+        .args([
+            "new",
+            "feature/from-linked",
+            "--main-worktree",
+            "--from",
+            "feature/source",
+            "--stash",
+        ])
+        .env("GIT_MATE_PROTO", &proto_path)
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    assert_eq!(repo.current_branch(), "feature/from-linked");
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
+}
+
+fn configure_worktree_root(repo: &common::RepoWithoutRemote, wt_root: &TempDir) {
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
+}
+
+fn expected_worktree_path(
+    repo: &common::RepoWithoutRemote,
+    wt_root: &TempDir,
+    branch: &str,
+) -> std::path::PathBuf {
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    wt_root.path().join(repo_name).join(branch)
+}
+
+fn create_linked_worktree(
+    repo: &common::RepoWithoutRemote,
+    wt_root: &TempDir,
+    branch: &str,
+) -> std::path::PathBuf {
+    let wt_path = expected_worktree_path(repo, wt_root, branch);
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        wt_path.to_str().unwrap(),
+        "main",
+    ]);
+    wt_path
 }

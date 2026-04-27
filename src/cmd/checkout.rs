@@ -73,7 +73,7 @@ fn resolve_branch(args: &CheckoutArgs) -> Result<String, String> {
 
 fn default_checkout(branch: &str) -> Result<(), String> {
     let worktrees = crate::git::list_worktrees()?;
-    if let Some(worktree) = worktree_for_branch(branch, &worktrees) {
+    if let Some(worktree) = crate::git::worktree_for_branch(branch, &worktrees) {
         return navigate_to_worktree(branch, &worktree.path);
     }
 
@@ -97,7 +97,7 @@ fn ensure_checkout_in_main_worktree(branch: &str, allow_stash: bool) -> Result<(
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
 
-    match worktree_for_branch(branch, &worktrees) {
+    match crate::git::worktree_for_branch(branch, &worktrees) {
         Some(worktree) if worktree.path == main_wt.path => {
             navigate_to_worktree(branch, &main_wt.path)
         }
@@ -112,7 +112,7 @@ fn ensure_checkout_in_linked_worktree(branch: &str, allow_stash: bool) -> Result
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
 
-    match worktree_for_branch(branch, &worktrees) {
+    match crate::git::worktree_for_branch(branch, &worktrees) {
         Some(worktree) if worktree.path != main_wt.path => {
             navigate_to_worktree(branch, &worktree.path)
         }
@@ -206,7 +206,7 @@ fn move_branch_from_main_to_linked(
     ensure_worktree_path_available(&wt_path)?;
 
     if let Err(e) = crate::git::checkout_in(main_wt_str, &default_branch) {
-        return Err(restore_source_stash(
+        return Err(crate::cmd::worktree_changes::restore_source_stash(
             stash.as_ref(),
             &main_wt.path,
             format!("failed to switch main worktree to '{default_branch}': {e}"),
@@ -222,7 +222,7 @@ fn move_branch_from_main_to_linked(
                 ));
             }
             if stash.is_some() {
-                return Err(restore_source_stash(
+                return Err(crate::cmd::worktree_changes::restore_source_stash(
                     stash.as_ref(),
                     &main_wt.path,
                     format!("failed to create linked worktree for '{branch}': {e}"),
@@ -236,7 +236,7 @@ fn move_branch_from_main_to_linked(
 
     crate::fs::copy_ignored_files(&main_wt.path, &canonical)?;
     if let Some(stash) = stash {
-        return finish_with_stash_reapply(
+        return crate::cmd::worktree_changes::finish_with_stash_reapply(
             stash,
             &canonical,
             &format!("Checked out '{branch}' at {}", canonical.display()),
@@ -280,7 +280,11 @@ fn move_branch_from_linked_to_main(
     )?;
 
     if let Err(e) = crate::git::remove_worktree(&linked_wt.path, false) {
-        return Err(restore_source_stash(stash.as_ref(), &linked_wt.path, e));
+        return Err(crate::cmd::worktree_changes::restore_source_stash(
+            stash.as_ref(),
+            &linked_wt.path,
+            e,
+        ));
     }
     if let Ok(root) = crate::git::read_worktree_root() {
         crate::fs::remove_empty_parent_dirs(&linked_wt.path, &root);
@@ -297,7 +301,7 @@ fn move_branch_from_linked_to_main(
             }
         };
         if let Some(stash) = stash.as_ref() {
-            return Err(restore_source_stash(
+            return Err(crate::cmd::worktree_changes::restore_source_stash(
                 Some(stash),
                 &restored_path,
                 format!(
@@ -311,7 +315,7 @@ fn move_branch_from_linked_to_main(
     }
 
     if let Some(stash) = stash {
-        return finish_with_stash_reapply(
+        return crate::cmd::worktree_changes::finish_with_stash_reapply(
             stash,
             &main_wt.path,
             &format!("Switched to branch '{branch}'"),
@@ -322,15 +326,6 @@ fn move_branch_from_linked_to_main(
     crate::output::success(&format!("Switched to branch '{branch}'"));
     crate::shell_protocol::emit_cd(&main_wt.path);
     Ok(())
-}
-
-fn worktree_for_branch<'a>(
-    branch: &str,
-    worktrees: &'a [crate::git::WorktreeEntry],
-) -> Option<&'a crate::git::WorktreeEntry> {
-    worktrees
-        .iter()
-        .find(|wt| wt.branch.as_deref() == Some(branch))
 }
 
 fn ensure_worktree_path_available(wt_path: &std::path::Path) -> Result<(), String> {
@@ -349,30 +344,13 @@ fn ensure_worktree_path_available(wt_path: &std::path::Path) -> Result<(), Strin
     Ok(())
 }
 
-struct PreparedStash {
-    branch: String,
-}
-
-impl PreparedStash {
-    fn new(branch: &str) -> Self {
-        Self {
-            branch: branch.to_string(),
-        }
-    }
-
-    fn pop_into(&self, path: &std::path::Path) -> Result<(), String> {
-        let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
-        crate::git::stash_pop_in(path_str, "stash@{0}")
-    }
-}
-
 fn stash_source_changes(
     path: &std::path::Path,
     branch: &str,
     allow_stash: bool,
     label: &str,
     failure_message: &str,
-) -> Result<Option<PreparedStash>, String> {
+) -> Result<Option<crate::cmd::worktree_changes::PreparedStash>, String> {
     let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
     if crate::git::is_worktree_clean(path_str)? {
         return Ok(None);
@@ -381,48 +359,11 @@ fn stash_source_changes(
         return Err(format!("{failure_message}; retry with --stash"));
     }
 
-    crate::git::stash_push_in(path_str, &format!("git-mate checkout {branch}"))
-        .map_err(|e| format!("failed to stash changes in {label}: {e}"))?;
-    Ok(Some(PreparedStash::new(branch)))
-}
-
-fn restore_source_stash(
-    stash: Option<&PreparedStash>,
-    path: &std::path::Path,
-    failure_message: String,
-) -> String {
-    match stash {
-        Some(stash) => stash
-            .pop_into(path)
-            .err()
-            .map_or(failure_message.clone(), |e| {
-                format!(
-                    "{failure_message}; also failed to restore stashed changes for '{}': {e}",
-                    stash.branch
-                )
-            }),
-        None => failure_message,
-    }
-}
-
-fn finish_with_stash_reapply(
-    stash: PreparedStash,
-    apply_path: &std::path::Path,
-    success_message: &str,
-    cd_path: &std::path::Path,
-) -> Result<(), String> {
-    match stash.pop_into(apply_path) {
-        Ok(()) => {
-            crate::output::success(success_message);
-            crate::shell_protocol::emit_cd(cd_path);
-            Ok(())
-        }
-        Err(e) => {
-            crate::shell_protocol::emit_cd(cd_path);
-            Err(format!(
-                "{success_message}, but failed to reapply stashed changes for '{}': {e}; the stash entry was kept",
-                stash.branch
-            ))
-        }
-    }
+    crate::cmd::worktree_changes::stash_changes(
+        path,
+        branch,
+        label,
+        &format!("git-mate checkout {branch}"),
+    )
+    .map(Some)
 }

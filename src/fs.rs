@@ -24,14 +24,12 @@ const COPY_BLACKLIST: &[&str] = &[
     ".cache",
 ];
 
-fn path_is_blacklisted(rel_path: &str) -> bool {
-    rel_path
-        .trim_end_matches('/')
-        .split('/')
-        .any(|c| COPY_BLACKLIST.contains(&c))
+fn copied_local_config_files_message(copied: usize) -> String {
+    let noun = if copied == 1 { "file" } else { "files" };
+    format!("Copied {copied} local config {noun} to worktree")
 }
 
-pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+fn local_config_paths(src: &std::path::Path) -> Result<Option<Vec<String>>, String> {
     let src_str = src.to_str().ok_or("source path is not valid UTF-8")?;
     let output = std::process::Command::new("git")
         .args([
@@ -53,25 +51,51 @@ pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Resul
             "skipping local config copy: git ls-files failed: {}",
             stderr.trim()
         ));
-        return Ok(());
+        return Ok(None);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(Some(
+        stdout
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+    ))
+}
+
+fn path_is_blacklisted(rel_path: &str) -> bool {
+    rel_path
+        .trim_end_matches('/')
+        .split('/')
+        .any(|c| COPY_BLACKLIST.contains(&c))
+}
+
+pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    let Some(local_config_paths) = local_config_paths(src)? else {
+        return Ok(());
+    };
     let mut copied = 0usize;
-    for rel_path in stdout.split('\0').filter(|s| !s.is_empty()) {
-        if path_is_blacklisted(rel_path) {
+    for rel_path in local_config_paths {
+        if path_is_blacklisted(&rel_path) {
             continue;
         }
         if rel_path.ends_with('/') {
             copied += copy_dir(src, dst, rel_path.trim_end_matches('/'));
         } else {
-            copied += copy_file(src, dst, rel_path) as usize;
+            copied += copy_file(src, dst, &rel_path) as usize;
         }
     }
     if copied > 0 {
-        crate::output::info(&format!("Copied {copied} local config file(s) to worktree"));
+        crate::output::info(&copied_local_config_files_message(copied));
     }
     Ok(())
+}
+
+pub fn has_local_config_files(src: &std::path::Path) -> Result<bool, String> {
+    Ok(local_config_paths(src)?
+        .map(|paths| paths.into_iter().any(|path| !path_is_blacklisted(&path)))
+        .unwrap_or(false))
 }
 
 fn copy_file(src: &std::path::Path, dst: &std::path::Path, rel_path: &str) -> bool {
@@ -129,5 +153,24 @@ pub fn remove_empty_parent_dirs(path: &std::path::Path, stop_at: &std::path::Pat
         if std::fs::remove_dir(&current).is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn copied_local_config_files_message_uses_singular() {
+        assert_eq!(
+            super::copied_local_config_files_message(1),
+            "Copied 1 local config file to worktree"
+        );
+    }
+
+    #[test]
+    fn copied_local_config_files_message_uses_plural() {
+        assert_eq!(
+            super::copied_local_config_files_message(87),
+            "Copied 87 local config files to worktree"
+        );
     }
 }

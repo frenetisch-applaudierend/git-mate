@@ -4,8 +4,8 @@ pub fn checkout(branch: &str) -> Result<(), String> {
     run(&["checkout", branch])
 }
 
-pub fn checkout_new(branch: &str, from: &str) -> Result<(), String> {
-    run(&["checkout", "-b", branch, from])
+pub fn checkout_new_in(path: &str, branch: &str, from: &str) -> Result<(), String> {
+    run(&["-C", path, "checkout", "-b", branch, from])
 }
 
 pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
@@ -55,6 +55,18 @@ pub fn detect_default_branch(remote: bool) -> Result<String, String> {
     }
 
     Err("could not detect default branch; use --from to specify one".to_string())
+}
+
+pub fn local_branch_for_ref(refname: &str) -> Option<String> {
+    if let Some(branch) = refname.strip_prefix("refs/heads/") {
+        return run_output(&["rev-parse", "--verify", &format!("refs/heads/{branch}")])
+            .ok()
+            .map(|_| branch.to_string());
+    }
+
+    run_output(&["rev-parse", "--verify", &format!("refs/heads/{refname}")])
+        .ok()
+        .map(|_| refname.to_string())
 }
 
 pub fn ensure_branch_allowed_in_linked_worktree(branch: &str) -> Result<(), String> {

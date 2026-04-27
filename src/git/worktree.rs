@@ -108,6 +108,15 @@ pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
     run_output(&["-C", path, "status", "--porcelain"]).map(|o| o.is_empty())
 }
 
+pub fn worktree_for_branch<'a>(
+    branch: &str,
+    worktrees: &'a [WorktreeEntry],
+) -> Option<&'a WorktreeEntry> {
+    worktrees
+        .iter()
+        .find(|wt| wt.branch.as_deref() == Some(branch))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OperationTarget {
     MainWorktree,
