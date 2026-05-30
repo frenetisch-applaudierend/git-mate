@@ -2,6 +2,7 @@ mod common;
 
 use assert_cmd::prelude::*;
 use std::process::Command;
+use tempfile::TempDir;
 
 fn prepare_feature_branch(setup: &common::RepoWithRemote, branch: &str) -> String {
     setup.local_git(&["checkout", "-b", branch]);
@@ -231,6 +232,54 @@ fn fast_forwards_non_current_branch() {
         setup.branch_tip("feature/ff"),
         setup.branch_tip("origin/feature/ff"),
         "local branch should match remote"
+    );
+}
+
+#[test]
+fn fast_forward_in_worktree_context_updates_main_worktree_index() {
+    let setup = common::RepoWithRemote::new();
+    let wt_dir = TempDir::new().unwrap();
+
+    // Set up a linked worktree on a feature branch.  main stays in the main worktree.
+    setup.local_git(&[
+        "worktree",
+        "add",
+        wt_dir.path().to_str().unwrap(),
+        "-b",
+        "feature/wt",
+    ]);
+
+    // Push a commit that adds a real file to origin/main.  An empty commit would
+    // not expose the bug: if only the ref moves without updating the index, the
+    // unchanged tree makes git-status appear clean even with the wrong approach.
+    setup.push_file_commit_to_remote("new.txt", "hello", "add new.txt");
+
+    // Run sync from inside the linked worktree so main is a non-current branch.
+    common::git_mate()
+        .arg("sync")
+        .current_dir(wt_dir.path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("main: fast-forwarded"));
+
+    // The main worktree must be clean.  Before the fix, fast_forward_branch used
+    // git-update-ref which moved refs/heads/main without touching the index, so
+    // git-status would report new.txt as an unstaged deletion.
+    let status_out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(setup.local_path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&status_out.stdout).trim().is_empty(),
+        "main worktree should be clean after fast-forward, got:\n{}",
+        String::from_utf8_lossy(&status_out.stdout)
+    );
+
+    assert_eq!(
+        setup.branch_tip("main"),
+        setup.branch_tip("origin/main"),
+        "local main should match origin/main"
     );
 }
 

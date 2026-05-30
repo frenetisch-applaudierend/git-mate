@@ -208,6 +208,22 @@ impl RepoWithRemote {
             .success()
     }
 
+    /// Push a commit that writes a real file to the remote's default branch.
+    /// Unlike push_commit_to_remote, this actually changes the tree so a
+    /// fast-forward that only moves the ref (without updating the index) will
+    /// be detectable via `git status`.
+    pub fn push_file_commit_to_remote(&self, filename: &str, content: &str, message: &str) {
+        let scratch = TempDir::new().unwrap();
+        let bare_url = self.bare_path().to_str().unwrap().to_string();
+        git_silent(scratch.path(), &["clone", &bare_url, "."]);
+        git_silent(scratch.path(), &["config", "user.email", "test@test.com"]);
+        git_silent(scratch.path(), &["config", "user.name", "Test"]);
+        std::fs::write(scratch.path().join(filename), content).unwrap();
+        git_silent(scratch.path(), &["add", filename]);
+        git_silent(scratch.path(), &["commit", "-m", message]);
+        git_silent(scratch.path(), &["push"]);
+    }
+
     /// Make a local commit on <branch> that has NOT been pushed.
     pub fn make_local_commit_on(&self, branch: &str, message: &str) {
         let current = self.local_current_branch();
