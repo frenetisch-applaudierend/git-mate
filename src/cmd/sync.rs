@@ -1,4 +1,21 @@
 #[derive(clap::Args)]
+#[command(
+    about = "Fetch and merge the latest changes",
+    long_about = "Fetch the latest changes from all remotes and bring your local repository up to date.
+
+Fetches all remotes, fast-forwards local branches that haven't diverged from their
+upstream, and pulls the current branch. Use --rebase or --ff-only to control how the
+pull is applied.
+
+When a remote branch is deleted — typically after a PR is merged — sync removes the
+corresponding local branch and its worktree if one exists. Branches with unpushed
+commits or a dirty working tree are left untouched. If the affected branch is currently
+checked out, sync prompts before making any changes.
+
+Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
+branch into the current branch after pulling, keeping feature branches up to date
+with main."
+)]
 pub struct SyncArgs {
     #[arg(long, help = "Pull with --rebase")]
     pub rebase: bool,

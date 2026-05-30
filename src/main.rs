@@ -27,7 +27,6 @@ enum Commands {
     Init(cmd::init::InitArgs),
     /// Create and switch to a new branch
     New(cmd::new::NewArgs),
-    /// Fetch and merge the latest changes
     Sync(cmd::sync::SyncArgs),
     /// Internal: interpret shell protocol messages
     #[command(name = "_protocol", hide = true)]
