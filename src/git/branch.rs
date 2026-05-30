@@ -18,6 +18,10 @@ pub fn merge(extra_args: &[&str]) -> Result<(), String> {
     run(&args)
 }
 
+pub fn merge_ff_only_in(path: &str, refspec: &str) -> Result<(), String> {
+    run(&["-C", path, "merge", "--ff-only", refspec])
+}
+
 pub fn current_branch() -> Result<String, String> {
     run_output(&["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string())
 }

@@ -114,7 +114,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
             }
         } else if !is_current {
             // Remote still exists — try to fast-forward.
-            fast_forward_branch(branch, upstream)?;
+            fast_forward_branch(branch, upstream, &worktrees)?;
         }
         // Current branch with live upstream is handled by pull below.
     }
@@ -219,7 +219,11 @@ fn snapshot_branch_upstreams() -> Vec<(String, Option<String>, Option<String>)> 
         .collect()
 }
 
-fn fast_forward_branch(branch: &str, upstream: &str) -> Result<(), String> {
+fn fast_forward_branch(
+    branch: &str,
+    upstream: &str,
+    worktrees: &[crate::git::WorktreeEntry],
+) -> Result<(), String> {
     let local_sha = match crate::git::resolve_ref(branch) {
         Ok(sha) => sha,
         Err(_) => return Ok(()),
@@ -231,17 +235,27 @@ fn fast_forward_branch(branch: &str, upstream: &str) -> Result<(), String> {
     if local_sha == remote_sha {
         return Ok(());
     }
-    match crate::git::is_ancestor(&local_sha, &remote_sha)? {
-        true => {
-            crate::git::update_ref(&format!("refs/heads/{branch}"), &remote_sha)?;
-            crate::output::info(&format!("{branch}: fast-forwarded"));
-        }
-        false => {
-            crate::output::info(&format!(
-                "{branch}: cannot fast-forward (diverged), skipping"
-            ));
-        }
+    if !crate::git::is_ancestor(&local_sha, &remote_sha)? {
+        crate::output::info(&format!(
+            "{branch}: cannot fast-forward (diverged), skipping"
+        ));
+        return Ok(());
     }
+
+    // If the branch is checked out in a worktree, use `merge --ff-only` so the
+    // index and working tree are updated alongside the ref.  Plain `update-ref`
+    // would move the ref without touching the worktree, making `git status`
+    // report phantom modifications there.
+    if let Some(wt) = crate::git::worktree_for_branch(branch, worktrees) {
+        let path = wt
+            .path
+            .to_str()
+            .ok_or("worktree path is not valid UTF-8")?;
+        crate::git::merge_ff_only_in(path, upstream)?;
+    } else {
+        crate::git::update_ref(&format!("refs/heads/{branch}"), &remote_sha)?;
+    }
+    crate::output::info(&format!("{branch}: fast-forwarded"));
     Ok(())
 }
 
