@@ -4,7 +4,27 @@ use std::process::Command;
 use tempfile::TempDir;
 
 pub fn git_mate() -> Command {
-    Command::new(assert_cmd::cargo::cargo_bin!("git-mate"))
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("git-mate"));
+    isolate_git_config(&mut cmd);
+    cmd
+}
+
+/// A `git` command with the developer's global/system config neutralized.
+///
+/// Tests spawn the real `git-mate` binary, which reads its settings
+/// (`mate.worktreeroot`, `mate.defaultbranchmode`, ...) from git config —
+/// including the host's `~/.gitconfig`. Point `GIT_CONFIG_GLOBAL` and
+/// `GIT_CONFIG_SYSTEM` at `/dev/null` so ambient config never leaks into a
+/// test run; git-mate and every git subprocess it spawns inherit these.
+fn git_cmd() -> Command {
+    let mut cmd = Command::new("git");
+    isolate_git_config(&mut cmd);
+    cmd
+}
+
+fn isolate_git_config(cmd: &mut Command) {
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
 }
 
 /// Create a temporary protocol file and return a guard (keeps the file alive) and its path.
@@ -50,7 +70,7 @@ impl RepoWithoutRemote {
     }
 
     pub fn branch_exists(&self, branch: &str) -> bool {
-        Command::new("git")
+        git_cmd()
             .args(["rev-parse", "--verify", branch])
             .current_dir(self.path())
             .output()
@@ -130,7 +150,7 @@ impl RepoWithRemote {
     }
 
     pub fn remote_tracking_exists(&self, tracking_ref: &str) -> bool {
-        Command::new("git")
+        git_cmd()
             .args(["rev-parse", "--verify", tracking_ref])
             .current_dir(self.local_path())
             .output()
@@ -199,7 +219,7 @@ impl RepoWithRemote {
     }
 
     pub fn local_branch_exists(&self, branch: &str) -> bool {
-        Command::new("git")
+        git_cmd()
             .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
             .current_dir(self.local_path())
             .output()
@@ -237,7 +257,7 @@ impl RepoWithRemote {
 }
 
 pub fn git(dir: &std::path::Path, args: &[&str]) {
-    let s = Command::new("git")
+    let s = git_cmd()
         .args(args)
         .current_dir(dir)
         .status()
@@ -246,7 +266,7 @@ pub fn git(dir: &std::path::Path, args: &[&str]) {
 }
 
 fn git_silent(dir: &std::path::Path, args: &[&str]) {
-    let s = Command::new("git")
+    let s = git_cmd()
         .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -258,7 +278,7 @@ fn git_silent(dir: &std::path::Path, args: &[&str]) {
 }
 
 fn rev_parse_output(dir: &std::path::Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = git_cmd()
         .args(args)
         .current_dir(dir)
         .output()
