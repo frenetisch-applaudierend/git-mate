@@ -20,6 +20,41 @@ fn checkout_in_place_from_main_worktree() {
 }
 
 #[test]
+fn co_completion_includes_remote_only_branches() {
+    let repo = common::RepoWithRemote::new();
+    repo.push_branch_to_remote("remote-feature");
+    repo.local_fetch();
+    repo.local_git(&["branch", "local-only"]);
+
+    // Drive clap's dynamic completion engine directly: complete the branch
+    // argument of `git-mate co ` (word index 2, empty current word).
+    let output = common::git_mate()
+        .args(["--", "git-mate", "co", ""])
+        .env("COMPLETE", "bash")
+        .env("_CLAP_COMPLETE_INDEX", "2")
+        .current_dir(repo.local_path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let candidates = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = candidates.lines().collect();
+
+    assert!(
+        branches.contains(&"local-only"),
+        "expected local branch in completions, got: {branches:?}"
+    );
+    assert!(
+        branches.contains(&"remote-feature"),
+        "expected remote-only branch in completions, got: {branches:?}"
+    );
+    // The `origin/HEAD` pointer must not leak into completions.
+    assert!(
+        !branches.iter().any(|b| b.ends_with("/HEAD") || *b == "origin"),
+        "remote HEAD pointer should not appear, got: {branches:?}"
+    );
+}
+
+#[test]
 fn checkout_in_place_from_linked_worktree_cds_to_main_and_switches() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
