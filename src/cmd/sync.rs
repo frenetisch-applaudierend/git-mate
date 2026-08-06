@@ -220,6 +220,10 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         dry_run,
     )?);
 
+    if !json {
+        print_summary(&branch_outcomes);
+    }
+
     // 5. Pull the current branch (if it still has an upstream).
     if current_branch_pruned {
         if json {
@@ -306,6 +310,47 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Print a one-line, grouped-by-outcome summary of everything done to local
+/// branches, plus a reason line for each skipped branch (reasons vary, so a
+/// bare count isn't enough to act on). Per-branch detail is still narrated as
+/// it happens via `output::info`; this recap is what makes the results
+/// scannable once more than a couple of branches are involved.
+fn print_summary(outcomes: &[BranchOutcome]) {
+    if outcomes.is_empty() {
+        return;
+    }
+
+    const ORDER: [(&str, &str); 7] = [
+        ("fast-forwarded", "fast-forwarded"),
+        ("up-to-date", "already up to date"),
+        ("deleted", "deleted"),
+        ("deletion-candidate", "flagged for deletion"),
+        ("kept", "kept"),
+        ("skipped", "skipped"),
+        ("no-upstream", "with no upstream"),
+    ];
+
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for outcome in outcomes {
+        *counts.entry(outcome.action.as_str()).or_insert(0) += 1;
+    }
+
+    let parts: Vec<String> = ORDER
+        .iter()
+        .filter_map(|(action, label)| counts.get(action).map(|count| format!("{count} {label}")))
+        .collect();
+
+    crate::output::info(&format!("Summary: {}", parts.join(", ")));
+
+    for outcome in outcomes {
+        if outcome.action == "skipped" {
+            if let Some(reason) = &outcome.reason {
+                crate::output::info(&format!("  {}: {reason}", outcome.branch));
+            }
+        }
+    }
 }
 
 fn auto_merge_enabled(args: &SyncArgs) -> Result<bool, String> {

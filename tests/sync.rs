@@ -454,6 +454,60 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
     );
 }
 
+// --- end-of-run summary ---
+
+#[test]
+fn summary_reports_counts_grouped_by_outcome() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/ff");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/ff");
+    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
+
+    setup.push_branch_to_remote("feature/div");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/div");
+    setup.make_local_commit_on("feature/div", "local-only commit");
+    setup.push_commit_to_remote_branch("feature/div", "remote-only commit");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Summary:"))
+        .stderr(predicates::str::contains("1 fast-forwarded"))
+        .stderr(predicates::str::contains("1 skipped"))
+        .stderr(predicates::str::contains(
+            "feature/div: cannot fast-forward (diverged)",
+        ));
+}
+
+#[test]
+fn summary_omitted_in_json_mode() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/ff");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/ff");
+    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
+
+    let output = common::git_mate()
+        .args(["--json", "sync"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+
+    assert!(
+        !String::from_utf8_lossy(&output).contains("Summary:"),
+        "--json mode should not print the human-readable summary"
+    );
+}
+
 // --- --dry-run ---
 
 #[test]
