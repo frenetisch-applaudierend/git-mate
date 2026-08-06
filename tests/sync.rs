@@ -303,6 +303,64 @@ fn skips_diverged_non_current_branch() {
         .stderr(predicates::str::contains("cannot fast-forward"));
 }
 
+// --- a single branch's error must not abort the rest of the run ---
+
+#[test]
+fn branch_failure_does_not_abort_remaining_branches() {
+    let setup = common::RepoWithRemote::new();
+
+    // feature/broken will fail to fast-forward: its worktree has an untracked
+    // file that collides with a file the remote is about to add, so
+    // `git merge --ff-only` refuses to overwrite it.
+    setup.push_branch_to_remote("feature/broken");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/broken");
+
+    let wt_dir = TempDir::new().unwrap();
+    setup.local_git(&[
+        "worktree",
+        "add",
+        wt_dir.path().to_str().unwrap(),
+        "feature/broken",
+    ]);
+    std::fs::write(wt_dir.path().join("clash.txt"), "local uncommitted").unwrap();
+
+    let scratch = TempDir::new().unwrap();
+    common::git(
+        scratch.path(),
+        &["clone", setup.bare_path().to_str().unwrap(), "."],
+    );
+    common::git(scratch.path(), &["config", "user.email", "test@test.com"]);
+    common::git(scratch.path(), &["config", "user.name", "Test"]);
+    common::git(scratch.path(), &["checkout", "feature/broken"]);
+    std::fs::write(scratch.path().join("clash.txt"), "remote version").unwrap();
+    common::git(scratch.path(), &["add", "clash.txt"]);
+    common::git(scratch.path(), &["commit", "-m", "add clash.txt"]);
+    common::git(scratch.path(), &["push"]);
+
+    // feature/ok is an ordinary fast-forward with nothing in its way.
+    setup.push_branch_to_remote("feature/ok");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/ok");
+    setup.push_commit_to_remote_branch("feature/ok", "advance feature/ok");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/broken: failed"))
+        .stderr(predicates::str::contains("feature/ok: fast-forwarded"))
+        .stderr(predicates::str::contains("Summary:"))
+        .stderr(predicates::str::contains("1 failed"));
+
+    assert_eq!(
+        setup.branch_tip("feature/ok"),
+        setup.branch_tip("origin/feature/ok"),
+        "feature/ok should still be fast-forwarded despite feature/broken failing"
+    );
+}
+
 // --- final status message ---
 
 #[test]

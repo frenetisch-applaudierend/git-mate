@@ -99,6 +99,10 @@ impl BranchOutcome {
     fn kept(branch: &str) -> Self {
         Self::new(branch, "kept", None)
     }
+
+    fn failed(branch: &str, error: &str) -> Self {
+        Self::new(branch, "failed", Some(error))
+    }
 }
 
 /// What happened to the branch `sync` was run from.
@@ -201,16 +205,31 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
                 })
                 .unwrap_or(true);
 
-            match pruned_branch_status(branch, had_unique, &worktrees)? {
-                PrunedStatus::Skip(reason) => {
+            // A failure here (e.g. a non-UTF8 worktree path) is specific to this
+            // branch — report it and move on rather than aborting the remaining
+            // branches.
+            match pruned_branch_status(branch, had_unique, &worktrees) {
+                Ok(PrunedStatus::Skip(reason)) => {
                     crate::output::info(&format!("{branch}: {reason}"));
                     branch_outcomes.push(BranchOutcome::skipped(branch, reason));
                 }
-                PrunedStatus::Eligible => deletion_candidates.push(branch.clone()),
+                Ok(PrunedStatus::Eligible) => deletion_candidates.push(branch.clone()),
+                Err(e) => {
+                    crate::output::info(&format!("{branch}: failed ({e})"));
+                    branch_outcomes.push(BranchOutcome::failed(branch, &e));
+                }
             }
         } else if !is_current {
-            // Remote still exists — try to fast-forward.
-            branch_outcomes.push(fast_forward_branch(branch, upstream, &worktrees, dry_run)?);
+            // Remote still exists — try to fast-forward. A failure here (e.g. a
+            // fast-forward merge conflict) is specific to this branch — report
+            // it and move on rather than aborting the remaining branches.
+            match fast_forward_branch(branch, upstream, &worktrees, dry_run) {
+                Ok(outcome) => branch_outcomes.push(outcome),
+                Err(e) => {
+                    crate::output::info(&format!("{branch}: failed ({e})"));
+                    branch_outcomes.push(BranchOutcome::failed(branch, &e));
+                }
+            }
         }
         // Current branch with live upstream is handled by pull below.
     }
@@ -359,13 +378,14 @@ fn print_summary(outcomes: &[BranchOutcome]) {
         return;
     }
 
-    const ORDER: [(&str, &str); 7] = [
+    const ORDER: [(&str, &str); 8] = [
         ("fast-forwarded", "fast-forwarded"),
         ("up-to-date", "already up to date"),
         ("deleted", "deleted"),
         ("deletion-candidate", "flagged for deletion"),
         ("kept", "kept"),
         ("skipped", "skipped"),
+        ("failed", "failed"),
         ("no-upstream", "with no upstream"),
     ];
 
@@ -382,10 +402,10 @@ fn print_summary(outcomes: &[BranchOutcome]) {
     crate::output::info(&format!("Summary: {}", parts.join(", ")));
 
     for outcome in outcomes {
-        if outcome.action == "skipped" {
-            if let Some(reason) = &outcome.reason {
-                crate::output::info(&format!("  {}: {reason}", outcome.branch));
-            }
+        if (outcome.action == "skipped" || outcome.action == "failed")
+            && let Some(reason) = &outcome.reason
+        {
+            crate::output::info(&format!("  {}: {reason}", outcome.branch));
         }
     }
 }
@@ -592,8 +612,13 @@ fn resolve_pruned_deletions(
     if delete_pruned {
         let mut outcomes = Vec::with_capacity(candidates.len());
         for branch in candidates {
-            delete_pruned_branch(branch, current_wt, worktrees, main_wt_path)?;
-            outcomes.push(BranchOutcome::deleted(branch));
+            match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
+                Ok(()) => outcomes.push(BranchOutcome::deleted(branch)),
+                Err(e) => {
+                    crate::output::info(&format!("{branch}: failed ({e})"));
+                    outcomes.push(BranchOutcome::failed(branch, &e));
+                }
+            }
         }
         return Ok(outcomes);
     }
@@ -623,8 +648,13 @@ fn resolve_pruned_deletions(
     let mut outcomes = Vec::with_capacity(candidates.len());
     for branch in candidates {
         if to_delete.contains(&branch.as_str()) {
-            delete_pruned_branch(branch, current_wt, worktrees, main_wt_path)?;
-            outcomes.push(BranchOutcome::deleted(branch));
+            match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
+                Ok(()) => outcomes.push(BranchOutcome::deleted(branch)),
+                Err(e) => {
+                    crate::output::info(&format!("{branch}: failed ({e})"));
+                    outcomes.push(BranchOutcome::failed(branch, &e));
+                }
+            }
         } else {
             crate::output::info(&format!("{branch}: kept"));
             outcomes.push(BranchOutcome::kept(branch));
