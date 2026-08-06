@@ -12,6 +12,12 @@ mod shell_protocol;
 struct Cli {
     #[arg(long, global = true, help = "Show raw git output")]
     verbose: bool,
+    #[arg(
+        long,
+        global = true,
+        help = "Emit machine-readable JSON on stdout instead of interactive text"
+    )]
+    json: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -44,6 +50,14 @@ fn main() {
     crate::git::set_verbose(*matches.get_one::<bool>("verbose").unwrap_or(&false));
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
+    crate::output::set_json_mode(cli.json);
+
+    if cli.json && !matches!(cli.command, Commands::Sync(_)) {
+        unimplemented!("--json is not yet implemented for this command");
+    }
+
+    let command_name = command_name(&cli.command);
+
     let result = match cli.command {
         Commands::Checkout(args) => cmd::checkout::run(args),
         Commands::Finish(args) => cmd::finish::run(args),
@@ -54,7 +68,18 @@ fn main() {
     };
 
     if let Err(e) = result {
-        crate::output::error(&e);
+        crate::output::error(command_name, &e);
         std::process::exit(1);
+    }
+}
+
+fn command_name(command: &Commands) -> &'static str {
+    match command {
+        Commands::Checkout(_) => "checkout",
+        Commands::Finish(_) => "finish",
+        Commands::Init(_) => "init",
+        Commands::New(_) => "new",
+        Commands::Sync(_) => "sync",
+        Commands::Protocol(_) => "_protocol",
     }
 }

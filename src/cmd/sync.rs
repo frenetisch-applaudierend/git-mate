@@ -14,7 +14,10 @@ or a dirty working tree are never offered for deletion.
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
 branch into the current branch after pulling, keeping feature branches up to date
-with main."
+with main.
+
+Pass --dry-run to preview what sync would do (fast-forwards, deletion candidates,
+pull, auto-merge) without changing anything or prompting."
 )]
 pub struct SyncArgs {
     #[arg(long, help = "Pull with --rebase")]
@@ -33,9 +36,90 @@ pub struct SyncArgs {
         help = "Skip auto-merge, even if enabled in git config"
     )]
     pub no_merge: bool,
+    #[arg(
+        long,
+        help = "Preview planned actions without making any changes or prompting"
+    )]
+    pub dry_run: bool,
+}
+
+/// The action taken (or not taken) for a single local branch during sync,
+/// reported verbatim in `--json` mode; human mode narrates the same facts
+/// via `output::info`/`output::success` as they happen.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchOutcome {
+    branch: String,
+    action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+impl BranchOutcome {
+    fn new(branch: &str, action: &str, reason: Option<&str>) -> Self {
+        Self {
+            branch: branch.to_string(),
+            action: action.to_string(),
+            reason: reason.map(str::to_string),
+        }
+    }
+
+    fn no_upstream(branch: &str) -> Self {
+        Self::new(branch, "no-upstream", None)
+    }
+
+    fn skipped(branch: &str, reason: &str) -> Self {
+        Self::new(branch, "skipped", Some(reason))
+    }
+
+    fn up_to_date(branch: &str) -> Self {
+        Self::new(branch, "up-to-date", None)
+    }
+
+    fn fast_forwarded(branch: &str) -> Self {
+        Self::new(branch, "fast-forwarded", None)
+    }
+
+    fn deletion_candidate(branch: &str, reason: &str) -> Self {
+        Self::new(branch, "deletion-candidate", Some(reason))
+    }
+
+    fn deleted(branch: &str) -> Self {
+        Self::new(branch, "deleted", Some("remote deleted"))
+    }
+
+    fn kept(branch: &str) -> Self {
+        Self::new(branch, "kept", None)
+    }
+}
+
+/// What happened to the branch `sync` was run from.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CurrentBranchOutcome {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    pulled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pull_skipped_reason: Option<String>,
+    merged_default: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merge_skipped_reason: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncData {
+    dry_run: bool,
+    branches: Vec<BranchOutcome>,
+    current_branch: CurrentBranchOutcome,
 }
 
 pub fn run(args: SyncArgs) -> Result<(), String> {
+    let json = crate::output::json_mode();
+    let dry_run = args.dry_run;
+    let mut branch_outcomes: Vec<BranchOutcome> = Vec::new();
+
     // 1. Snapshot every local branch's tip and its upstream tip before fetching,
     //    so we can tell whether a branch had unique commits even after the upstream
     //    is pruned away.
@@ -83,7 +167,10 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     let mut deletion_candidates: Vec<String> = Vec::new();
 
     for (branch, upstream) in &branches {
-        let Some(upstream) = upstream else { continue };
+        let Some(upstream) = upstream else {
+            branch_outcomes.push(BranchOutcome::no_upstream(branch));
+            continue;
+        };
 
         let is_current = current_branch.as_deref() == Some(branch.as_str());
 
@@ -109,22 +196,50 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
             match pruned_branch_status(branch, had_unique, &worktrees)? {
                 PrunedStatus::Skip(reason) => {
                     crate::output::info(&format!("{branch}: {reason}"));
+                    branch_outcomes.push(BranchOutcome::skipped(branch, reason));
                 }
                 PrunedStatus::Eligible => deletion_candidates.push(branch.clone()),
             }
         } else if !is_current {
             // Remote still exists — try to fast-forward.
-            fast_forward_branch(branch, upstream, &worktrees)?;
+            branch_outcomes.push(fast_forward_branch(branch, upstream, &worktrees, dry_run)?);
         }
         // Current branch with live upstream is handled by pull below.
     }
 
     // Ask once, up front, about every branch whose remote was deleted rather
-    // than prompting one at a time.
-    resolve_pruned_deletions(&deletion_candidates, &current_wt, &worktrees, &main_wt_path)?;
+    // than prompting one at a time. Under --json or --dry-run, no prompt is
+    // issued: candidates are reported but never deleted (see pruned_branch
+    // deletion policy above).
+    branch_outcomes.extend(resolve_pruned_deletions(
+        &deletion_candidates,
+        &current_wt,
+        &worktrees,
+        &main_wt_path,
+        json,
+        dry_run,
+    )?);
 
     // 5. Pull the current branch (if it still has an upstream).
     if current_branch_pruned {
+        if json {
+            crate::output::emit_json_success(
+                "sync",
+                SyncData {
+                    dry_run,
+                    branches: branch_outcomes,
+                    current_branch: CurrentBranchOutcome {
+                        name: current_branch,
+                        pulled: false,
+                        pull_skipped_reason: Some(
+                            "current branch's upstream was deleted".to_string(),
+                        ),
+                        merged_default: false,
+                        merge_skipped_reason: None,
+                    },
+                },
+            );
+        }
         return Ok(());
     }
 
@@ -136,8 +251,10 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         .unwrap_or(false);
 
     let mut synced_current_branch = false;
+    let mut pull_skipped_reason = None;
     if !has_upstream {
         crate::output::info("No upstream configured for current branch, skipping pull.");
+        pull_skipped_reason = Some("no upstream configured for current branch".to_string());
     } else {
         let mut extra_flags = vec![];
         if args.rebase {
@@ -146,19 +263,48 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         if args.ff_only {
             extra_flags.push("--ff-only");
         }
-        crate::git::pull(&extra_flags)?;
+        if dry_run {
+            crate::output::info(&format!(
+                "{}: would pull",
+                current_branch.as_deref().unwrap_or("current branch")
+            ));
+        } else {
+            crate::git::pull(&extra_flags)?;
+        }
         synced_current_branch = true;
     }
 
-    let merged_default = if auto_merge {
-        merge_default_branch(current_branch.as_deref())?
+    let (merged_default, merge_skipped_reason) = if auto_merge {
+        merge_default_branch(current_branch.as_deref(), dry_run)?
     } else {
-        false
+        (false, None)
     };
 
     if synced_current_branch || merged_default {
-        crate::output::success("Synced.");
+        if dry_run {
+            crate::output::success("Would sync (dry run).");
+        } else {
+            crate::output::success("Synced.");
+        }
     }
+
+    if json {
+        crate::output::emit_json_success(
+            "sync",
+            SyncData {
+                dry_run,
+                branches: branch_outcomes,
+                current_branch: CurrentBranchOutcome {
+                    name: current_branch,
+                    pulled: synced_current_branch,
+                    pull_skipped_reason,
+                    merged_default,
+                    merge_skipped_reason,
+                },
+            },
+        );
+    }
+
     Ok(())
 }
 
@@ -182,27 +328,42 @@ fn auto_merge_enabled(args: &SyncArgs) -> Result<bool, String> {
     }
 }
 
-fn merge_default_branch(current_branch: Option<&str>) -> Result<bool, String> {
+/// Returns (merged, skip_reason). `skip_reason` is set whenever `merged` is
+/// `false`, describing why auto-merge did not happen.
+fn merge_default_branch(
+    current_branch: Option<&str>,
+    dry_run: bool,
+) -> Result<(bool, Option<String>), String> {
     let Some(current_branch) = current_branch else {
         crate::output::info("Could not determine current branch, skipping auto-merge.");
-        return Ok(false);
+        return Ok((false, Some("could not determine current branch".to_string())));
     };
     if current_branch == "HEAD" {
         crate::output::info("Detached HEAD, skipping auto-merge.");
-        return Ok(false);
+        return Ok((false, Some("detached HEAD".to_string())));
     }
 
     let default_branch = crate::git::detect_default_branch(false)?;
     if current_branch == default_branch {
         crate::output::info("Current branch is the default branch, skipping auto-merge.");
-        return Ok(false);
+        return Ok((
+            false,
+            Some("current branch is the default branch".to_string()),
+        ));
+    }
+
+    if dry_run {
+        crate::output::info(&format!(
+            "{current_branch}: would merge default branch '{default_branch}'"
+        ));
+        return Ok((true, None));
     }
 
     crate::git::merge(&["--no-edit", &default_branch])?;
     crate::output::info(&format!(
         "{current_branch}: merged default branch '{default_branch}'"
     ));
-    Ok(true)
+    Ok((true, None))
 }
 
 /// Returns (branch, local_sha, upstream_sha) for every local branch that has an upstream.
@@ -227,23 +388,37 @@ fn fast_forward_branch(
     branch: &str,
     upstream: &str,
     worktrees: &[crate::git::WorktreeEntry],
-) -> Result<(), String> {
+    dry_run: bool,
+) -> Result<BranchOutcome, String> {
     let local_sha = match crate::git::resolve_ref(branch) {
         Ok(sha) => sha,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(BranchOutcome::skipped(branch, "could not resolve local ref")),
     };
     let remote_sha = match crate::git::resolve_ref(upstream) {
         Ok(sha) => sha,
-        Err(_) => return Ok(()),
+        Err(_) => {
+            return Ok(BranchOutcome::skipped(
+                branch,
+                "could not resolve upstream ref",
+            ));
+        }
     };
     if local_sha == remote_sha {
-        return Ok(());
+        return Ok(BranchOutcome::up_to_date(branch));
     }
     if !crate::git::is_ancestor(&local_sha, &remote_sha)? {
         crate::output::info(&format!(
             "{branch}: cannot fast-forward (diverged), skipping"
         ));
-        return Ok(());
+        return Ok(BranchOutcome::skipped(
+            branch,
+            "cannot fast-forward (diverged)",
+        ));
+    }
+
+    if dry_run {
+        crate::output::info(&format!("{branch}: would fast-forward"));
+        return Ok(BranchOutcome::fast_forwarded(branch));
     }
 
     // If the branch is checked out in a worktree, use `merge --ff-only` so the
@@ -260,7 +435,7 @@ fn fast_forward_branch(
         crate::git::update_ref(&format!("refs/heads/{branch}"), &remote_sha)?;
     }
     crate::output::info(&format!("{branch}: fast-forwarded"));
-    Ok(())
+    Ok(BranchOutcome::fast_forwarded(branch))
 }
 
 enum PrunedStatus {
@@ -301,19 +476,41 @@ fn pruned_branch_status(
 
 /// Ask once about every branch eligible for deletion, then act on the
 /// choice: delete them all, keep them all, or decide branch by branch.
+/// Resolves what to do with branches whose remote was deleted. In `--json`
+/// or `--dry-run` mode this never prompts (which would block on stdin, or
+/// imply a decision dry-run shouldn't make) and never deletes anything —
+/// candidates are reported with a reason so a future `--yes`-style flag can
+/// confirm the deletion out-of-band.
 fn resolve_pruned_deletions(
     candidates: &[String],
     current_wt: &Option<std::path::PathBuf>,
     worktrees: &[crate::git::WorktreeEntry],
     main_wt_path: &str,
-) -> Result<(), String> {
+    json: bool,
+    dry_run: bool,
+) -> Result<Vec<BranchOutcome>, String> {
     if candidates.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
+    }
+
+    if json {
+        return Ok(candidates
+            .iter()
+            .map(|branch| BranchOutcome::deletion_candidate(branch, "remote deleted"))
+            .collect());
     }
 
     crate::output::info("Local branches whose remote was deleted:");
     for branch in candidates {
         crate::output::info(&format!("  {branch}"));
+    }
+
+    if dry_run {
+        crate::output::info("Dry run: not deleting any of these.");
+        return Ok(candidates
+            .iter()
+            .map(|branch| BranchOutcome::deletion_candidate(branch, "remote deleted"))
+            .collect());
     }
 
     let to_delete: Vec<&str> = match prompt_bulk_choice(candidates.len()) {
@@ -326,15 +523,18 @@ fn resolve_pruned_deletions(
             .collect(),
     };
 
+    let mut outcomes = Vec::with_capacity(candidates.len());
     for branch in candidates {
         if to_delete.contains(&branch.as_str()) {
             delete_pruned_branch(branch, current_wt, worktrees, main_wt_path)?;
+            outcomes.push(BranchOutcome::deleted(branch));
         } else {
             crate::output::info(&format!("{branch}: kept"));
+            outcomes.push(BranchOutcome::kept(branch));
         }
     }
 
-    Ok(())
+    Ok(outcomes)
 }
 
 enum BulkChoice {

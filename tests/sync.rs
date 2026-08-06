@@ -453,3 +453,112 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
         "local branch with unpushed commits should be kept"
     );
 }
+
+// --- --dry-run ---
+
+#[test]
+fn dry_run_does_not_pull_or_fast_forward() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/ff");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/ff");
+    let feature_before = setup.branch_tip("feature/ff");
+    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
+
+    let main_before = setup.local_head_commit();
+    setup.push_commit_to_remote("advance main");
+
+    common::git_mate()
+        .args(["sync", "--dry-run"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/ff: would fast-forward"))
+        .stderr(predicates::str::contains("would pull"));
+
+    assert_eq!(
+        setup.branch_tip("feature/ff"),
+        feature_before,
+        "dry run must not fast-forward feature/ff"
+    );
+    assert_eq!(
+        setup.local_head_commit(),
+        main_before,
+        "dry run must not pull the current branch"
+    );
+}
+
+#[test]
+fn dry_run_does_not_delete_pruned_branch_or_prompt() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    assert!(setup.local_branch_exists("feature/gone"));
+
+    setup.delete_remote_branch("feature/gone");
+
+    // No stdin provided: if --dry-run still prompted, this would hang or read
+    // EOF and be interpreted as "keep" anyway, so also assert on the message
+    // to prove the prompt path was skipped entirely.
+    common::git_mate()
+        .args(["sync", "--dry-run"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "Dry run: not deleting any of these",
+        ));
+
+    assert!(
+        setup.local_branch_exists("feature/gone"),
+        "dry run must not delete the local branch"
+    );
+}
+
+#[test]
+fn dry_run_json_reports_plan_without_acting() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    setup.delete_remote_branch("feature/gone");
+
+    let main_before = setup.local_head_commit();
+    setup.push_commit_to_remote("advance main");
+
+    let output = common::git_mate()
+        .args(["--json", "sync", "--dry-run"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["data"]["dryRun"], true);
+    assert_eq!(json["data"]["currentBranch"]["pulled"], true);
+
+    let branches = json["data"]["branches"].as_array().unwrap();
+    assert!(
+        branches
+            .iter()
+            .any(|b| b["branch"] == "feature/gone" && b["action"] == "deletion-candidate"),
+        "expected feature/gone reported as a deletion candidate, got: {branches:?}"
+    );
+
+    assert!(
+        setup.local_branch_exists("feature/gone"),
+        "dry run must not delete the local branch"
+    );
+    assert_eq!(
+        setup.local_head_commit(),
+        main_before,
+        "dry run must not pull the current branch"
+    );
+}
