@@ -4,5 +4,18 @@
     "Bash(cargo clippy:*)",
     "Bash(cargo run:*)",
     "Bash(cargo test:*)"
-  ]
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime --hook-json",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
 }

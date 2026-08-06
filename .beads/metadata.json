@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "git_mate",
+  "project_id": "80d42329-68ba-4d53-be7e-e5861e48820f"
+}
