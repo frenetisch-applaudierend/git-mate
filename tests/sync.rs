@@ -1,6 +1,5 @@
 mod common;
 
-use assert_cmd::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -307,7 +306,7 @@ fn skips_diverged_non_current_branch() {
 // --- Deletion of local branches whose remote was pruned ---
 
 #[test]
-fn deletes_local_branch_when_remote_pruned() {
+fn deletes_local_branch_when_remote_pruned_and_user_confirms_all() {
     let setup = common::RepoWithRemote::new();
 
     setup.push_branch_to_remote("feature/gone");
@@ -320,6 +319,7 @@ fn deletes_local_branch_when_remote_pruned() {
     common::git_mate()
         .arg("sync")
         .current_dir(setup.local_path())
+        .write_stdin("a\n")
         .assert()
         .success()
         .stderr(predicates::str::contains("feature/gone: deleted"));
@@ -328,6 +328,106 @@ fn deletes_local_branch_when_remote_pruned() {
         !setup.local_branch_exists("feature/gone"),
         "local branch should have been deleted"
     );
+}
+
+#[test]
+fn keeps_local_branch_when_remote_pruned_and_user_declines() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+
+    setup.delete_remote_branch("feature/gone");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .write_stdin("n\n")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/gone: kept"));
+
+    assert!(
+        setup.local_branch_exists("feature/gone"),
+        "local branch should have been kept"
+    );
+}
+
+#[test]
+fn keeps_local_branch_when_remote_pruned_and_no_input_given() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+
+    setup.delete_remote_branch("feature/gone");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/gone: kept"));
+
+    assert!(
+        setup.local_branch_exists("feature/gone"),
+        "local branch should default to kept when no confirmation is given"
+    );
+}
+
+#[test]
+fn prompts_once_for_multiple_pruned_branches_and_deletes_all() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/one");
+    setup.push_branch_to_remote("feature/two");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/one");
+    setup.create_local_tracking_branch("feature/two");
+
+    setup.delete_remote_branch("feature/one");
+    setup.delete_remote_branch("feature/two");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .write_stdin("a\n")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/one: deleted"))
+        .stderr(predicates::str::contains("feature/two: deleted"));
+
+    assert!(!setup.local_branch_exists("feature/one"));
+    assert!(!setup.local_branch_exists("feature/two"));
+}
+
+#[test]
+fn decide_choice_prompts_per_branch() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/one");
+    setup.push_branch_to_remote("feature/two");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/one");
+    setup.create_local_tracking_branch("feature/two");
+
+    setup.delete_remote_branch("feature/one");
+    setup.delete_remote_branch("feature/two");
+
+    // "d" picks decide-per-branch; then confirm the first, decline the second.
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .write_stdin("d\ny\nn\n")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/one: deleted"))
+        .stderr(predicates::str::contains("feature/two: kept"));
+
+    assert!(!setup.local_branch_exists("feature/one"));
+    assert!(setup.local_branch_exists("feature/two"));
 }
 
 #[test]

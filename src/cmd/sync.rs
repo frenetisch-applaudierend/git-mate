@@ -7,10 +7,10 @@ Fetches all remotes, fast-forwards local branches that haven't diverged from the
 upstream, and pulls the current branch. Use --rebase or --ff-only to control how the
 pull is applied.
 
-When a remote branch is deleted — typically after a PR is merged — sync removes the
-corresponding local branch and its worktree if one exists. Branches with unpushed
-commits or a dirty working tree are left untouched. If the affected branch is currently
-checked out, sync prompts before making any changes.
+When a remote branch is deleted — typically after a PR is merged — sync lists every
+local branch (and worktree) left without a remote and asks once whether to delete all
+of them, keep all of them, or decide branch by branch. Branches with unpushed commits
+or a dirty working tree are never offered for deletion.
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
 branch into the current branch after pulling, keeping feature branches up to date
@@ -80,6 +80,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     let branches = crate::git::list_local_branches_with_upstream()?;
 
     let mut current_branch_pruned = false;
+    let mut deletion_candidates: Vec<String> = Vec::new();
 
     for (branch, upstream) in &branches {
         let Some(upstream) = upstream else { continue };
@@ -87,6 +88,10 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         let is_current = current_branch.as_deref() == Some(branch.as_str());
 
         if pruned.contains(upstream) {
+            if is_current {
+                current_branch_pruned = true;
+            }
+
             let had_unique = branches_before
                 .iter()
                 .find(|(b, _, _)| b == branch)
@@ -101,16 +106,11 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
                 })
                 .unwrap_or(true);
 
-            handle_pruned_branch(
-                branch,
-                had_unique,
-                is_current,
-                &current_wt,
-                &worktrees,
-                &main_wt_path,
-            )?;
-            if is_current {
-                current_branch_pruned = true;
+            match pruned_branch_status(branch, had_unique, &worktrees)? {
+                PrunedStatus::Skip(reason) => {
+                    crate::output::info(&format!("{branch}: {reason}"));
+                }
+                PrunedStatus::Eligible => deletion_candidates.push(branch.clone()),
             }
         } else if !is_current {
             // Remote still exists — try to fast-forward.
@@ -118,6 +118,10 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         }
         // Current branch with live upstream is handled by pull below.
     }
+
+    // Ask once, up front, about every branch whose remote was deleted rather
+    // than prompting one at a time.
+    resolve_pruned_deletions(&deletion_candidates, &current_wt, &worktrees, &main_wt_path)?;
 
     // 5. Pull the current branch (if it still has an upstream).
     if current_branch_pruned {
@@ -259,49 +263,114 @@ fn fast_forward_branch(
     Ok(())
 }
 
-fn handle_pruned_branch(
+enum PrunedStatus {
+    Skip(&'static str),
+    Eligible,
+}
+
+/// Decide whether a branch whose upstream was pruned is safe to delete,
+/// without prompting or acting. Branches with unpushed commits or a dirty
+/// checked-out working tree are never candidates for deletion.
+fn pruned_branch_status(
     branch: &str,
     had_unique_commits: bool,
-    is_current: bool,
-    current_wt: &Option<std::path::PathBuf>,
     worktrees: &[crate::git::WorktreeEntry],
-    main_wt_path: &str,
-) -> Result<(), String> {
+) -> Result<PrunedStatus, String> {
     if had_unique_commits {
-        crate::output::info(&format!(
-            "{branch}: remote deleted but has unpushed commits, skipping"
+        return Ok(PrunedStatus::Skip(
+            "remote deleted but has unpushed commits, skipping",
         ));
-        return Ok(());
     }
 
-    // Find which worktree (if any) has this branch checked out.
     let checked_out_wt = worktrees
         .iter()
         .find(|wt| wt.branch.as_deref() == Some(branch))
         .map(|wt| &wt.path);
 
-    // If checked out, the working tree must be clean.
     if let Some(wt_path) = checked_out_wt {
         let wt_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
         if !crate::git::is_worktree_clean(wt_str)? {
-            crate::output::info(&format!(
-                "{branch}: remote deleted but working tree is dirty, skipping"
+            return Ok(PrunedStatus::Skip(
+                "remote deleted but working tree is dirty, skipping",
             ));
-            return Ok(());
         }
     }
 
-    // For the current branch, ask before acting.
-    if is_current
-        && !prompt_yes_no(&format!(
-            "Remote for '{branch}' was deleted. Delete local branch?"
-        ))
-    {
-        crate::output::info(&format!("{branch}: kept"));
+    Ok(PrunedStatus::Eligible)
+}
+
+/// Ask once about every branch eligible for deletion, then act on the
+/// choice: delete them all, keep them all, or decide branch by branch.
+fn resolve_pruned_deletions(
+    candidates: &[String],
+    current_wt: &Option<std::path::PathBuf>,
+    worktrees: &[crate::git::WorktreeEntry],
+    main_wt_path: &str,
+) -> Result<(), String> {
+    if candidates.is_empty() {
         return Ok(());
     }
 
-    // Perform the finish-like action for checked-out branches.
+    crate::output::info("Local branches whose remote was deleted:");
+    for branch in candidates {
+        crate::output::info(&format!("  {branch}"));
+    }
+
+    let to_delete: Vec<&str> = match prompt_bulk_choice(candidates.len()) {
+        BulkChoice::All => candidates.iter().map(String::as_str).collect(),
+        BulkChoice::None => Vec::new(),
+        BulkChoice::Decide => candidates
+            .iter()
+            .filter(|branch| prompt_yes_no(&format!("Delete local branch '{branch}'?")))
+            .map(String::as_str)
+            .collect(),
+    };
+
+    for branch in candidates {
+        if to_delete.contains(&branch.as_str()) {
+            delete_pruned_branch(branch, current_wt, worktrees, main_wt_path)?;
+        } else {
+            crate::output::info(&format!("{branch}: kept"));
+        }
+    }
+
+    Ok(())
+}
+
+enum BulkChoice {
+    All,
+    None,
+    Decide,
+}
+
+fn prompt_bulk_choice(count: usize) -> BulkChoice {
+    use std::io::Write as _;
+    eprint!("Delete all {count}, keep all, or decide for each? [a/N/d] ");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line).is_err() {
+        return BulkChoice::None;
+    }
+    match line.trim().to_lowercase().as_str() {
+        "a" | "all" => BulkChoice::All,
+        "d" | "decide" => BulkChoice::Decide,
+        _ => BulkChoice::None,
+    }
+}
+
+/// Remove the worktree (if any) and force-delete the local branch ref.
+/// Caller has already confirmed this branch should be deleted.
+fn delete_pruned_branch(
+    branch: &str,
+    current_wt: &Option<std::path::PathBuf>,
+    worktrees: &[crate::git::WorktreeEntry],
+    main_wt_path: &str,
+) -> Result<(), String> {
+    let checked_out_wt = worktrees
+        .iter()
+        .find(|wt| wt.branch.as_deref() == Some(branch))
+        .map(|wt| &wt.path);
+
     if let Some(wt_path) = checked_out_wt {
         let main_wt = std::path::Path::new(main_wt_path);
         if wt_path == main_wt {
@@ -323,7 +392,6 @@ fn handle_pruned_branch(
         }
     }
 
-    // Delete the local branch ref.
     crate::git::delete_branch_force_in(main_wt_path, branch)?;
     crate::output::info(&format!("{branch}: deleted (remote was deleted)"));
     Ok(())

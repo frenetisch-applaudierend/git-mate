@@ -3,9 +3,10 @@
 use std::process::Command;
 use tempfile::TempDir;
 
-pub fn git_mate() -> Command {
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("git-mate"));
-    isolate_git_config(&mut cmd);
+pub fn git_mate() -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("git-mate"));
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null");
     cmd
 }
 
