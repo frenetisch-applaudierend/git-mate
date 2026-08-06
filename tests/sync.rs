@@ -303,6 +303,45 @@ fn skips_diverged_non_current_branch() {
         .stderr(predicates::str::contains("cannot fast-forward"));
 }
 
+// --- final status message ---
+
+#[test]
+fn final_status_reflects_other_branch_work_when_current_branch_untouched() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/ff");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/ff");
+    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
+
+    // Switch to a branch with no upstream, so the current-branch pull/merge
+    // path contributes nothing to the final status — before the fix, that
+    // meant no final status line printed at all even though feature/ff was
+    // fast-forwarded.
+    setup.local_git(&["checkout", "-b", "scratch"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/ff: fast-forwarded"))
+        .stderr(predicates::str::contains("Synced."));
+}
+
+#[test]
+fn final_status_reports_nothing_to_do() {
+    let setup = common::RepoWithRemote::new();
+    setup.local_git(&["checkout", "-b", "scratch"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Already up to date."));
+}
+
 // --- Deletion of local branches whose remote was pruned ---
 
 #[test]

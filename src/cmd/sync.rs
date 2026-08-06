@@ -252,6 +252,11 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
                     },
                 },
             );
+        } else {
+            crate::output::success(final_status_message(
+                any_branch_action_taken(&branch_outcomes),
+                dry_run,
+            ));
         }
         return Ok(());
     }
@@ -293,12 +298,10 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         (false, None)
     };
 
-    if synced_current_branch || merged_default {
-        if dry_run {
-            crate::output::success("Would sync (dry run).");
-        } else {
-            crate::output::success("Synced.");
-        }
+    if !json {
+        let any_work =
+            synced_current_branch || merged_default || any_branch_action_taken(&branch_outcomes);
+        crate::output::success(final_status_message(any_work, dry_run));
     }
 
     if json {
@@ -319,6 +322,31 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Whether any branch was actually (or, under `--dry-run`, would be) changed
+/// during this run. Used to pick the final status message: the old logic
+/// based this solely on the current branch's own pull/merge, so a run that
+/// fast-forwarded or deleted several other branches but left the current
+/// branch untouched printed no final status at all.
+fn any_branch_action_taken(outcomes: &[BranchOutcome]) -> bool {
+    outcomes.iter().any(|o| {
+        matches!(
+            o.action.as_str(),
+            "fast-forwarded" | "deleted" | "deletion-candidate"
+        )
+    })
+}
+
+/// The final status line, covering both real work and the "nothing to do"
+/// case that used to print no message at all.
+fn final_status_message(any_work: bool, dry_run: bool) -> &'static str {
+    match (any_work, dry_run) {
+        (true, true) => "Would sync (dry run).",
+        (true, false) => "Synced.",
+        (false, true) => "Already up to date (dry run).",
+        (false, false) => "Already up to date.",
+    }
 }
 
 /// Print a one-line, grouped-by-outcome summary of everything done to local
