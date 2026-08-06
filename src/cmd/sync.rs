@@ -10,7 +10,9 @@ pull is applied.
 When a remote branch is deleted — typically after a PR is merged — sync lists every
 local branch (and worktree) left without a remote and asks once whether to delete all
 of them, keep all of them, or decide branch by branch. Branches with unpushed commits
-or a dirty working tree are never offered for deletion.
+or a dirty working tree are never offered for deletion. Pass --delete-pruned to skip
+that prompt and delete all of them (this also makes --json actually delete instead of
+just reporting candidates).
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
 branch into the current branch after pulling, keeping feature branches up to date
@@ -36,6 +38,12 @@ pub struct SyncArgs {
         help = "Skip auto-merge, even if enabled in git config"
     )]
     pub no_merge: bool,
+    #[arg(
+        long,
+        conflicts_with = "dry_run",
+        help = "Delete every local branch whose remote was pruned, without prompting"
+    )]
+    pub delete_pruned: bool,
     #[arg(
         long,
         help = "Preview planned actions without making any changes or prompting"
@@ -218,6 +226,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         &main_wt_path,
         json,
         dry_run,
+        args.delete_pruned,
     )?);
 
     if !json {
@@ -519,13 +528,14 @@ fn pruned_branch_status(
     Ok(PrunedStatus::Eligible)
 }
 
-/// Ask once about every branch eligible for deletion, then act on the
-/// choice: delete them all, keep them all, or decide branch by branch.
-/// Resolves what to do with branches whose remote was deleted. In `--json`
-/// or `--dry-run` mode this never prompts (which would block on stdin, or
-/// imply a decision dry-run shouldn't make) and never deletes anything —
-/// candidates are reported with a reason so a future `--yes`-style flag can
-/// confirm the deletion out-of-band.
+/// Resolves what to do with branches whose remote was deleted, in priority
+/// order: `--dry-run` always previews only, regardless of the other flags;
+/// then `--delete-pruned` deletes all candidates without prompting (this is
+/// what makes `--json` actually delete rather than just report); otherwise
+/// plain `--json` never prompts (which would block on stdin) and reports
+/// candidates without acting; otherwise ask once about every branch and act
+/// on the choice: delete them all, keep them all, or decide branch by
+/// branch.
 fn resolve_pruned_deletions(
     candidates: &[String],
     current_wt: &Option<std::path::PathBuf>,
@@ -533,9 +543,31 @@ fn resolve_pruned_deletions(
     main_wt_path: &str,
     json: bool,
     dry_run: bool,
+    delete_pruned: bool,
 ) -> Result<Vec<BranchOutcome>, String> {
     if candidates.is_empty() {
         return Ok(Vec::new());
+    }
+
+    if dry_run {
+        crate::output::info("Local branches whose remote was deleted:");
+        for branch in candidates {
+            crate::output::info(&format!("  {branch}"));
+        }
+        crate::output::info("Dry run: not deleting any of these.");
+        return Ok(candidates
+            .iter()
+            .map(|branch| BranchOutcome::deletion_candidate(branch, "remote deleted"))
+            .collect());
+    }
+
+    if delete_pruned {
+        let mut outcomes = Vec::with_capacity(candidates.len());
+        for branch in candidates {
+            delete_pruned_branch(branch, current_wt, worktrees, main_wt_path)?;
+            outcomes.push(BranchOutcome::deleted(branch));
+        }
+        return Ok(outcomes);
     }
 
     if json {
@@ -548,14 +580,6 @@ fn resolve_pruned_deletions(
     crate::output::info("Local branches whose remote was deleted:");
     for branch in candidates {
         crate::output::info(&format!("  {branch}"));
-    }
-
-    if dry_run {
-        crate::output::info("Dry run: not deleting any of these.");
-        return Ok(candidates
-            .iter()
-            .map(|branch| BranchOutcome::deletion_candidate(branch, "remote deleted"))
-            .collect());
     }
 
     let to_delete: Vec<&str> = match prompt_bulk_choice(candidates.len()) {

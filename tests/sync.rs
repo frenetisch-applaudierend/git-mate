@@ -454,6 +454,79 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
     );
 }
 
+// --- --delete-pruned ---
+
+#[test]
+fn delete_pruned_deletes_without_prompting() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    assert!(setup.local_branch_exists("feature/gone"));
+
+    setup.delete_remote_branch("feature/gone");
+
+    // No stdin provided: if --delete-pruned still prompted, this would hang
+    // waiting on input rather than complete.
+    common::git_mate()
+        .args(["sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/gone: deleted"));
+
+    assert!(
+        !setup.local_branch_exists("feature/gone"),
+        "local branch should have been deleted"
+    );
+}
+
+#[test]
+fn delete_pruned_conflicts_with_dry_run() {
+    let setup = common::RepoWithRemote::new();
+
+    common::git_mate()
+        .args(["sync", "--delete-pruned", "--dry-run"])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure();
+}
+
+#[test]
+fn delete_pruned_makes_json_actually_delete() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    setup.delete_remote_branch("feature/gone");
+
+    let output = common::git_mate()
+        .args(["--json", "sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["ok"], true);
+    let branches = json["data"]["branches"].as_array().unwrap();
+    assert!(
+        branches
+            .iter()
+            .any(|b| b["branch"] == "feature/gone" && b["action"] == "deleted"),
+        "expected feature/gone reported as deleted, got: {branches:?}"
+    );
+
+    assert!(
+        !setup.local_branch_exists("feature/gone"),
+        "local branch should have been deleted"
+    );
+}
+
 // --- end-of-run summary ---
 
 #[test]
