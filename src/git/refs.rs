@@ -16,3 +16,14 @@ pub fn is_ancestor(ancestor: &str, descendant: &str) -> Result<bool, String> {
 pub fn update_ref(refname: &str, new_sha: &str) -> Result<(), String> {
     run(&["update-ref", refname, new_sha])
 }
+
+/// Move `refname` to `new_sha`, but only if it still points at `old_sha`,
+/// recording `reason` in the reflog.
+pub fn update_ref_from(
+    refname: &str,
+    new_sha: &str,
+    old_sha: &str,
+    reason: &str,
+) -> Result<(), String> {
+    run(&["update-ref", "-m", reason, refname, new_sha, old_sha])
+}

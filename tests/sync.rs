@@ -270,7 +270,9 @@ fn fast_forward_in_worktree_context_updates_main_worktree_index() {
         .output()
         .unwrap();
     assert!(
-        String::from_utf8_lossy(&status_out.stdout).trim().is_empty(),
+        String::from_utf8_lossy(&status_out.stdout)
+            .trim()
+            .is_empty(),
         "main worktree should be clean after fast-forward, got:\n{}",
         String::from_utf8_lossy(&status_out.stdout)
     );
@@ -294,13 +296,331 @@ fn skips_diverged_non_current_branch() {
     setup.make_local_commit_on("feature/div", "local-only commit");
     // Push a different commit to the remote branch.
     setup.push_commit_to_remote_branch("feature/div", "remote-only commit");
+    let before = setup.branch_tip("feature/div");
+
+    common::git_mate()
+        .args(["sync", "--diverged=skip"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("cannot fast-forward"));
+    assert_eq!(setup.branch_tip("feature/div"), before);
+}
+
+// --- diverged non-current branches ---
+
+/// A scratch clone of the remote with `branch` checked out, for building up
+/// remote-side history (including rewrites) before pushing.
+fn remote_scratch(setup: &common::RepoWithRemote, branch: &str) -> TempDir {
+    let scratch = TempDir::new().unwrap();
+    let bare_url = setup.bare_path().to_str().unwrap().to_string();
+    common::git(scratch.path(), &["clone", "-q", &bare_url, "."]);
+    common::git(scratch.path(), &["config", "user.email", "test@test.com"]);
+    common::git(scratch.path(), &["config", "user.name", "Test"]);
+    common::git(scratch.path(), &["checkout", "-q", branch]);
+    scratch
+}
+
+fn commit_file(dir: &std::path::Path, name: &str, content: &str, message: &str) {
+    std::fs::write(dir.join(name), content).unwrap();
+    common::git(dir, &["add", name]);
+    common::git(dir, &["commit", "-q", "-m", message]);
+}
+
+fn commit_file_on(setup: &common::RepoWithRemote, branch: &str, name: &str, content: &str) {
+    let current = setup.local_current_branch();
+    setup.local_git(&["checkout", "-q", branch]);
+    commit_file(setup.local_path(), name, content, &format!("local {name}"));
+    setup.local_git(&["checkout", "-q", &current]);
+}
+
+fn parent_count(dir: &std::path::Path, rev: &str) -> usize {
+    let out = Command::new("git")
+        .args(["rev-list", "--parents", "-n1", rev])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .split_whitespace()
+        .count()
+        - 1
+}
+
+/// Local branch with one unpushed file commit; remote gains another file commit.
+fn diverged_with_local_work(setup: &common::RepoWithRemote, branch: &str) -> String {
+    setup.push_branch_to_remote(branch);
+    setup.local_fetch();
+    setup.create_local_tracking_branch(branch);
+    commit_file_on(setup, branch, "local.txt", "local");
+    let scratch = remote_scratch(setup, branch);
+    commit_file(scratch.path(), "remote.txt", "remote", "remote change");
+    common::git(scratch.path(), &["push", "-q"]);
+    setup.branch_tip(branch)
+}
+
+#[test]
+fn merges_diverged_branch_with_local_work() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/div");
+    let main_before = setup.local_head_commit();
 
     common::git_mate()
         .arg("sync")
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("cannot fast-forward"));
+        .stderr(predicates::str::contains(
+            "feature/div: diverged, merged origin/feature/div",
+        ))
+        .stderr(predicates::str::contains("1 merged with upstream"));
+
+    let tip = setup.branch_tip("feature/div");
+    assert_eq!(parent_count(setup.local_path(), &tip), 2);
+    assert!(is_ancestor(setup.local_path(), &before, &tip));
+    assert!(is_ancestor(setup.local_path(), "origin/feature/div", &tip));
+    assert_eq!(
+        setup.local_head_commit(),
+        main_before,
+        "current branch untouched"
+    );
+    assert_eq!(setup.local_current_branch(), "main");
+}
+
+#[test]
+fn merges_diverged_branch_checked_out_in_clean_worktree() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/wt");
+    let wt_dir = TempDir::new().unwrap();
+    setup.local_git(&[
+        "worktree",
+        "add",
+        wt_dir.path().to_str().unwrap(),
+        "feature/wt",
+    ]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/wt: diverged, merged"));
+
+    let tip = setup.branch_tip("feature/wt");
+    assert!(is_ancestor(setup.local_path(), &before, &tip));
+    assert!(
+        wt_dir.path().join("remote.txt").exists(),
+        "worktree files should follow the merge"
+    );
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(wt_dir.path())
+        .output()
+        .unwrap();
+    assert!(status.stdout.is_empty(), "worktree should be clean");
+}
+
+#[test]
+fn skips_diverged_branch_with_dirty_worktree() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/dirty");
+    let wt_dir = TempDir::new().unwrap();
+    setup.local_git(&[
+        "worktree",
+        "add",
+        wt_dir.path().to_str().unwrap(),
+        "feature/dirty",
+    ]);
+    std::fs::write(wt_dir.path().join("wip.txt"), "uncommitted").unwrap();
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "feature/dirty: diverged but working tree is dirty, skipping",
+        ));
+    assert_eq!(setup.branch_tip("feature/dirty"), before);
+}
+
+#[test]
+fn skips_diverged_branch_with_conflicts() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/clash");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/clash");
+    commit_file_on(&setup, "feature/clash", "same.txt", "local");
+    let scratch = remote_scratch(&setup, "feature/clash");
+    commit_file(scratch.path(), "same.txt", "remote", "remote change");
+    common::git(scratch.path(), &["push", "-q"]);
+    let before = setup.branch_tip("feature/clash");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "feature/clash: diverged with conflicts, skipping",
+        ));
+    assert_eq!(
+        setup.branch_tip("feature/clash"),
+        before,
+        "branch untouched"
+    );
+}
+
+#[test]
+fn resets_branch_when_remote_was_rewritten() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/rewrite");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/rewrite");
+
+    // Someone amends the remote tip and force-pushes; local has no work of its own.
+    let scratch = remote_scratch(&setup, "feature/rewrite");
+    common::git(
+        scratch.path(),
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "rewritten",
+        ],
+    );
+    common::git(scratch.path(), &["push", "-q", "--force"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "feature/rewrite: remote was rewritten, reset to origin/feature/rewrite",
+        ))
+        .stderr(predicates::str::contains("1 reset to rewritten upstream"));
+
+    assert_eq!(
+        setup.branch_tip("feature/rewrite"),
+        setup.branch_tip("origin/feature/rewrite")
+    );
+}
+
+#[test]
+fn resets_branch_whose_local_patches_are_already_upstream() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/picked");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/picked");
+    commit_file_on(&setup, "feature/picked", "a.txt", "same change");
+
+    // The remote gets another commit plus the same patch as the local one.
+    let scratch = remote_scratch(&setup, "feature/picked");
+    commit_file(scratch.path(), "b.txt", "other", "other change");
+    commit_file(
+        scratch.path(),
+        "a.txt",
+        "same change",
+        "same change, upstream",
+    );
+    common::git(scratch.path(), &["push", "-q"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "feature/picked: remote was rewritten",
+        ));
+
+    assert_eq!(
+        setup.branch_tip("feature/picked"),
+        setup.branch_tip("origin/feature/picked")
+    );
+}
+
+#[test]
+fn diverged_dry_run_changes_nothing() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/dry");
+
+    common::git_mate()
+        .args(["sync", "--dry-run"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "feature/dry: diverged, would merge origin/feature/dry",
+        ));
+    assert_eq!(setup.branch_tip("feature/dry"), before);
+}
+
+#[test]
+fn ff_only_skips_diverged_branches() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/ffonly");
+
+    common::git_mate()
+        .args(["sync", "--ff-only"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("cannot fast-forward (diverged)"));
+    assert_eq!(setup.branch_tip("feature/ffonly"), before);
+}
+
+#[test]
+fn diverged_strategy_config_skip_is_respected() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/cfg");
+    setup.local_git(&["config", "mate.divergedStrategy", "skip"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("cannot fast-forward (diverged)"));
+    assert_eq!(setup.branch_tip("feature/cfg"), before);
+}
+
+#[test]
+fn invalid_diverged_strategy_config_is_an_error() {
+    let setup = common::RepoWithRemote::new();
+    setup.local_git(&["config", "mate.divergedStrategy", "bogus"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "invalid value for mate.divergedStrategy",
+        ));
+}
+
+#[test]
+fn json_reports_merged_diverged_branch() {
+    let setup = common::RepoWithRemote::new();
+    diverged_with_local_work(&setup, "feature/json");
+
+    let output = common::git_mate()
+        .args(["--json", "sync"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).unwrap();
+    assert!(
+        stdout.contains(r#""branch":"feature/json","action":"merged""#),
+        "unexpected JSON: {stdout}"
+    );
 }
 
 // --- a single branch's error must not abort the rest of the run ---
@@ -642,7 +962,7 @@ fn summary_reports_counts_grouped_by_outcome() {
     setup.push_commit_to_remote_branch("feature/div", "remote-only commit");
 
     common::git_mate()
-        .arg("sync")
+        .args(["sync", "--diverged=skip"])
         .current_dir(setup.local_path())
         .assert()
         .success()
