@@ -1,5 +1,6 @@
 mod common;
 
+use predicates::prelude::PredicateBooleanExt;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -942,6 +943,153 @@ fn delete_pruned_makes_json_actually_delete() {
         !setup.local_branch_exists("feature/gone"),
         "local branch should have been deleted"
     );
+}
+
+// --- Branches whose upstream was already gone before sync ---
+
+/// Local branch with two file commits, pushed with upstream tracking; its
+/// remote branch is then deleted and the tracking ref pruned by a plain fetch,
+/// so sync never sees it disappear.
+fn gone_branch_with_changes(setup: &common::RepoWithRemote, branch: &str) {
+    setup.local_git(&["checkout", "-q", "-b", branch]);
+    commit_file(setup.local_path(), "a.txt", "a", "add a");
+    commit_file(setup.local_path(), "b.txt", "b", "add b");
+    setup.local_git(&["push", "-q", "-u", "origin", branch]);
+    setup.local_git(&["checkout", "-q", "main"]);
+    setup.delete_remote_branch(branch);
+    setup.local_fetch();
+    assert!(!setup.remote_tracking_exists(&format!("origin/{branch}")));
+}
+
+#[test]
+fn offers_gone_branch_that_was_merged() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/merged");
+    setup.local_git(&["merge", "-q", "--no-ff", "-m", "merge", "feature/merged"]);
+    setup.local_git(&["push", "-q", "origin", "main"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .write_stdin("a\n")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/merged: deleted"));
+
+    assert!(!setup.local_branch_exists("feature/merged"));
+}
+
+#[test]
+fn offers_gone_branch_that_was_squash_merged() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/squashed");
+    let scratch = remote_scratch(&setup, "main");
+    std::fs::write(scratch.path().join("a.txt"), "a").unwrap();
+    common::git(scratch.path(), &["add", "a.txt"]);
+    commit_file(scratch.path(), "b.txt", "b", "squashed feature");
+    // main moves on afterwards; the branch is still recognised as merged.
+    commit_file(scratch.path(), "c.txt", "c", "later work");
+    common::git(scratch.path(), &["push", "-q"]);
+
+    common::git_mate()
+        .args(["sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/squashed: deleted"));
+
+    assert!(!setup.local_branch_exists("feature/squashed"));
+}
+
+#[test]
+fn offers_gone_branch_that_was_rebase_merged() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/rebased");
+    let scratch = remote_scratch(&setup, "main");
+    commit_file(scratch.path(), "c.txt", "c", "unrelated work first");
+    commit_file(scratch.path(), "a.txt", "a", "add a (rebased)");
+    commit_file(scratch.path(), "b.txt", "b", "add b (rebased)");
+    common::git(scratch.path(), &["push", "-q"]);
+
+    common::git_mate()
+        .args(["sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/rebased: deleted"));
+
+    assert!(!setup.local_branch_exists("feature/rebased"));
+}
+
+#[test]
+fn skips_gone_branch_with_unmerged_changes_and_explains() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/unmerged");
+
+    common::git_mate()
+        .args(["sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "upstream origin/feature/unmerged is gone and branch has changes not in origin/main",
+        ))
+        .stderr(predicates::str::contains("git branch -D feature/unmerged"))
+        .stderr(predicates::str::contains(
+            "git branch --unset-upstream feature/unmerged",
+        ))
+        .stderr(predicates::str::contains("could not resolve upstream").not());
+
+    assert!(setup.local_branch_exists("feature/unmerged"));
+}
+
+#[test]
+fn skips_gone_branch_when_only_part_was_squash_merged() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/partial");
+    let scratch = remote_scratch(&setup, "main");
+    commit_file(scratch.path(), "a.txt", "a", "only part of the feature");
+    common::git(scratch.path(), &["push", "-q"]);
+
+    common::git_mate()
+        .args(["sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/partial: upstream"));
+
+    assert!(setup.local_branch_exists("feature/partial"));
+}
+
+#[test]
+fn kept_pruned_branch_stops_tracking_and_is_not_offered_again() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    setup.delete_remote_branch("feature/gone");
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .write_stdin("n\n")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "feature/gone: kept (upstream unset)",
+        ));
+
+    assert!(setup.local_branch_exists("feature/gone"));
+
+    // No stdin: a second prompt would read EOF and keep — assert it never asks.
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Delete all").not())
+        .stderr(predicates::str::contains("feature/gone: kept").not());
 }
 
 // --- end-of-run summary ---

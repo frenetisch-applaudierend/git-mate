@@ -56,3 +56,16 @@ pub fn merge_no_edit_in(path: &str, refspec: &str) -> Result<(), String> {
 pub fn reset_hard_in(path: &str, refspec: &str) -> Result<(), String> {
     run(&["-C", path, "reset", "--hard", refspec])
 }
+
+/// Whether merging `branch` into `target` would leave `target`'s tree
+/// unchanged, i.e. every change on `branch` is already in `target`. This
+/// catches regular merges, rebase-merges and squash-merges alike; if
+/// `target` has since edited the same lines, the merge differs or conflicts
+/// and the answer is a (safe) `false`.
+pub fn content_merged_into(target: &str, branch: &str) -> Result<bool, String> {
+    let Some(merged) = merge_tree(target, branch)? else {
+        return Ok(false);
+    };
+    let target_tree = run_output(&["rev-parse", &format!("{target}^{{tree}}")])?;
+    Ok(merged == target_tree.trim())
+}

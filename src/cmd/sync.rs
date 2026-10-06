@@ -18,9 +18,13 @@ left untouched. Pass --diverged=skip (or set mate.divergedStrategy=skip, or use
 When a remote branch is deleted — typically after a PR is merged — sync lists every
 local branch (and worktree) left without a remote and asks once whether to delete all
 of them, keep all of them, or decide branch by branch. Branches with unpushed commits
-or a dirty working tree are never offered for deletion. Pass --delete-pruned to skip
-that prompt and delete all of them (this also makes --json actually delete instead of
-just reporting candidates).
+or a dirty working tree are never offered for deletion. Branches whose remote was
+already gone before this sync (e.g. pruned by an earlier fetch) are offered too, but
+only if everything on them is already in the default branch — whether it was merged,
+rebase-merged or squash-merged. Pass --delete-pruned to skip that prompt and delete
+all of them (this also makes --json actually delete instead of just reporting
+candidates). Branches you keep stop tracking their deleted upstream, so they aren't
+offered again.
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
 branch into the current branch after pulling, keeping feature branches up to date
@@ -134,8 +138,8 @@ impl BranchOutcome {
         Self::new(branch, "deleted", Some("remote deleted"))
     }
 
-    fn kept(branch: &str) -> Self {
-        Self::new(branch, "kept", None)
+    fn kept(branch: &str, reason: Option<&str>) -> Self {
+        Self::new(branch, "kept", reason)
     }
 
     fn failed(branch: &str, error: &str) -> Self {
@@ -247,17 +251,35 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
             // A failure here (e.g. a non-UTF8 worktree path) is specific to this
             // branch — report it and move on rather than aborting the remaining
             // branches.
-            match pruned_branch_status(branch, had_unique, &worktrees) {
-                Ok(PrunedStatus::Skip(reason)) => {
-                    crate::output::info(&format!("{branch}: {reason}"));
-                    branch_outcomes.push(BranchOutcome::skipped(branch, reason));
-                }
-                Ok(PrunedStatus::Eligible) => deletion_candidates.push(branch.clone()),
-                Err(e) => {
-                    crate::output::info(&format!("{branch}: failed ({e})"));
-                    branch_outcomes.push(BranchOutcome::failed(branch, &e));
-                }
+            let status = if had_unique {
+                Ok(PrunedStatus::skip(
+                    "remote deleted but has unpushed commits, skipping",
+                ))
+            } else {
+                pruned_branch_status(branch, &worktrees)
+            };
+            record_pruned_status(
+                branch,
+                status,
+                &mut branch_outcomes,
+                &mut deletion_candidates,
+            );
+        } else if crate::git::resolve_ref(upstream).is_err() {
+            // The upstream is configured but its remote-tracking ref was
+            // already gone before this fetch (pruned by an earlier fetch, an
+            // IDE, or a previous sync where the branch was kept). Without a
+            // pre-fetch snapshot, only offer it for deletion if its content
+            // is already in the default branch.
+            if is_current {
+                current_branch_pruned = true;
             }
+            let status = gone_branch_status(branch, upstream, &worktrees);
+            record_pruned_status(
+                branch,
+                status,
+                &mut branch_outcomes,
+                &mut deletion_candidates,
+            );
         } else if !is_current {
             // Remote still exists — try to fast-forward, resolving divergence
             // according to the configured strategy. A failure here (e.g. a
@@ -584,7 +606,7 @@ fn fast_forward_branch(
         Err(_) => {
             return Ok(BranchOutcome::skipped(
                 branch,
-                "could not resolve upstream ref",
+                &format!("upstream {upstream} could not be resolved"),
             ));
         }
     };
@@ -728,24 +750,87 @@ fn resolve_diverged_branch(
 }
 
 enum PrunedStatus {
-    Skip(&'static str),
+    /// Not offered for deletion. `reason` is recorded in the outcome; `hint`
+    /// is only printed alongside it.
+    Skip {
+        reason: String,
+        hint: Option<String>,
+    },
     Eligible,
 }
 
-/// Decide whether a branch whose upstream was pruned is safe to delete,
-/// without prompting or acting. Branches with unpushed commits or a dirty
-/// checked-out working tree are never candidates for deletion.
-fn pruned_branch_status(
+impl PrunedStatus {
+    fn skip(reason: &str) -> Self {
+        Self::Skip {
+            reason: reason.to_string(),
+            hint: None,
+        }
+    }
+}
+
+/// Report a pruned or gone branch's status and, if eligible, queue it for
+/// the deletion prompt. A failure is specific to this branch — report it and
+/// move on rather than aborting the remaining branches.
+fn record_pruned_status(
     branch: &str,
-    had_unique_commits: bool,
+    status: Result<PrunedStatus, String>,
+    outcomes: &mut Vec<BranchOutcome>,
+    deletion_candidates: &mut Vec<String>,
+) {
+    match status {
+        Ok(PrunedStatus::Skip { reason, hint }) => {
+            match hint {
+                Some(hint) => crate::output::info(&format!("{branch}: {reason} ({hint})")),
+                None => crate::output::info(&format!("{branch}: {reason}")),
+            }
+            outcomes.push(BranchOutcome::skipped(branch, &reason));
+        }
+        Ok(PrunedStatus::Eligible) => deletion_candidates.push(branch.to_string()),
+        Err(e) => {
+            crate::output::info(&format!("{branch}: failed ({e})"));
+            outcomes.push(BranchOutcome::failed(branch, &e));
+        }
+    }
+}
+
+/// Decide whether a branch whose upstream was gone before this sync is safe
+/// to delete: only if everything on it is already in the default branch
+/// (merged, rebase-merged or squash-merged). Otherwise it is skipped with a
+/// hint on how to delete or keep it.
+fn gone_branch_status(
+    branch: &str,
+    upstream: &str,
     worktrees: &[crate::git::WorktreeEntry],
 ) -> Result<PrunedStatus, String> {
-    if had_unique_commits {
-        return Ok(PrunedStatus::Skip(
-            "remote deleted but has unpushed commits, skipping",
-        ));
+    if branch == crate::git::detect_default_branch(false)? {
+        return Ok(PrunedStatus::Skip {
+            reason: format!("upstream {upstream} is gone, skipping"),
+            hint: Some(format!(
+                "fix with: git branch --set-upstream-to <remote>/{branch} {branch}"
+            )),
+        });
     }
+    let default_branch = crate::git::detect_default_branch(true)?;
+    if !crate::git::content_merged_into(&default_branch, branch)? {
+        return Ok(PrunedStatus::Skip {
+            reason: format!(
+                "upstream {upstream} is gone and branch has changes not in {default_branch}, skipping"
+            ),
+            hint: Some(format!(
+                "delete with: git branch -D {branch}; keep with: git branch --unset-upstream {branch}"
+            )),
+        });
+    }
+    pruned_branch_status(branch, worktrees)
+}
 
+/// Decide whether a branch whose upstream was pruned (and that has no
+/// unpushed commits) is safe to delete, without prompting or acting. A
+/// branch with a dirty checked-out working tree is never a candidate.
+fn pruned_branch_status(
+    branch: &str,
+    worktrees: &[crate::git::WorktreeEntry],
+) -> Result<PrunedStatus, String> {
     let checked_out_wt = worktrees
         .iter()
         .find(|wt| wt.branch.as_deref() == Some(branch))
@@ -754,7 +839,7 @@ fn pruned_branch_status(
     if let Some(wt_path) = checked_out_wt {
         let wt_str = wt_path.to_str().ok_or("worktree path is not valid UTF-8")?;
         if !crate::git::is_worktree_clean(wt_str)? {
-            return Ok(PrunedStatus::Skip(
+            return Ok(PrunedStatus::skip(
                 "remote deleted but working tree is dirty, skipping",
             ));
         }
@@ -843,12 +928,28 @@ fn resolve_pruned_deletions(
                 }
             }
         } else {
-            crate::output::info(&format!("{branch}: kept"));
-            outcomes.push(BranchOutcome::kept(branch));
+            outcomes.push(keep_pruned_branch(branch));
         }
     }
 
     Ok(outcomes)
+}
+
+/// Keep a branch whose remote was deleted and stop tracking the missing
+/// upstream, so it moves to the "no upstream" bucket instead of being
+/// offered for deletion again on every sync.
+fn keep_pruned_branch(branch: &str) -> BranchOutcome {
+    match crate::git::unset_upstream(branch) {
+        Ok(()) => {
+            crate::output::info(&format!("{branch}: kept (upstream unset)"));
+            BranchOutcome::kept(branch, Some("upstream unset"))
+        }
+        Err(e) => {
+            let reason = format!("could not unset upstream: {e}");
+            crate::output::info(&format!("{branch}: kept ({reason})"));
+            BranchOutcome::kept(branch, Some(&reason))
+        }
+    }
 }
 
 enum BulkChoice {

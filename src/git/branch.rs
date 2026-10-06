@@ -129,3 +129,7 @@ pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String>
     .map(|o| !o.trim().is_empty())
     .unwrap_or(false))
 }
+
+pub fn unset_upstream(branch: &str) -> Result<(), String> {
+    run(&["branch", "--unset-upstream", branch])
+}
