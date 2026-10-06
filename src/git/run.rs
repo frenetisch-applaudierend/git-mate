@@ -4,7 +4,7 @@ pub fn set_verbose(v: bool) {
     let _ = VERBOSE.set(v);
 }
 
-pub(super) fn is_verbose() -> bool {
+pub fn is_verbose() -> bool {
     *VERBOSE.get().unwrap_or(&false)
 }
 

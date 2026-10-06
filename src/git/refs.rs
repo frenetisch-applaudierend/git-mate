@@ -27,3 +27,22 @@ pub fn update_ref_from(
 ) -> Result<(), String> {
     run(&["update-ref", "-m", reason, refname, new_sha, old_sha])
 }
+
+/// Number of commits reachable from `to` but not from `from`.
+pub fn count_commits(from: &str, to: &str) -> Result<usize, String> {
+    let output = run_output(&["rev-list", "--count", &format!("{from}..{to}")])?;
+    output
+        .trim()
+        .parse()
+        .map_err(|e| format!("unexpected `git rev-list --count` output: {e}"))
+}
+
+/// The abbreviated hash and subject line of `rev`.
+pub fn commit_summary(rev: &str) -> Result<(String, String), String> {
+    let output = run_output(&["log", "-1", "--format=%h%x00%s", rev])?;
+    let (short, subject) = output
+        .trim_end()
+        .split_once('\0')
+        .unwrap_or((output.trim(), ""));
+    Ok((short.to_string(), subject.to_string()))
+}

@@ -13,12 +13,14 @@ pub use branch::{
     stash_push_in, unset_upstream,
 };
 pub use merge::{
-    commit_tree, content_merged_into, merge_no_edit_in, merge_tree, patches_already_in,
+    MergedAt, commit_tree, content_merged_into, merge_no_edit_in, merge_tree, patches_already_in,
     reset_hard_in,
 };
-pub use refs::{is_ancestor, resolve_ref, update_ref, update_ref_from};
+pub use refs::{
+    commit_summary, count_commits, is_ancestor, resolve_ref, update_ref, update_ref_from,
+};
 pub use remote::{fetch, fetch_all, list_remote_tracking_refs, pull};
-pub use run::set_verbose;
+pub use run::{is_verbose, set_verbose};
 pub use worktree::{
     OperationTarget, WorktreeEntry, add_worktree, find_main_worktree, is_main_worktree,
     is_worktree_clean, list_worktrees, read_worktree_root, remove_worktree,

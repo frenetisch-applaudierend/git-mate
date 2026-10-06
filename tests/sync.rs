@@ -11,6 +11,25 @@ fn prepare_feature_branch(setup: &common::RepoWithRemote, branch: &str) -> Strin
     setup.local_head_commit()
 }
 
+/// Matches a report line: glyph, branch name, padding, then `detail`.
+fn entry(branch: &str, detail: &str) -> predicates::str::RegexPredicate {
+    predicates::str::is_match(format!(r"(?m)^ \S {} +{}", escape(branch), escape(detail))).unwrap()
+}
+
+/// A report line naming `branch` with no detail after it.
+fn bare_entry(branch: &str) -> predicates::str::RegexPredicate {
+    predicates::str::is_match(format!(r"(?m)^ \S {}$", escape(branch))).unwrap()
+}
+
+fn escape(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            let special = "\\.+*?()|[]{}^$#&-~".contains(c);
+            special.then_some('\\').into_iter().chain([c])
+        })
+        .collect()
+}
+
 fn is_ancestor(dir: &std::path::Path, ancestor: &str, descendant: &str) -> bool {
     Command::new("git")
         .args(["merge-base", "--is-ancestor", ancestor, descendant])
@@ -221,7 +240,7 @@ fn fast_forwards_non_current_branch() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/ff: fast-forwarded"));
+        .stderr(entry("feature/ff", "fast-forwarded"));
 
     assert_ne!(
         setup.branch_tip("feature/ff"),
@@ -260,7 +279,7 @@ fn fast_forward_in_worktree_context_updates_main_worktree_index() {
         .current_dir(wt_dir.path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("main: fast-forwarded"));
+        .stderr(entry("main", "fast-forwarded"));
 
     // The main worktree must be clean.  Before the fix, fast_forward_branch used
     // git-update-ref which moved refs/heads/main without touching the index, so
@@ -371,10 +390,8 @@ fn merges_diverged_branch_with_local_work() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "feature/div: diverged, merged origin/feature/div",
-        ))
-        .stderr(predicates::str::contains("1 merged with upstream"));
+        .stderr(entry("feature/div", "merged upstream"))
+        .stderr(predicates::str::contains("1 merged"));
 
     let tip = setup.branch_tip("feature/div");
     assert_eq!(parent_count(setup.local_path(), &tip), 2);
@@ -405,7 +422,7 @@ fn merges_diverged_branch_checked_out_in_clean_worktree() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/wt: diverged, merged"));
+        .stderr(entry("feature/wt", "merged upstream"));
 
     let tip = setup.branch_tip("feature/wt");
     assert!(is_ancestor(setup.local_path(), &before, &tip));
@@ -439,8 +456,9 @@ fn skips_diverged_branch_with_dirty_worktree() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "feature/dirty: diverged but working tree is dirty, skipping",
+        .stderr(entry(
+            "feature/dirty",
+            "diverged, but worktree has uncommitted changes",
         ));
     assert_eq!(setup.branch_tip("feature/dirty"), before);
 }
@@ -462,8 +480,12 @@ fn skips_diverged_branch_with_conflicts() {
         .current_dir(setup.local_path())
         .assert()
         .success()
+        .stderr(entry(
+            "feature/clash",
+            "diverged, merging upstream would conflict",
+        ))
         .stderr(predicates::str::contains(
-            "feature/clash: diverged with conflicts, skipping",
+            "resolve with: git checkout feature/clash && git pull",
         ));
     assert_eq!(
         setup.branch_tip("feature/clash"),
@@ -499,10 +521,11 @@ fn resets_branch_when_remote_was_rewritten() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "feature/rewrite: remote was rewritten, reset to origin/feature/rewrite",
+        .stderr(entry(
+            "feature/rewrite",
+            "reset to rewritten upstream (was ",
         ))
-        .stderr(predicates::str::contains("1 reset to rewritten upstream"));
+        .stderr(predicates::str::contains("1 reset"));
 
     assert_eq!(
         setup.branch_tip("feature/rewrite"),
@@ -534,9 +557,7 @@ fn resets_branch_whose_local_patches_are_already_upstream() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "feature/picked: remote was rewritten",
-        ));
+        .stderr(entry("feature/picked", "reset to rewritten upstream"));
 
     assert_eq!(
         setup.branch_tip("feature/picked"),
@@ -554,9 +575,7 @@ fn diverged_dry_run_changes_nothing() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "feature/dry: diverged, would merge origin/feature/dry",
-        ));
+        .stderr(entry("feature/dry", "would merge upstream"));
     assert_eq!(setup.branch_tip("feature/dry"), before);
 }
 
@@ -670,9 +689,8 @@ fn branch_failure_does_not_abort_remaining_branches() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/broken: failed"))
-        .stderr(predicates::str::contains("feature/ok: fast-forwarded"))
-        .stderr(predicates::str::contains("Summary:"))
+        .stderr(entry("feature/broken", "failed: "))
+        .stderr(entry("feature/ok", "fast-forwarded"))
         .stderr(predicates::str::contains("1 failed"));
 
     assert_eq!(
@@ -704,7 +722,7 @@ fn final_status_reflects_other_branch_work_when_current_branch_untouched() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/ff: fast-forwarded"))
+        .stderr(entry("feature/ff", "fast-forwarded"))
         .stderr(predicates::str::contains("Synced."));
 }
 
@@ -740,7 +758,8 @@ fn deletes_local_branch_when_remote_pruned_and_user_confirms_all() {
         .write_stdin("a\n")
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/gone: deleted"));
+        .stderr(entry("feature/gone", "merged into origin/main"))
+        .stderr(predicates::str::contains("1 deleted"));
 
     assert!(
         !setup.local_branch_exists("feature/gone"),
@@ -764,7 +783,7 @@ fn keeps_local_branch_when_remote_pruned_and_user_declines() {
         .write_stdin("n\n")
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/gone: kept"));
+        .stderr(predicates::str::contains("1 kept"));
 
     assert!(
         setup.local_branch_exists("feature/gone"),
@@ -787,7 +806,7 @@ fn keeps_local_branch_when_remote_pruned_and_no_input_given() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/gone: kept"));
+        .stderr(predicates::str::contains("1 kept"));
 
     assert!(
         setup.local_branch_exists("feature/gone"),
@@ -814,8 +833,8 @@ fn prompts_once_for_multiple_pruned_branches_and_deletes_all() {
         .write_stdin("a\n")
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/one: deleted"))
-        .stderr(predicates::str::contains("feature/two: deleted"));
+        .stderr(predicates::str::contains("Delete these 2 branches?"))
+        .stderr(predicates::str::contains("2 deleted"));
 
     assert!(!setup.local_branch_exists("feature/one"));
     assert!(!setup.local_branch_exists("feature/two"));
@@ -841,8 +860,9 @@ fn decide_choice_prompts_per_branch() {
         .write_stdin("d\ny\nn\n")
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/one: deleted"))
-        .stderr(predicates::str::contains("feature/two: kept"));
+        .stderr(predicates::str::contains("Delete feature/one?"))
+        .stderr(predicates::str::contains("Delete feature/two?"))
+        .stderr(predicates::str::contains("1 deleted · 1 kept"));
 
     assert!(!setup.local_branch_exists("feature/one"));
     assert!(setup.local_branch_exists("feature/two"));
@@ -892,7 +912,7 @@ fn delete_pruned_deletes_without_prompting() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/gone: deleted"));
+        .stderr(predicates::str::contains("1 deleted"));
 
     assert!(
         !setup.local_branch_exists("feature/gone"),
@@ -974,7 +994,8 @@ fn offers_gone_branch_that_was_merged() {
         .write_stdin("a\n")
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/merged: deleted"));
+        .stderr(entry("feature/merged", "merged in "))
+        .stderr(predicates::str::contains("1 deleted"));
 
     assert!(!setup.local_branch_exists("feature/merged"));
 }
@@ -986,7 +1007,7 @@ fn offers_gone_branch_that_was_squash_merged() {
     let scratch = remote_scratch(&setup, "main");
     std::fs::write(scratch.path().join("a.txt"), "a").unwrap();
     common::git(scratch.path(), &["add", "a.txt"]);
-    commit_file(scratch.path(), "b.txt", "b", "squashed feature");
+    commit_file(scratch.path(), "b.txt", "b", "Squashed feature (#42)");
     // main moves on afterwards; the branch is still recognised as merged.
     commit_file(scratch.path(), "c.txt", "c", "later work");
     common::git(scratch.path(), &["push", "-q"]);
@@ -996,7 +1017,8 @@ fn offers_gone_branch_that_was_squash_merged() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/squashed: deleted"));
+        .stderr(entry("feature/squashed", "merged in #42"))
+        .stderr(predicates::str::contains("1 deleted"));
 
     assert!(!setup.local_branch_exists("feature/squashed"));
 }
@@ -1024,7 +1046,7 @@ fn offers_gone_branch_that_was_squash_merged_before_files_moved_and_edited() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/moved: deleted"));
+        .stderr(predicates::str::contains("1 deleted"));
 
     assert!(!setup.local_branch_exists("feature/moved"));
 }
@@ -1044,7 +1066,7 @@ fn offers_gone_branch_that_was_rebase_merged() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/rebased: deleted"));
+        .stderr(predicates::str::contains("1 deleted"));
 
     assert!(!setup.local_branch_exists("feature/rebased"));
 }
@@ -1060,11 +1082,12 @@ fn skips_gone_branch_with_unmerged_changes_and_explains() {
         .assert()
         .success()
         .stderr(predicates::str::contains(
-            "upstream origin/feature/unmerged is gone and branch has changes not in origin/main",
+            "Remote gone, not merged into origin/main",
         ))
-        .stderr(predicates::str::contains("git branch -D feature/unmerged"))
+        .stderr(bare_entry("feature/unmerged"))
+        .stderr(predicates::str::contains("delete: git branch -D <branch>"))
         .stderr(predicates::str::contains(
-            "git branch --unset-upstream feature/unmerged",
+            "keep: git branch --unset-upstream <branch>",
         ))
         .stderr(predicates::str::contains("could not resolve upstream").not());
 
@@ -1084,7 +1107,10 @@ fn skips_gone_branch_when_only_part_was_squash_merged() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/partial: upstream"));
+        .stderr(predicates::str::contains(
+            "Remote gone, not merged into origin/main",
+        ))
+        .stderr(bare_entry("feature/partial"));
 
     assert!(setup.local_branch_exists("feature/partial"));
 }
@@ -1105,7 +1131,7 @@ fn kept_pruned_branch_stops_tracking_and_is_not_offered_again() {
         .assert()
         .success()
         .stderr(predicates::str::contains(
-            "feature/gone: kept (upstream unset)",
+            "stopped tracking the deleted upstream",
         ));
 
     assert!(setup.local_branch_exists("feature/gone"));
@@ -1116,8 +1142,8 @@ fn kept_pruned_branch_stops_tracking_and_is_not_offered_again() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("Delete all").not())
-        .stderr(predicates::str::contains("feature/gone: kept").not());
+        .stderr(predicates::str::contains("Delete this").not())
+        .stderr(predicates::str::contains("kept").not());
 }
 
 // --- end-of-run summary ---
@@ -1142,12 +1168,10 @@ fn summary_reports_counts_grouped_by_outcome() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("Summary:"))
-        .stderr(predicates::str::contains("1 fast-forwarded"))
-        .stderr(predicates::str::contains("1 skipped"))
         .stderr(predicates::str::contains(
-            "feature/div: cannot fast-forward (diverged)",
-        ));
+            "1 fast-forwarded · 1 need attention",
+        ))
+        .stderr(entry("feature/div", "cannot fast-forward (diverged)"));
 }
 
 #[test]
@@ -1169,7 +1193,7 @@ fn summary_omitted_in_json_mode() {
         .clone();
 
     assert!(
-        !String::from_utf8_lossy(&output).contains("Summary:"),
+        String::from_utf8_lossy(&output).trim().is_empty(),
         "--json mode should not print the human-readable summary"
     );
 }
@@ -1194,7 +1218,7 @@ fn dry_run_does_not_pull_or_fast_forward() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains("feature/ff: would fast-forward"))
+        .stderr(entry("feature/ff", "would fast-forward"))
         .stderr(predicates::str::contains("would pull"));
 
     assert_eq!(
@@ -1228,9 +1252,7 @@ fn dry_run_does_not_delete_pruned_branch_or_prompt() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "Dry run: not deleting any of these",
-        ));
+        .stderr(predicates::str::contains("dry run: not deleting anything"));
 
     assert!(
         setup.local_branch_exists("feature/gone"),

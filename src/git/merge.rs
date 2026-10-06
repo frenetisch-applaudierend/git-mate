@@ -61,33 +61,74 @@ pub fn reset_hard_in(path: &str, refspec: &str) -> Result<(), String> {
 /// `content_merged_into` will test before giving up.
 const MAX_HISTORY_COMMITS: usize = 500;
 
+/// Where a branch's changes landed in the target branch.
+pub enum MergedAt {
+    /// The branch tip is itself on `target`'s first-parent line: it never
+    /// had commits of its own, or it was fast-forwarded into `target`.
+    Contained,
+    /// The first of `target`'s first-parent commits that contains them.
+    Commit(String),
+    /// Merging into `target`'s tip changes nothing, but the commit that
+    /// brought the changes in is beyond the history search limit.
+    Unknown,
+}
+
 /// Whether every change on `branch` has landed in `target` at some point:
 /// merging `branch` into `target` — or into one of `target`'s first-parent
 /// commits since they diverged — would leave that commit's tree unchanged.
 /// This catches regular merges, rebase-merges and squash-merges alike, even
-/// when `target` has since moved or rewritten the merged files. If `branch`
-/// has changes no such commit contains, the answer is `false`.
-pub fn content_merged_into(target: &str, branch: &str) -> Result<bool, String> {
-    if merge_is_noop(target, branch)? {
-        return Ok(true);
-    }
+/// when `target` has since moved or rewritten the merged files. Returns
+/// `None` if `branch` has changes no such commit contains.
+pub fn content_merged_into(target: &str, branch: &str) -> Result<Option<MergedAt>, String> {
     // No common history: nothing on `branch` can have been merged.
     let Ok(base) = run_output(&["merge-base", target, branch]) else {
-        return Ok(false);
+        return Ok(None);
     };
-    // Oldest first: a branch is usually merged soon after it diverged.
+    let base = base.trim();
+    let tip = run_output(&["rev-parse", branch])?;
+    if base == tip.trim() {
+        return merged_ancestor(target, base);
+    }
+    let merged_at_tip = merge_is_noop(target, branch)?;
+    // Oldest first, so the hit is the commit that brought the changes in.
     let history = run_output(&[
         "rev-list",
         "--first-parent",
         "--reverse",
-        &format!("{}..{target}", base.trim()),
+        &format!("{base}..{target}"),
     ])?;
     for commit in history.lines().take(MAX_HISTORY_COMMITS) {
         if merge_is_noop(commit, branch)? {
-            return Ok(true);
+            return Ok(Some(MergedAt::Commit(commit.to_string())));
         }
     }
-    Ok(false)
+    Ok(merged_at_tip.then_some(MergedAt::Unknown))
+}
+
+/// Where `tip`, an ancestor of `target`, was merged: the oldest of
+/// `target`'s first-parent commits that contains it.
+fn merged_ancestor(target: &str, tip: &str) -> Result<Option<MergedAt>, String> {
+    let history = run_output(&[
+        "rev-list",
+        "--first-parent",
+        "--reverse",
+        &format!("{tip}..{target}"),
+    ])?;
+    for commit in history.lines().take(MAX_HISTORY_COMMITS) {
+        if super::refs::is_ancestor(tip, commit)? {
+            let first_parent = run_output(&["rev-parse", &format!("{commit}^1")])?;
+            return Ok(Some(if first_parent.trim() == tip {
+                MergedAt::Contained
+            } else {
+                MergedAt::Commit(commit.to_string())
+            }));
+        }
+    }
+    Ok(Some(if history.is_empty() {
+        MergedAt::Contained
+    } else {
+        MergedAt::Unknown
+    }))
 }
 
 /// Whether merging `branch` into `target` would leave `target`'s tree

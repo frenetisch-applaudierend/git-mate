@@ -4,4 +4,5 @@ pub mod init;
 pub mod new;
 pub mod protocol;
 pub mod sync;
+mod sync_report;
 mod worktree_changes;
