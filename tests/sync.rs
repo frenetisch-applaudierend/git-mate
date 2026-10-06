@@ -1002,6 +1002,34 @@ fn offers_gone_branch_that_was_squash_merged() {
 }
 
 #[test]
+fn offers_gone_branch_that_was_squash_merged_before_files_moved_and_edited() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/moved");
+    let scratch = remote_scratch(&setup, "main");
+    std::fs::write(scratch.path().join("a.txt"), "a").unwrap();
+    common::git(scratch.path(), &["add", "a.txt"]);
+    commit_file(scratch.path(), "b.txt", "b", "squashed feature");
+    // Later work moves and rewrites the merged files, so merging the branch
+    // into today's main would conflict.
+    std::fs::create_dir(scratch.path().join("moved")).unwrap();
+    common::git(scratch.path(), &["mv", "a.txt", "moved/a.txt"]);
+    common::git(scratch.path(), &["mv", "b.txt", "moved/b.txt"]);
+    std::fs::write(scratch.path().join("moved/a.txt"), "rewritten a").unwrap();
+    std::fs::write(scratch.path().join("moved/b.txt"), "rewritten b").unwrap();
+    common::git(scratch.path(), &["commit", "-q", "-am", "move and rewrite"]);
+    common::git(scratch.path(), &["push", "-q"]);
+
+    common::git_mate()
+        .args(["sync", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("feature/moved: deleted"));
+
+    assert!(!setup.local_branch_exists("feature/moved"));
+}
+
+#[test]
 fn offers_gone_branch_that_was_rebase_merged() {
     let setup = common::RepoWithRemote::new();
     gone_branch_with_changes(&setup, "feature/rebased");

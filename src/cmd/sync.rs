@@ -20,8 +20,8 @@ local branch (and worktree) left without a remote and asks once whether to delet
 of them, keep all of them, or decide branch by branch. Branches with unpushed commits
 or a dirty working tree are never offered for deletion. Branches whose remote was
 already gone before this sync (e.g. pruned by an earlier fetch) are offered too, but
-only if everything on them is already in the default branch — whether it was merged,
-rebase-merged or squash-merged. Pass --delete-pruned to skip that prompt and delete
+only if everything on them has landed in the default branch — whether it was merged,
+rebase-merged or squash-merged, and even if those files were moved or edited since. Pass --delete-pruned to skip that prompt and delete
 all of them (this also makes --json actually delete instead of just reporting
 candidates). Branches you keep stop tracking their deleted upstream, so they aren't
 offered again.

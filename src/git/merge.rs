@@ -57,12 +57,42 @@ pub fn reset_hard_in(path: &str, refspec: &str) -> Result<(), String> {
     run(&["-C", path, "reset", "--hard", refspec])
 }
 
-/// Whether merging `branch` into `target` would leave `target`'s tree
-/// unchanged, i.e. every change on `branch` is already in `target`. This
-/// catches regular merges, rebase-merges and squash-merges alike; if
-/// `target` has since edited the same lines, the merge differs or conflicts
-/// and the answer is a (safe) `false`.
+/// How many of `target`'s first-parent commits since the merge-base
+/// `content_merged_into` will test before giving up.
+const MAX_HISTORY_COMMITS: usize = 500;
+
+/// Whether every change on `branch` has landed in `target` at some point:
+/// merging `branch` into `target` — or into one of `target`'s first-parent
+/// commits since they diverged — would leave that commit's tree unchanged.
+/// This catches regular merges, rebase-merges and squash-merges alike, even
+/// when `target` has since moved or rewritten the merged files. If `branch`
+/// has changes no such commit contains, the answer is `false`.
 pub fn content_merged_into(target: &str, branch: &str) -> Result<bool, String> {
+    if merge_is_noop(target, branch)? {
+        return Ok(true);
+    }
+    // No common history: nothing on `branch` can have been merged.
+    let Ok(base) = run_output(&["merge-base", target, branch]) else {
+        return Ok(false);
+    };
+    // Oldest first: a branch is usually merged soon after it diverged.
+    let history = run_output(&[
+        "rev-list",
+        "--first-parent",
+        "--reverse",
+        &format!("{}..{target}", base.trim()),
+    ])?;
+    for commit in history.lines().take(MAX_HISTORY_COMMITS) {
+        if merge_is_noop(commit, branch)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether merging `branch` into `target` would leave `target`'s tree
+/// unchanged. A conflicting merge counts as changing it.
+fn merge_is_noop(target: &str, branch: &str) -> Result<bool, String> {
     let Some(merged) = merge_tree(target, branch)? else {
         return Ok(false);
     };
