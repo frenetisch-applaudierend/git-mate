@@ -20,22 +20,31 @@ The default branch always stays in the main worktree, even when linked mode is c
 
 Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.fetch = false` in git config to skip permanently.
 
-If the starting point is currently checked out in another worktree and has local changes, `git mate new`
-fails by default because it is ambiguous whether you want to continue that work or start fresh:
+`--from .` starts from the current HEAD: the branch you are on, or the commit when HEAD is detached.
 
-- `--stash` continues the started work by stashing tracked/untracked changes in the source worktree,
-  creating the new branch, then reapplying those changes in the destination
-- `--ignore` starts fresh from the committed state and leaves source-only local changes behind
+Uncommitted changes (tracked and untracked) follow you when you start from the branch checked out in
+your current worktree: they move into the new branch and the current worktree is left clean. If the
+starting point is checked out in *another* worktree with uncommitted changes, `git mate new` fails
+unless you choose explicitly:
 
-When the starting point is not checked out in any worktree, no local changes are transferred.
+- `--take-changes` brings those changes into the new branch (they are stashed in the source worktree and
+  reapplied in the destination; if reapplying fails, the stash entry is kept)
+- `--start-fresh` starts from the committed state and leaves uncommitted changes where they are
+
+Ignored local config files (such as `.env.local`) are always copied from the starting point's worktree
+into a new linked worktree, whichever option you choose. When the starting point is not checked out in
+any worktree, nothing is transferred.
+
+With `--json`, `git mate new` prints a single JSON document on stdout describing the new branch
+(`branch`, `from`, `worktree`, `path`, `fetched`, `upstream`, `carriedFrom`, `copiedConfigFiles`).
 
 ```bash
 git mate new feature/login          # checkout in main worktree
 git mate new feature/login -w       # same as --linked-worktree
 git mate new feature/login -m --from v2.1.0  # same as --main-worktree
 git mate new feature/login --no-fetch        # skip fetch
-git mate new feature/login -w --from main --stash   # continue dirty work in a new linked worktree
-git mate new feature/login -w --from main --ignore  # start fresh, leave source-local changes behind
+git mate new feature/login -w --from .       # branch off the current branch, taking your changes along
+git mate new feature/login -w --start-fresh  # leave uncommitted changes behind
 ```
 
 ### `git mate checkout <branch>` (alias: `co`)

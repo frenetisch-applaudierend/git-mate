@@ -27,14 +27,43 @@ pub fn info(msg: &str) {
     eprintln!("{} {}", console::style("·").cyan(), msg);
 }
 
+/// A command failure. Most commands only produce a message (via
+/// `From<String>`); `code` and `data` let a command tell `--json` callers
+/// more, e.g. that the operation partially succeeded.
+pub struct CommandError {
+    message: String,
+    code: &'static str,
+    data: Option<serde_json::Value>,
+}
+
+impl CommandError {
+    pub fn with_data<T: serde::Serialize>(message: String, code: &'static str, data: T) -> Self {
+        Self {
+            message,
+            code,
+            data: Some(serde_json::to_value(data).expect("command data is always serializable")),
+        }
+    }
+}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            code: "error",
+            data: None,
+        }
+    }
+}
+
 /// Report a command failure. In `--json` mode this emits the error envelope
 /// (see [`emit_json_success`]) to stdout instead of colored text to stderr.
-pub fn error(command: &str, msg: &str) {
+pub fn error(command: &str, err: &CommandError) {
     if json_mode() {
-        emit_json_error(command, msg);
+        emit_json_error(command, err);
         return;
     }
-    eprintln!("{} {}", console::style("✗").red().bold(), msg);
+    eprintln!("{} {}", console::style("✗").red().bold(), err.message);
 }
 
 const SCHEMA_VERSION: u32 = 1;
@@ -74,15 +103,15 @@ pub fn emit_json_success<T: serde::Serialize>(command: &str, data: T) {
     );
 }
 
-fn emit_json_error(command: &str, msg: &str) {
-    let envelope: JsonEnvelope<()> = JsonEnvelope {
+fn emit_json_error(command: &str, err: &CommandError) {
+    let envelope = JsonEnvelope {
         ok: false,
         command: command.to_string(),
         schema_version: SCHEMA_VERSION,
-        data: None,
+        data: err.data.as_ref(),
         error: Some(JsonErrorBody {
-            message: msg.to_string(),
-            code: "error".to_string(),
+            message: err.message.clone(),
+            code: err.code.to_string(),
         }),
     };
     println!(

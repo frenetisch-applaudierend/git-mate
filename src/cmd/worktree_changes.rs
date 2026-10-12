@@ -46,24 +46,33 @@ pub(crate) fn restore_source_stash(
     }
 }
 
+/// Pop `stash` into `apply_path`. On failure the stash entry is kept and the
+/// error explains that.
+pub(crate) fn reapply_stash(
+    stash: PreparedStash,
+    apply_path: &std::path::Path,
+) -> Result<(), String> {
+    stash.pop_into(apply_path).map_err(|e| {
+        format!(
+            "failed to reapply stashed changes for '{}': {e}; the stash entry was kept",
+            stash.branch
+        )
+    })
+}
+
 pub(crate) fn finish_with_stash_reapply(
     stash: PreparedStash,
     apply_path: &std::path::Path,
     success_message: &str,
     cd_path: &std::path::Path,
 ) -> Result<(), String> {
-    match stash.pop_into(apply_path) {
+    let reapplied = reapply_stash(stash, apply_path);
+    crate::shell_protocol::emit_cd(cd_path);
+    match reapplied {
         Ok(()) => {
             crate::output::success(success_message);
-            crate::shell_protocol::emit_cd(cd_path);
             Ok(())
         }
-        Err(e) => {
-            crate::shell_protocol::emit_cd(cd_path);
-            Err(format!(
-                "{success_message}, but failed to reapply stashed changes for '{}': {e}; the stash entry was kept",
-                stash.branch
-            ))
-        }
+        Err(e) => Err(format!("{success_message}, but {e}")),
     }
 }

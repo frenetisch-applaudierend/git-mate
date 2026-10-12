@@ -35,8 +35,11 @@ pub(super) fn run_output(args: &[&str]) -> Result<String, String> {
 
 pub(super) fn run(args: &[&str]) -> Result<(), String> {
     if is_verbose() {
+        // Git's stdout goes to our stderr so it can never corrupt the single
+        // JSON document a `--json` invocation writes to stdout.
         let status = std::process::Command::new("git")
             .args(args)
+            .stdout(std::io::stderr())
             .status()
             .map_err(|e| format!("failed to run git: {e}"))?;
         return if status.success() {

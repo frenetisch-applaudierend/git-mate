@@ -79,6 +79,12 @@ pub fn local_branch_for_ref(refname: &str) -> Option<String> {
         .map(|_| refname.to_string())
 }
 
+pub fn is_valid_branch_name(name: &str) -> bool {
+    // `check-ref-format --branch` echoes the name on stdout; run_output
+    // captures it so it never reaches our stdout.
+    run_output(&["check-ref-format", "--branch", name]).is_ok()
+}
+
 pub fn ensure_branch_allowed_in_linked_worktree(branch: &str) -> Result<(), String> {
     let default_branch = detect_default_branch(false)?;
     if branch == default_branch {

@@ -9,8 +9,8 @@ mod worktree;
 pub use branch::{
     checkout, checkout_in, checkout_new_in, current_branch, delete_branch_force_in,
     detect_default_branch, ensure_branch_allowed_in_linked_worktree, has_unpushed_commits,
-    list_local_branches_with_upstream, local_branch_for_ref, merge, merge_ff_only_in, stash_pop_in,
-    stash_push_in, unset_upstream,
+    is_valid_branch_name, list_local_branches_with_upstream, local_branch_for_ref, merge,
+    merge_ff_only_in, stash_pop_in, stash_push_in, unset_upstream,
 };
 pub use merge::{
     MergedAt, commit_tree, content_merged_into, merge_no_edit_in, merge_tree, patches_already_in,
@@ -22,7 +22,7 @@ pub use refs::{
 pub use remote::{fetch, fetch_all, list_remote_tracking_refs, pull};
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
-    OperationTarget, WorktreeEntry, add_worktree, find_main_worktree, is_main_worktree,
-    is_worktree_clean, list_worktrees, read_worktree_root, remove_worktree,
+    OperationTarget, WorktreeEntry, add_worktree, current_worktree_root, find_main_worktree,
+    is_main_worktree, is_worktree_clean, list_worktrees, read_worktree_root, remove_worktree,
     resolve_operation_target, worktree_for_branch, worktree_path,
 };

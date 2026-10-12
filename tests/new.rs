@@ -387,14 +387,7 @@ fn worktree_mode_copies_ignored_files() {
     std::fs::write(repo.path().join("node_modules").join("pkg.json"), "{}").unwrap();
 
     common::git_mate()
-        .args([
-            "new",
-            "feat/x",
-            "--linked-worktree",
-            "--from",
-            "main",
-            "--stash",
-        ])
+        .args(["new", "feat/x", "--linked-worktree", "--from", "main"])
         .current_dir(repo.path())
         .assert()
         .success();
@@ -488,30 +481,33 @@ fn worktree_mode_does_not_copy_local_config_from_non_worktree_ref() {
 }
 
 #[test]
-fn worktree_mode_requires_decision_for_dirty_starting_branch() {
+fn worktree_mode_requires_decision_for_dirty_starting_branch_in_other_worktree() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     configure_worktree_root(&repo, &wt_root);
 
-    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
     std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
-    repo.git(&["add", ".gitignore", "tracked.txt"]);
+    repo.git(&["add", "tracked.txt"]);
     repo.git(&["commit", "-m", "add tracked file"]);
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/elsewhere");
 
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
-    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
 
     common::git_mate()
         .args(["new", "feat/dirty", "--linked-worktree", "--from", "main"])
-        .current_dir(repo.path())
+        .current_dir(&linked_wt)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--stash"))
-        .stderr(predicate::str::contains("--ignore"));
+        .stderr(predicate::str::contains("--take-changes"))
+        .stderr(predicate::str::contains("--start-fresh"));
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
 }
 
 #[test]
-fn worktree_mode_ignore_starts_fresh_from_dirty_starting_branch() {
+fn worktree_mode_start_fresh_leaves_changes_but_copies_config() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     configure_worktree_root(&repo, &wt_root);
@@ -531,7 +527,7 @@ fn worktree_mode_ignore_starts_fresh_from_dirty_starting_branch() {
             "--linked-worktree",
             "--from",
             "main",
-            "--ignore",
+            "--start-fresh",
         ])
         .current_dir(repo.path())
         .assert()
@@ -542,14 +538,20 @@ fn worktree_mode_ignore_starts_fresh_from_dirty_starting_branch() {
         std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
         "base\n"
     );
-    assert!(
-        !wt_path.join(".env.local").exists(),
-        "ignored local config should not be copied with --ignore"
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test",
+        "local config is copied even with --start-fresh"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n",
+        "changes stay in the source worktree"
     );
 }
 
 #[test]
-fn worktree_mode_stash_carries_dirty_starting_branch_changes() {
+fn worktree_mode_takes_changes_from_current_branch_by_default() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     configure_worktree_root(&repo, &wt_root);
@@ -569,7 +571,6 @@ fn worktree_mode_stash_carries_dirty_starting_branch_changes() {
             "--linked-worktree",
             "--from",
             "main",
-            "--stash",
         ])
         .current_dir(repo.path())
         .assert()
@@ -579,6 +580,11 @@ fn worktree_mode_stash_carries_dirty_starting_branch_changes() {
     assert_eq!(
         std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
         "changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "base\n",
+        "changes should move out of the source worktree"
     );
     assert_eq!(
         std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
@@ -608,7 +614,7 @@ fn main_worktree_mode_allows_in_place_dirty_starting_branch() {
 }
 
 #[test]
-fn main_worktree_mode_rejects_ignore_when_destination_is_dirty() {
+fn main_worktree_mode_rejects_start_fresh_when_destination_is_dirty() {
     let repo = common::RepoWithoutRemote::new();
     std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
     repo.git(&["add", "tracked.txt"]);
@@ -623,12 +629,12 @@ fn main_worktree_mode_rejects_ignore_when_destination_is_dirty() {
             "--main-worktree",
             "--from",
             "branch-b",
-            "--ignore",
+            "--start-fresh",
         ])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("cannot use --ignore"));
+        .stderr(predicate::str::contains("cannot use --start-fresh"));
 }
 
 #[test]
@@ -672,7 +678,7 @@ fn main_worktree_flag_creates_branch_in_main_from_linked_worktree() {
 }
 
 #[test]
-fn main_worktree_mode_stash_moves_changes_from_dirty_linked_starting_branch() {
+fn main_worktree_mode_take_changes_moves_changes_from_dirty_linked_starting_branch() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     configure_worktree_root(&repo, &wt_root);
@@ -694,7 +700,7 @@ fn main_worktree_mode_stash_moves_changes_from_dirty_linked_starting_branch() {
             "--main-worktree",
             "--from",
             "feature/source",
-            "--stash",
+            "--take-changes",
         ])
         .env("GIT_MATE_PROTO", &proto_path)
         .current_dir(repo.path())
@@ -745,4 +751,262 @@ fn create_linked_worktree(
         "main",
     ]);
     wt_path
+}
+
+#[test]
+fn main_worktree_mode_requires_take_changes_for_dirty_unrelated_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    repo.git(&["checkout", "-b", "feat/old"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    common::git_mate()
+        .args(["new", "feat/x", "--main-worktree", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--take-changes"));
+    assert_eq!(repo.current_branch(), "feat/old");
+}
+
+#[test]
+fn main_worktree_mode_rejects_start_fresh_in_place() {
+    let repo = common::RepoWithoutRemote::new();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    common::git_mate()
+        .args(["new", "feat/x", "--main-worktree", "--start-fresh"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--start-fresh"));
+    assert_eq!(repo.current_branch(), "main");
+}
+
+#[test]
+fn worktree_mode_take_changes_from_other_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/elsewhere");
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/taken",
+            "-w",
+            "--from",
+            "main",
+            "--take-changes",
+        ])
+        .current_dir(&linked_wt)
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/taken");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "base\n"
+    );
+}
+
+#[test]
+fn worktree_mode_copies_config_from_other_worktree_without_flag() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/elsewhere");
+
+    common::git_mate()
+        .args(["new", "feat/cfg", "-w", "--from", "main"])
+        .current_dir(&linked_wt)
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/cfg");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
+}
+
+#[test]
+fn from_dot_uses_current_branch_and_takes_changes() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/current");
+    std::fs::write(linked_wt.join("tracked.txt"), "work\n").unwrap();
+    std::fs::write(linked_wt.join("committed.txt"), "x\n").unwrap();
+    common::git(&linked_wt, &["add", "committed.txt"]);
+    common::git(&linked_wt, &["commit", "-m", "on current"]);
+
+    common::git_mate()
+        .args(["new", "feat/child", "-w", "--from", "."])
+        .current_dir(&linked_wt)
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/child");
+    assert!(wt_path.join("committed.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "work\n"
+    );
+}
+
+#[test]
+fn from_dot_on_detached_head_uses_commit() {
+    let repo = common::RepoWithoutRemote::new();
+    let head = repo.head_commit();
+    repo.git(&["checkout", "--detach"]);
+
+    common::git_mate()
+        .args(["new", "feat/detached", "-m", "--from", "."])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.current_branch(), "feat/detached");
+    assert_eq!(repo.head_commit(), head);
+}
+
+fn parse_single_json(stdout: &[u8]) -> serde_json::Value {
+    let text = String::from_utf8(stdout.to_vec()).unwrap();
+    assert_eq!(
+        text.lines().count(),
+        1,
+        "stdout must be exactly one JSON line, got: {text:?}"
+    );
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn json_linked_worktree_success() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", ".gitignore", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add files"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+
+    for verbose in [false, true] {
+        let branch = if verbose {
+            "feat/json-verbose"
+        } else {
+            "feat/json"
+        };
+        let mut args = vec!["--json", "new", branch, "-w", "--from", "main"];
+        if verbose {
+            args.push("--verbose");
+            std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+        }
+        let output = common::git_mate()
+            .args(&args)
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let json = parse_single_json(&output.stdout);
+        let wt_path =
+            std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, branch)).unwrap();
+        let main_path = std::fs::canonicalize(repo.path()).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["command"], "new");
+        assert_eq!(json["data"]["branch"], branch);
+        assert_eq!(json["data"]["from"], "main");
+        assert_eq!(json["data"]["worktree"], "linked");
+        assert_eq!(json["data"]["path"], wt_path.to_str().unwrap());
+        assert_eq!(json["data"]["fetched"], false);
+        assert_eq!(json["data"]["upstream"], serde_json::Value::Null);
+        assert_eq!(json["data"]["carriedFrom"], main_path.to_str().unwrap());
+        assert_eq!(json["data"]["copiedConfigFiles"], 1);
+    }
+}
+
+#[test]
+fn json_main_worktree_with_remote() {
+    let setup = common::RepoWithRemote::new();
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/json", "-m"])
+        .current_dir(setup.local_path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_single_json(&output.stdout);
+    assert_eq!(json["data"]["worktree"], "main");
+    assert_eq!(json["data"]["fetched"], true);
+    assert_eq!(json["data"]["upstream"], "origin/feat/json");
+    assert_eq!(json["data"]["carriedFrom"], serde_json::Value::Null);
+    assert_eq!(json["data"]["copiedConfigFiles"], 0);
+}
+
+#[test]
+fn json_error_envelope() {
+    let repo = common::RepoWithoutRemote::new();
+    let output = common::git_mate()
+        .args(["--json", "new", "bad..name", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json = parse_single_json(&output.stdout);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "error");
+    assert!(json.get("data").is_none());
+}
+
+#[test]
+fn json_stash_reapply_failure_reports_created_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    repo.git(&["checkout", "-b", "feat/old"]);
+    std::fs::write(repo.path().join("tracked.txt"), "old\n").unwrap();
+    repo.git(&["commit", "-am", "old change"]);
+    std::fs::write(repo.path().join("tracked.txt"), "conflicting\n").unwrap();
+
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "new",
+            "feat/x",
+            "-m",
+            "--from",
+            "main",
+            "--take-changes",
+        ])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let json = parse_single_json(&output.stdout);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["error"]["code"], "stash_reapply_failed");
+    assert_eq!(json["data"]["branch"], "feat/x");
+    assert_eq!(json["data"]["carriedFrom"], serde_json::Value::Null);
+    assert_eq!(repo.current_branch(), "feat/x");
 }

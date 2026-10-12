@@ -71,9 +71,11 @@ fn path_is_blacklisted(rel_path: &str) -> bool {
         .any(|c| COPY_BLACKLIST.contains(&c))
 }
 
-pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+/// Copy ignored local config files from `src` to `dst` and return how many
+/// were copied.
+pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Result<usize, String> {
     let Some(local_config_paths) = local_config_paths(src)? else {
-        return Ok(());
+        return Ok(0);
     };
     let mut copied = 0usize;
     for rel_path in local_config_paths {
@@ -89,7 +91,7 @@ pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Resul
     if copied > 0 {
         crate::output::info(&copied_local_config_files_message(copied));
     }
-    Ok(())
+    Ok(copied)
 }
 
 pub fn has_local_config_files(src: &std::path::Path) -> Result<bool, String> {
