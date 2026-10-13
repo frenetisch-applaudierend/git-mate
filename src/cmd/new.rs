@@ -185,9 +185,12 @@ pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
         .as_ref()
         .filter(|from| **from != data.path)
     {
-        crate::output::info(&format!("Took uncommitted changes from {}", from.display()));
+        crate::output::info(&format!(
+            "Took uncommitted changes from {}",
+            crate::output::display_path(from)
+        ));
     }
-    crate::output::success(&created.message);
+    print_created(&data);
     if crate::output::json_mode() {
         crate::output::emit_json_success("new", data);
     }
@@ -215,6 +218,28 @@ fn configured_from() -> Option<String> {
         "" | "default" => None,
         "current" | "." => Some(".".to_string()),
         _ => Some(value),
+    }
+}
+
+fn print_created(data: &NewData) {
+    let branch = console::style(&data.branch).bold();
+    let from = console::style(display_ref(&data.from)).cyan();
+    if data.worktree == "linked" {
+        crate::output::success(&format!("Created worktree for {branch} from {from}"));
+        crate::output::detail(&format!("in {}", crate::output::display_path(&data.path)));
+    } else {
+        crate::output::success(&format!(
+            "Created and switched to branch {branch} from {from}"
+        ));
+    }
+}
+
+/// Shorten a full commit hash (a detached `--from .`) for display.
+fn display_ref(from_ref: &str) -> &str {
+    if from_ref.len() == 40 && from_ref.bytes().all(|b| b.is_ascii_hexdigit()) {
+        &from_ref[..12]
+    } else {
+        from_ref
     }
 }
 
@@ -325,7 +350,11 @@ fn create_worktree(
         .unwrap_or((None, None));
     Ok(Created {
         worktree: "linked",
-        message: format!("Created worktree for '{branch}' at {}", canonical.display()),
+        message: format!(
+            "Created worktree for '{branch}' from '{}' at {}",
+            display_ref(from_ref),
+            crate::output::display_path(&canonical)
+        ),
         path: canonical,
         upstream,
         stash,
@@ -431,7 +460,10 @@ fn create_main_worktree_branch(
     Ok(Created {
         worktree: "main",
         path: main_wt.path.clone(),
-        message: format!("Created and switched to branch '{branch}'"),
+        message: format!(
+            "Created and switched to branch '{branch}' from '{}'",
+            display_ref(from_ref)
+        ),
         upstream,
         stash,
         carried_from,

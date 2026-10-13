@@ -1306,3 +1306,39 @@ fn invalid_fetch_config_fails() {
         .failure()
         .stderr(predicate::str::contains("mate.new.fetch"));
 }
+
+#[test]
+fn success_message_names_starting_point() {
+    let setup = common::RepoWithRemote::new();
+    common::git_mate()
+        .args(["new", "feat/x", "-m"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Created and switched to branch feat/x from origin/main",
+        ));
+}
+
+#[test]
+fn success_message_puts_worktree_path_on_its_own_line() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+
+    let output = common::git_mate()
+        .args(["new", "feat/x", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let wt_path = std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, "feat/x")).unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "Created worktree for feat/x from main\n  in {}\n",
+            wt_path.display()
+        )),
+        "unexpected output: {stderr}"
+    );
+}

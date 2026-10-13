@@ -27,6 +27,35 @@ pub fn info(msg: &str) {
     eprintln!("{} {}", console::style("·").cyan(), msg);
 }
 
+/// An indented, dimmed line that belongs to the message printed above it.
+pub fn detail(msg: &str) {
+    if json_mode() {
+        return;
+    }
+    eprintln!("  {}", console::style(msg).dim());
+}
+
+/// Show `path` with the home directory abbreviated to `~`.
+pub fn display_path(path: &std::path::Path) -> String {
+    tilde_path(
+        path,
+        std::env::var_os("HOME")
+            .as_deref()
+            .map(std::path::Path::new),
+    )
+}
+
+fn tilde_path(path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    match home
+        .filter(|home| !home.as_os_str().is_empty())
+        .and_then(|home| path.strip_prefix(home).ok())
+    {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
 /// A command failure. Most commands only produce a message (via
 /// `From<String>`); `code` and `data` let a command tell `--json` callers
 /// more, e.g. that the operation partially succeeded.
@@ -118,4 +147,30 @@ fn emit_json_error(command: &str, err: &CommandError) {
         "{}",
         serde_json::to_string(&envelope).expect("envelope is always serializable")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn tilde_path_abbreviates_home() {
+        assert_eq!(
+            super::tilde_path(Path::new("/home/me/src/repo"), Some(Path::new("/home/me"))),
+            "~/src/repo"
+        );
+        assert_eq!(
+            super::tilde_path(Path::new("/home/me"), Some(Path::new("/home/me"))),
+            "~"
+        );
+    }
+
+    #[test]
+    fn tilde_path_leaves_other_paths() {
+        assert_eq!(
+            super::tilde_path(Path::new("/home/meow/repo"), Some(Path::new("/home/me"))),
+            "/home/meow/repo"
+        );
+        assert_eq!(super::tilde_path(Path::new("/srv/repo"), None), "/srv/repo");
+    }
 }
