@@ -246,7 +246,7 @@ fn fetch_config_false_skips_fetch() {
     let old_head = setup.local_head_commit();
 
     setup.push_commit_to_remote("remote update");
-    setup.local_git(&["config", "mate.fetch", "false"]);
+    setup.local_git(&["config", "mate.new.fetch", "false"]);
 
     common::git_mate()
         .args(["new", "feat/x"])
@@ -276,7 +276,7 @@ fn assert_fetch_skipped_with_config(value: &str) {
     let setup = common::RepoWithRemote::new();
     let old_head = setup.local_head_commit();
     setup.push_commit_to_remote("remote update");
-    setup.local_git(&["config", "mate.fetch", value]);
+    setup.local_git(&["config", "mate.new.fetch", value]);
     common::git_mate()
         .args(["new", "feat/x"])
         .current_dir(setup.local_path())
@@ -285,7 +285,7 @@ fn assert_fetch_skipped_with_config(value: &str) {
     assert_eq!(
         setup.branch_tip("feat/x"),
         old_head,
-        "mate.fetch={value} should skip fetch"
+        "mate.new.fetch={value} should skip fetch"
     );
 }
 
@@ -1009,4 +1009,300 @@ fn json_stash_reapply_failure_reports_created_branch() {
     assert_eq!(json["data"]["branch"], "feat/x");
     assert_eq!(json["data"]["carriedFrom"], serde_json::Value::Null);
     assert_eq!(repo.current_branch(), "feat/x");
+}
+
+#[test]
+fn from_config_current_uses_current_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-b", "feature/base"]);
+    repo.git(&["commit", "--allow-empty", "-m", "on base"]);
+    let base = repo.head_commit();
+    repo.git(&["config", "mate.new.from", "current"]);
+
+    common::git_mate()
+        .args(["new", "feat/child", "-m"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.current_branch(), "feat/child");
+    assert_eq!(repo.head_commit(), base);
+}
+
+#[test]
+fn from_config_ref_is_used_and_flag_overrides_it() {
+    let repo = common::RepoWithoutRemote::new();
+    let main = repo.head_commit();
+    repo.git(&["checkout", "-b", "develop"]);
+    repo.git(&["commit", "--allow-empty", "-m", "on develop"]);
+    let develop = repo.head_commit();
+    repo.git(&["checkout", "main"]);
+    repo.git(&["config", "mate.new.from", "develop"]);
+
+    common::git_mate()
+        .args(["new", "feat/from-config", "-m"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.head_commit(), develop);
+
+    repo.git(&["checkout", "main"]);
+    common::git_mate()
+        .args(["new", "feat/from-flag", "-m", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.head_commit(), main);
+}
+
+#[test]
+fn from_config_default_uses_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let main = repo.head_commit();
+    repo.git(&["checkout", "-b", "feature/base"]);
+    repo.git(&["commit", "--allow-empty", "-m", "on base"]);
+    repo.git(&["config", "mate.new.from", "default"]);
+
+    common::git_mate()
+        .args(["new", "feat/child", "-m"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.head_commit(), main);
+}
+
+#[test]
+fn changes_config_start_fresh_leaves_changes() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    repo.git(&["config", "mate.new.changes", "startFresh"]);
+
+    common::git_mate()
+        .args(["new", "feat/fresh", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/fresh");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "base\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn changes_config_take_moves_changes_from_other_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    let linked_wt = create_linked_worktree(&repo, &wt_root, "feature/elsewhere");
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    repo.git(&["config", "mate.new.changes", "take"]);
+
+    common::git_mate()
+        .args(["new", "feat/taken", "-w", "--from", "main"])
+        .current_dir(&linked_wt)
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/taken");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "base\n"
+    );
+}
+
+#[test]
+fn changes_flag_overrides_config() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    repo.git(&["config", "mate.new.changes", "startFresh"]);
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/taken",
+            "-w",
+            "--from",
+            "main",
+            "--take-changes",
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/taken");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn invalid_changes_config_fails() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.new.changes", "banana"]);
+
+    common::git_mate()
+        .args(["new", "feat/x"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mate.new.changes"));
+    assert!(!repo.branch_exists("feat/x"));
+}
+
+fn setup_local_config_file(repo: &common::RepoWithoutRemote) {
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+}
+
+#[test]
+fn no_copy_config_flag_skips_local_config() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    setup_local_config_file(&repo);
+
+    common::git_mate()
+        .args([
+            "new",
+            "feat/cfg",
+            "-w",
+            "--from",
+            "main",
+            "--no-copy-config",
+        ])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/cfg");
+    assert!(!wt_path.join(".env.local").exists());
+}
+
+#[test]
+fn copy_config_false_skips_local_config_and_flag_overrides_it() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    setup_local_config_file(&repo);
+    repo.git(&["config", "mate.new.copyConfig", "false"]);
+
+    common::git_mate()
+        .args(["new", "feat/no-cfg", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/no-cfg");
+    assert!(!wt_path.join(".env.local").exists());
+
+    common::git_mate()
+        .args(["new", "feat/cfg", "-w", "--from", "main", "--copy-config"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feat/cfg");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
+}
+
+#[test]
+fn invalid_copy_config_fails() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.new.copyConfig", "banana"]);
+
+    common::git_mate()
+        .args(["new", "feat/x"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mate.new.copyConfig"));
+}
+
+fn new_reports_fetched(setup: &common::RepoWithRemote, args: &[&str]) -> bool {
+    let output = common::git_mate()
+        .args(["--json", "new"])
+        .args(args)
+        .current_dir(setup.local_path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    parse_single_json(&output.stdout)["data"]["fetched"]
+        .as_bool()
+        .unwrap()
+}
+
+#[test]
+fn from_dot_skips_fetch() {
+    let setup = common::RepoWithRemote::new();
+    let tracking_before = setup.branch_tip("origin/main");
+    setup.push_commit_to_remote("remote update");
+
+    assert!(!new_reports_fetched(
+        &setup,
+        &["feat/x", "-m", "--from", "."]
+    ));
+    assert_eq!(
+        setup.branch_tip("origin/main"),
+        tracking_before,
+        "origin/main should not have been updated"
+    );
+}
+
+#[test]
+fn from_local_branch_skips_fetch() {
+    let setup = common::RepoWithRemote::new();
+    assert!(!new_reports_fetched(
+        &setup,
+        &["feat/x", "-m", "--from", "main"]
+    ));
+}
+
+#[test]
+fn from_remote_ref_fetches() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_commit_to_remote("remote update");
+    assert!(new_reports_fetched(
+        &setup,
+        &["feat/x", "-m", "--from", "origin/main"]
+    ));
+    assert_ne!(setup.branch_tip("feat/x"), setup.branch_tip("main"));
+}
+
+#[test]
+fn invalid_fetch_config_fails() {
+    let setup = common::RepoWithRemote::new();
+    setup.local_git(&["config", "mate.new.fetch", "banana"]);
+
+    common::git_mate()
+        .args(["new", "feat/x"])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mate.new.fetch"));
 }

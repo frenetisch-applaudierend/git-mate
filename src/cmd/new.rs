@@ -1,7 +1,7 @@
 #[derive(clap::Args)]
 pub struct NewArgs {
     pub branch: String,
-    #[arg(long, help = "Branch or ref to create from; `.` is the current HEAD (default: repo default branch)", add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
+    #[arg(long, help = "Branch or ref to create from; `.` is the current HEAD (default: mate.new.from, else repo default branch)", add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub from: Option<String>,
     #[arg(
         short = 'm',
@@ -29,6 +29,18 @@ pub struct NewArgs {
         help = "Leave uncommitted changes where they are and start from the committed state (local config files are still copied)"
     )]
     pub start_fresh: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_copy_config",
+        help = "Copy ignored local config files from the starting point's worktree, even if mate.new.copyConfig is false"
+    )]
+    pub copy_config: bool,
+    #[arg(
+        long,
+        conflicts_with = "copy_config",
+        help = "Don't copy ignored local config files from the starting point's worktree"
+    )]
+    pub no_copy_config: bool,
     #[arg(long, help = "Skip fetching from origin before branching")]
     pub no_fetch: bool,
 }
@@ -41,6 +53,41 @@ enum Changes {
     Default,
     Take,
     StartFresh,
+}
+
+impl Changes {
+    /// `--take-changes` and `--start-fresh` win, then `mate.new.changes`.
+    fn resolve(take_changes: bool, start_fresh: bool) -> Result<Self, String> {
+        if take_changes {
+            return Ok(Self::Take);
+        }
+        if start_fresh {
+            return Ok(Self::StartFresh);
+        }
+        let Some(value) = crate::git::config::read_string("mate.new.changes") else {
+            return Ok(Self::Default);
+        };
+        match value.to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Default),
+            "take" => Ok(Self::Take),
+            "startfresh" => Ok(Self::StartFresh),
+            _ => Err(format!(
+                "invalid value for mate.new.changes: {value:?}; expected \"auto\", \"take\" or \"startFresh\""
+            )),
+        }
+    }
+}
+
+/// `--copy-config` and `--no-copy-config` win, then `mate.new.copyConfig`,
+/// then copying is on.
+fn copy_config_enabled(copy_config: bool, no_copy_config: bool) -> Result<bool, String> {
+    if copy_config {
+        return Ok(true);
+    }
+    if no_copy_config {
+        return Ok(false);
+    }
+    Ok(crate::git::config::read_bool("mate.new.copyConfig")?.unwrap_or(true))
 }
 
 #[derive(serde::Serialize)]
@@ -69,19 +116,19 @@ struct Created {
 }
 
 pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
-    let changes = if args.take_changes {
-        Changes::Take
-    } else if args.start_fresh {
-        Changes::StartFresh
-    } else {
-        Changes::Default
-    };
-    let from_ref = resolve_from(args.from)?;
-    let fetched = fetch_if_needed(args.no_fetch)?;
+    let changes = Changes::resolve(args.take_changes, args.start_fresh)?;
+    let copy_config = copy_config_enabled(args.copy_config, args.no_copy_config)?;
+    let from = args.from.or_else(configured_from);
+    let from_is_current = from.as_deref() == Some(".");
+    let from_ref = resolve_from(from)?;
+    let from_local_branch = crate::git::local_branch_for_ref(&from_ref);
+    // A fetch never moves the current HEAD or a local branch, so only a
+    // starting point like `origin/main`, a tag or a commit can benefit.
+    let fetched = fetch_if_needed(args.no_fetch || from_is_current || from_local_branch.is_some())?;
     let target = crate::git::resolve_operation_target(args.main_worktree, args.linked_worktree)?;
     let worktrees = crate::git::list_worktrees()?;
     let current_root = canonical(&crate::git::current_worktree_root()?);
-    let source_worktree = crate::git::local_branch_for_ref(&from_ref)
+    let source_worktree = from_local_branch
         .as_deref()
         .and_then(|branch| crate::git::worktree_for_branch(branch, &worktrees));
     let source_is_current = source_worktree.is_some_and(|wt| canonical(&wt.path) == current_root);
@@ -92,6 +139,7 @@ pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
             &from_ref,
             source_worktree,
             changes,
+            copy_config,
             source_is_current,
         ),
         crate::git::OperationTarget::MainWorktree => create_main_worktree_branch(
@@ -100,6 +148,7 @@ pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
             &worktrees,
             source_worktree,
             changes,
+            copy_config,
             source_is_current,
         ),
     }?;
@@ -145,8 +194,8 @@ pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
     Ok(())
 }
 
-/// Resolve `--from`: absent means the default branch, `.` the current HEAD
-/// (its branch, or the commit when detached).
+/// Resolve the starting point: absent means the default branch, `.` the
+/// current HEAD (its branch, or the commit when detached).
 fn resolve_from(from: Option<String>) -> Result<String, String> {
     match from.as_deref() {
         None => crate::git::detect_default_branch(true),
@@ -155,6 +204,17 @@ fn resolve_from(from: Option<String>) -> Result<String, String> {
             branch => Ok(branch),
         },
         Some(r) => Ok(r.to_string()),
+    }
+}
+
+/// `mate.new.from`: unset or `default` means the default branch, `current`
+/// (or `.`) the current HEAD, anything else is used as a ref.
+fn configured_from() -> Option<String> {
+    let value = crate::git::config::read_string("mate.new.from")?;
+    match value.to_ascii_lowercase().as_str() {
+        "" | "default" => None,
+        "current" | "." => Some(".".to_string()),
+        _ => Some(value),
     }
 }
 
@@ -196,14 +256,10 @@ fn has_origin_remote() -> bool {
         .unwrap_or(false)
 }
 
-/// Fetch from `origin` unless disabled; returns whether a fetch happened.
-fn fetch_if_needed(no_fetch: bool) -> Result<bool, String> {
-    if no_fetch {
-        return Ok(false);
-    }
-    if let Some(val) = crate::git::config::read_string("mate.fetch")
-        && matches!(val.to_lowercase().as_str(), "false" | "no" | "off" | "0")
-    {
+/// Fetch from `origin` unless skipped or disabled by `mate.new.fetch`;
+/// returns whether a fetch happened.
+fn fetch_if_needed(skip: bool) -> Result<bool, String> {
+    if skip || crate::git::config::read_bool("mate.new.fetch")? == Some(false) {
         return Ok(false);
     }
     if !has_origin_remote() {
@@ -237,6 +293,7 @@ fn create_worktree(
     from_ref: &str,
     source_worktree: Option<&crate::git::WorktreeEntry>,
     changes: Changes,
+    copy_config: bool,
     source_is_current: bool,
 ) -> Result<Created, String> {
     if !crate::git::is_valid_branch_name(branch) {
@@ -248,6 +305,7 @@ fn create_worktree(
         from_ref,
         branch,
         changes,
+        copy_config,
         source_is_current,
     )?;
     let wt_path = crate::git::worktree_path(branch)?;
@@ -282,6 +340,7 @@ fn create_main_worktree_branch(
     worktrees: &[crate::git::WorktreeEntry],
     source_worktree: Option<&crate::git::WorktreeEntry>,
     changes: Changes,
+    copy_config: bool,
     source_is_current: bool,
 ) -> Result<Created, String> {
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
@@ -343,6 +402,7 @@ fn create_main_worktree_branch(
             from_ref,
             branch,
             changes,
+            copy_config,
             source_is_current,
         )?
     };
@@ -380,13 +440,15 @@ fn create_main_worktree_branch(
 }
 
 /// Decide what moves out of the worktree where the starting point is checked
-/// out. Local config files are always copied; uncommitted changes are taken
-/// by default only when that worktree is the current one.
+/// out. Local config files are copied unless `copy_config` is off;
+/// uncommitted changes are taken by default only when that worktree is the
+/// current one.
 fn prepare_source_transfer<'a>(
     source_worktree: Option<&'a crate::git::WorktreeEntry>,
     from_ref: &str,
     branch: &str,
     changes: Changes,
+    copy_config: bool,
     source_is_current: bool,
 ) -> Result<Option<SourceTransfer<'a>>, String> {
     let Some(source_worktree) = source_worktree else {
@@ -394,7 +456,7 @@ fn prepare_source_transfer<'a>(
     };
     let source_path = &source_worktree.path;
     let has_git_changes = !is_clean(source_path)?;
-    let copy_local_config = crate::fs::has_local_config_files(source_path)?;
+    let copy_local_config = copy_config && crate::fs::has_local_config_files(source_path)?;
 
     let take = match changes {
         Changes::Take => true,

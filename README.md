@@ -18,9 +18,11 @@ either mode for a single invocation. Optionally, you may specify a different par
 
 The default branch always stays in the main worktree, even when linked mode is configured.
 
-Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.fetch = false` in git config to skip permanently.
+Fetches from `origin` before branching by default. Use `--no-fetch` to skip, or set `mate.new.fetch = false` in git config to skip permanently.
+The fetch is skipped automatically when starting from the current HEAD or a local branch, since it could not change the starting point.
 
 `--from .` starts from the current HEAD: the branch you are on, or the commit when HEAD is detached.
+Set `mate.new.from` to change the starting point used when `--from` is omitted (`default`, `current`, or any ref).
 
 Uncommitted changes (tracked and untracked) follow you when you start from the branch checked out in
 your current worktree: they move into the new branch and the current worktree is left clean. If the
@@ -31,9 +33,13 @@ unless you choose explicitly:
   reapplied in the destination; if reapplying fails, the stash entry is kept)
 - `--start-fresh` starts from the committed state and leaves uncommitted changes where they are
 
-Ignored local config files (such as `.env.local`) are always copied from the starting point's worktree
-into a new linked worktree, whichever option you choose. When the starting point is not checked out in
-any worktree, nothing is transferred.
+Set `mate.new.changes` to `take` or `startFresh` to make either choice the default (`auto`, the default,
+is the behavior described above). The flags override the config.
+
+Ignored local config files (such as `.env.local`) are copied from the starting point's worktree into the
+new branch's worktree, whichever option you choose. Use `--no-copy-config` (or set
+`mate.new.copyConfig = false`) to skip this; `--copy-config` overrides the config. When the starting
+point is not checked out in any worktree, nothing is transferred.
 
 With `--json`, `git mate new` prints a single JSON document on stdout describing the new branch
 (`branch`, `from`, `worktree`, `path`, `fetched`, `upstream`, `carriedFrom`, `copiedConfigFiles`).
@@ -145,7 +151,10 @@ git config mate.worktreeRoot "../worktrees"
 | Key | Values | Effect |
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
-| `mate.fetch` | `false` / `no` / `off` / `0` | Disable automatic fetch in `git mate new` |
 | `mate.autoMerge` | `true` / `yes` / `on` / `1`, `false` / `no` / `off` / `0` | Auto-merge the default branch during `git mate sync` |
 | `mate.defaultBranchMode` | `main` / `linked` | Default target for `git mate new` and `git mate checkout` |
+| `mate.new.from` | `default` / `current` / any ref | Starting point for `git mate new` when `--from` is omitted (default: `default`) |
+| `mate.new.changes` | `auto` / `take` / `startFresh` | What `git mate new` does with uncommitted changes when neither `--take-changes` nor `--start-fresh` is given (default: `auto`) |
+| `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
+| `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |
