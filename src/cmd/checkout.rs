@@ -124,10 +124,10 @@ fn ensure_checkout_in_linked_worktree(branch: &str, allow_stash: bool) -> Result
 fn navigate_to_worktree(branch: &str, wt_path: &std::path::Path) -> Result<(), String> {
     let canonical = std::fs::canonicalize(wt_path).unwrap_or_else(|_| wt_path.to_path_buf());
     crate::output::info(&format!(
-        "Branch '{}' is already checked out at {}",
-        branch,
-        canonical.display()
+        "{} is already checked out",
+        console::style(branch).bold()
     ));
+    print_worktree_path(&canonical);
     crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }
@@ -140,11 +140,11 @@ fn checkout_main_worktree(branch: &str) -> Result<(), String> {
             .ok_or("main worktree path is not valid UTF-8")?;
         crate::git::checkout_in(main_str, branch)?;
         crate::shell_protocol::emit_cd(&main_wt);
-        crate::output::success(&format!("Switched to branch '{branch}'"));
+        crate::output::success(&switched_message(branch));
         return Ok(());
     }
     crate::git::checkout(branch)?;
-    crate::output::success(&format!("Switched to branch '{branch}'"));
+    crate::output::success(&switched_message(branch));
     Ok(())
 }
 
@@ -155,7 +155,11 @@ fn checkout_linked_worktree(branch: &str) -> Result<(), String> {
         if wt_path.join(".git").exists() {
             let canonical = std::fs::canonicalize(&wt_path).unwrap_or_else(|_| wt_path.clone());
             crate::shell_protocol::emit_cd(&canonical);
-            crate::output::info(&format!("worktree already exists at {}", wt_path.display()));
+            crate::output::info(&format!(
+                "Worktree for {} already exists",
+                console::style(branch).bold()
+            ));
+            crate::output::detail(&format!("in {}", crate::output::display_path(&wt_path)));
             return Ok(());
         } else {
             return Err(format!(
@@ -174,10 +178,7 @@ fn checkout_linked_worktree(branch: &str) -> Result<(), String> {
     let canonical = crate::git::add_worktree(&wt_path, &[branch])?;
     let main_wt = crate::git::find_main_worktree()?;
     crate::fs::copy_ignored_files(&main_wt, &canonical)?;
-    crate::output::success(&format!(
-        "Checked out '{branch}' at {}",
-        canonical.display()
-    ));
+    print_checked_out(branch, &canonical);
     crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }
@@ -236,18 +237,17 @@ fn move_branch_from_main_to_linked(
 
     crate::fs::copy_ignored_files(&main_wt.path, &canonical)?;
     if let Some(stash) = stash {
-        return crate::cmd::worktree_changes::finish_with_stash_reapply(
+        crate::cmd::worktree_changes::finish_with_stash_reapply(
             stash,
             &canonical,
-            &format!("Checked out '{branch}' at {}", canonical.display()),
+            &checked_out_message(branch),
             &canonical,
-        );
+        )?;
+        print_worktree_path(&canonical);
+        return Ok(());
     }
 
-    crate::output::success(&format!(
-        "Checked out '{branch}' at {}",
-        canonical.display()
-    ));
+    print_checked_out(branch, &canonical);
     crate::shell_protocol::emit_cd(&canonical);
     Ok(())
 }
@@ -318,12 +318,12 @@ fn move_branch_from_linked_to_main(
         return crate::cmd::worktree_changes::finish_with_stash_reapply(
             stash,
             &main_wt.path,
-            &format!("Switched to branch '{branch}'"),
+            &switched_message(branch),
             &main_wt.path,
         );
     }
 
-    crate::output::success(&format!("Switched to branch '{branch}'"));
+    crate::output::success(&switched_message(branch));
     crate::shell_protocol::emit_cd(&main_wt.path);
     Ok(())
 }
@@ -366,4 +366,21 @@ fn stash_source_changes(
         &format!("git-mate checkout {branch}"),
     )
     .map(Some)
+}
+
+fn switched_message(branch: &str) -> String {
+    format!("Switched to branch {}", console::style(branch).bold())
+}
+
+fn checked_out_message(branch: &str) -> String {
+    format!("Checked out {}", console::style(branch).bold())
+}
+
+fn print_checked_out(branch: &str, path: &std::path::Path) {
+    crate::output::success(&checked_out_message(branch));
+    print_worktree_path(path);
+}
+
+fn print_worktree_path(path: &std::path::Path) {
+    crate::output::detail(&format!("in {}", crate::output::display_path(path)));
 }

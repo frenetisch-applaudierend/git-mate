@@ -27,6 +27,14 @@ pub fn info(msg: &str) {
     eprintln!("{} {}", console::style("·").cyan(), msg);
 }
 
+/// Local config files were copied into a new worktree.
+pub fn copied(msg: &str) {
+    if json_mode() {
+        return;
+    }
+    eprintln!("{} {}", console::style("⧉").blue(), msg);
+}
+
 /// An indented, dimmed line that belongs to the message printed above it.
 pub fn detail(msg: &str) {
     if json_mode() {

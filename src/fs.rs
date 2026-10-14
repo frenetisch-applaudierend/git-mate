@@ -89,7 +89,7 @@ pub fn copy_ignored_files(src: &std::path::Path, dst: &std::path::Path) -> Resul
         }
     }
     if copied > 0 {
-        crate::output::info(&copied_local_config_files_message(copied));
+        crate::output::copied(&copied_local_config_files_message(copied));
     }
     Ok(copied)
 }
