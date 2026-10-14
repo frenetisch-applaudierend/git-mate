@@ -521,10 +521,7 @@ fn resets_branch_when_remote_was_rewritten() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(entry(
-            "feature/rewrite",
-            "reset to rewritten upstream (was ",
-        ))
+        .stderr(entry("feature/rewrite", "rewritten, was "))
         .stderr(predicates::str::contains("1 reset"));
 
     assert_eq!(
@@ -557,7 +554,7 @@ fn resets_branch_whose_local_patches_are_already_upstream() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(entry("feature/picked", "reset to rewritten upstream"));
+        .stderr(entry("feature/picked", "rewritten, was "));
 
     assert_eq!(
         setup.branch_tip("feature/picked"),

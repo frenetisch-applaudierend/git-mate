@@ -5,9 +5,10 @@
 
 use console::{Style, StyledObject, style};
 
-/// Branch names longer than this push their detail onto the next line
-/// instead of widening the name column for everyone.
-const MAX_NAME_COLUMN: usize = 40;
+/// The name column always grows to at least this width (if a name needs it),
+/// even when some details then no longer fit the terminal; beyond it, it only
+/// grows as far as the longest detail still fits.
+const GUARANTEED_NAME_COLUMN: usize = 40;
 
 /// The report section an outcome is listed under.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,7 +129,11 @@ impl BranchOutcome {
     }
 
     pub fn reset_to_upstream(branch: &str, previous_tip: &str, dry_run: bool) -> Self {
-        let verb = if dry_run { "would reset" } else { "reset" };
+        let detail = if dry_run {
+            "rewritten, would reset".to_string()
+        } else {
+            format!("rewritten, was {previous_tip}")
+        };
         Self::new(
             branch,
             "reset-to-upstream",
@@ -136,7 +141,7 @@ impl BranchOutcome {
                 "remote was rewritten; previous tip {previous_tip}"
             )),
             Group::Updated,
-            format!("{verb} to rewritten upstream (was {previous_tip})"),
+            detail,
         )
     }
 
@@ -221,14 +226,27 @@ pub struct Candidate {
     pub warn: bool,
 }
 
-/// Width of the branch-name column: wide enough for the longest listed name,
-/// capped so one very long name doesn't push every detail off screen.
-pub fn name_column<'a>(names: impl Iterator<Item = &'a str>) -> usize {
-    names
-        .map(console::measure_text_width)
-        .max()
-        .unwrap_or(0)
-        .min(MAX_NAME_COLUMN)
+/// Width of the branch-name column for `(name, detail)` entries: wide enough
+/// for the longest name, as long as the longest detail still fits the
+/// terminal next to it, but never capped below [`GUARANTEED_NAME_COLUMN`].
+pub fn name_column<'a>(entries: impl Iterator<Item = (&'a str, &'a str)>) -> usize {
+    let (longest_name, longest_detail) = entries.fold((0, 0), |(name, detail), (n, d)| {
+        (
+            name.max(console::measure_text_width(n)),
+            detail.max(console::measure_text_width(d)),
+        )
+    });
+    let available = console::Term::stderr()
+        .size_checked()
+        .map_or(usize::MAX, |(_, cols)| {
+            (cols as usize).saturating_sub(3 + 2 + longest_detail)
+        });
+    longest_name.min(available.max(GUARANTEED_NAME_COLUMN))
+}
+
+/// The detail shown next to an outcome's branch name.
+pub fn detail(outcome: &BranchOutcome) -> &str {
+    &outcome.detail
 }
 
 /// Whether an outcome gets its own line in the report (rather than only
@@ -320,7 +338,7 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
     let dim = Style::new().dim();
     match outcome.action.as_str() {
         "fast-forwarded" => (style("✓").green(), dim),
-        "reset-to-upstream" => (style("↻").blue(), dim),
+        "reset-to-upstream" => (style("✎").blue(), dim),
         "merged" => (style("⇄").blue(), dim),
         "failed" => (style("✗").red().bold(), Style::new().red()),
         _ => match outcome.group {

@@ -253,8 +253,12 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         branch_outcomes
             .iter()
             .filter(|o| report::is_aligned(o))
-            .map(|o| o.branch.as_str())
-            .chain(deletion_candidates.iter().map(|c| c.branch.as_str())),
+            .map(|o| (o.branch.as_str(), report::detail(o)))
+            .chain(
+                deletion_candidates
+                    .iter()
+                    .map(|c| (c.branch.as_str(), c.detail.as_str())),
+            ),
     );
     if !json {
         report::print_sections(&branch_outcomes, default_branch.remote.as_deref(), column);
