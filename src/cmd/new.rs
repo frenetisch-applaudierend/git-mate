@@ -225,8 +225,10 @@ fn print_created(data: &NewData) {
     let branch = console::style(&data.branch).bold();
     let from = console::style(display_ref(&data.from)).cyan();
     if data.worktree == "linked" {
-        crate::output::success(&format!("Created worktree for {branch} from {from}"));
-        crate::output::detail(&format!("in {}", crate::output::display_path(&data.path)));
+        crate::output::success(&format!(
+            "Created worktree for {branch} from {from} in {}",
+            crate::output::display_path(&data.path)
+        ));
     } else {
         crate::output::success(&format!(
             "Created and switched to branch {branch} from {from}"

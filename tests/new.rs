@@ -1321,7 +1321,7 @@ fn success_message_names_starting_point() {
 }
 
 #[test]
-fn success_message_puts_worktree_path_on_its_own_line() {
+fn success_message_ends_with_worktree_path() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     configure_worktree_root(&repo, &wt_root);
@@ -1336,7 +1336,7 @@ fn success_message_puts_worktree_path_on_its_own_line() {
     let wt_path = std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, "feat/x")).unwrap();
     assert!(
         stderr.contains(&format!(
-            "Created worktree for feat/x from main\n  in {}\n",
+            "Created worktree for feat/x from main in {}\n",
             wt_path.display()
         )),
         "unexpected output: {stderr}"

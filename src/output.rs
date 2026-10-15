@@ -35,14 +35,6 @@ pub fn copied(msg: &str) {
     eprintln!("{} {}", console::style("⧉").blue(), msg);
 }
 
-/// An indented, dimmed line that belongs to the message printed above it.
-pub fn detail(msg: &str) {
-    if json_mode() {
-        return;
-    }
-    eprintln!("  {}", console::style(msg).dim());
-}
-
 /// Show `path` with the home directory abbreviated to `~`.
 pub fn display_path(path: &std::path::Path) -> String {
     tilde_path(
