@@ -1,7 +1,7 @@
 #[derive(clap::Args)]
 pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
-    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
+    #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::worktree_branch_completer))]
     pub branch: Option<String>,
     /// Force removal even if the worktree has modified or untracked files
     #[arg(long, short = 'f')]

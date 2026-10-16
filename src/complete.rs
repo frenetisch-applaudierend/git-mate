@@ -63,6 +63,19 @@ pub fn branch_completer(
         .collect()
 }
 
+/// Complete branches checked out in linked worktrees (the main worktree is excluded).
+pub fn worktree_branch_completer(
+    _current: &std::ffi::OsStr,
+) -> Vec<clap_complete::engine::CompletionCandidate> {
+    crate::git::list_worktrees()
+        .unwrap_or_default()
+        .into_iter()
+        .skip(1)
+        .filter_map(|wt| wt.branch)
+        .map(clap_complete::engine::CompletionCandidate::new)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::merge_branch_candidates;

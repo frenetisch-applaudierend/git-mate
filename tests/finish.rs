@@ -286,3 +286,32 @@ fn finish_removes_empty_parent_dirs_from_slash_branch() {
         "worktree root itself must not be deleted"
     );
 }
+
+#[test]
+fn finish_completion_offers_only_linked_worktree_branches() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = tempfile::TempDir::new().unwrap();
+    let wt_path = wt_root.path().join("linked");
+    repo.git(&[
+        "worktree",
+        "add",
+        wt_path.to_str().unwrap(),
+        "-b",
+        "linked-branch",
+        "main",
+    ]);
+    repo.git(&["branch", "plain-branch"]);
+
+    let output = common::git_mate()
+        .args(["--", "git-mate", "finish", ""])
+        .env("COMPLETE", "bash")
+        .env("_CLAP_COMPLETE_INDEX", "2")
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let candidates = String::from_utf8_lossy(&output.stdout);
+    let branches: Vec<&str> = candidates.lines().filter(|c| !c.starts_with('-')).collect();
+
+    assert_eq!(branches, vec!["linked-branch"]);
+}
