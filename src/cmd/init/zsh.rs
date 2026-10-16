@@ -48,10 +48,41 @@ fi
 
 const COMPLETION: &str = r#"
 # Shell completions for `git-mate` and `git mate`
-source <(COMPLETE=zsh command git-mate)
+#
+# Values (e.g. branches) are listed before flags. clap's stock zsh completer
+# puts everything in one sorted group, which floats `--flags` to the top.
+_git_mate_complete() {
+    local -a completions dirs values flags
+    completions=("${(@f)$( \
+        _CLAP_IFS=$'\n' \
+        _CLAP_COMPLETE_INDEX=$(( CURRENT - 1 )) \
+        COMPLETE=zsh \
+        command git-mate -- "${words[@]}" 2>/dev/null \
+    )}")
+    [[ -n $completions ]] || return 1
+
+    local completion value
+    for completion in $completions; do
+        value="${completion%%:*}"
+        if [[ $value == -* ]]; then
+            flags+=("$completion")
+        elif [[ $value == */ ]]; then
+            dirs+=("${value%/}${completion#$value}")
+        else
+            values+=("$completion")
+        fi
+    done
+
+    local ret=1
+    (( $#values )) && _describe -t values 'values' values -V git-mate-values && ret=0
+    (( $#dirs )) && _describe -t directories 'directories' dirs -S '/' -r '/' -V git-mate-dirs && ret=0
+    (( $#flags )) && _describe -t flags 'flags' flags -V git-mate-flags && ret=0
+    return ret
+}
+compdef _git_mate_complete git-mate
 _git-mate() {
     words[1]="git-mate"
-    _clap_dynamic_completer_git_mate
+    _git_mate_complete
 }
 # Register 'mate' as a known git subcommand (for `git ma<TAB>`)
 () {
