@@ -50,7 +50,11 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                 ));
             }
             crate::git::checkout_in(&main_wt_path, &default)?;
-            crate::output::success(&format!("Finished '{target_branch}', back on '{default}'"));
+            crate::output::success(&format!(
+                "Finished {}, back on {}",
+                console::style(&target_branch).bold(),
+                console::style(&default).cyan()
+            ));
         }
         Some(wt) => {
             let in_this_wt = cwd.starts_with(&wt.path);
@@ -58,7 +62,11 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
             if let Ok(root) = crate::git::read_worktree_root() {
                 crate::fs::remove_empty_parent_dirs(&wt.path, &root);
             }
-            crate::output::success(&format!("Removed worktree for '{target_branch}'"));
+            crate::output::success(&format!(
+                "Removed worktree for {} in {}",
+                console::style(&target_branch).bold(),
+                crate::output::display_path(&wt.path)
+            ));
             if in_this_wt {
                 let canonical = std::fs::canonicalize(&main_wt.path)
                     .map_err(|e| format!("could not canonicalize path: {e}"))?;
@@ -68,7 +76,10 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         None => {
             // Branch exists but is not checked out anywhere — delete it directly.
             crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
-            crate::output::success(&format!("Deleted '{target_branch}'"));
+            crate::output::success(&format!(
+                "Deleted branch {}",
+                console::style(&target_branch).bold()
+            ));
             return Ok(());
         }
     }
