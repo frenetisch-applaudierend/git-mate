@@ -338,7 +338,7 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
     let dim = Style::new().dim();
     match outcome.action.as_str() {
         "fast-forwarded" => (style("✓").green(), dim),
-        "reset-to-upstream" => (style("✎").blue(), dim),
+        "reset-to-upstream" => (style("↯").blue(), dim),
         "merged" => (style("⇄").blue(), dim),
         "failed" => (style("✗").red().bold(), Style::new().red()),
         _ => match outcome.group {
