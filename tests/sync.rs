@@ -859,7 +859,11 @@ fn decide_choice_prompts_per_branch() {
         .success()
         .stderr(predicates::str::contains("Delete feature/one?"))
         .stderr(predicates::str::contains("Delete feature/two?"))
-        .stderr(predicates::str::contains("1 deleted · 1 kept"));
+        .stderr(predicates::str::contains("1 deleted · 1 kept"))
+        // Only the branch that was actually deleted is marked ⌫.
+        .stderr(predicates::str::contains("⌫ feature/one"))
+        .stderr(predicates::str::contains("⌫ feature/two").not())
+        .stderr(predicates::str::contains("· feature/two"));
 
     assert!(!setup.local_branch_exists("feature/one"));
     assert!(setup.local_branch_exists("feature/two"));

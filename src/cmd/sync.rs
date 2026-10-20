@@ -869,16 +869,17 @@ fn resolve_pruned_deletions(
 
     if mode.delete_pruned {
         if !mode.json {
-            report::print_candidates("Remote gone, deleted", candidates, column);
+            report::print_title("Remote gone, deleted");
         }
         return Ok(candidates
             .iter()
             .map(|c| {
                 delete_candidate(
-                    &c.branch,
+                    c,
                     current_wt,
                     worktrees,
                     main_wt_path,
+                    DeletionReport::WithDetail,
                     mode.json,
                     column,
                 )
@@ -907,10 +908,11 @@ fn resolve_pruned_deletions(
         let branch = candidate.branch.as_str();
         if to_delete.contains(&branch) {
             outcomes.push(delete_candidate(
-                branch,
+                candidate,
                 current_wt,
                 worktrees,
                 main_wt_path,
+                DeletionReport::Plain,
                 false,
                 column,
             ));
@@ -929,16 +931,36 @@ fn resolve_pruned_deletions(
     Ok(outcomes)
 }
 
+/// How a deleted candidate is reported: with its candidate detail when the
+/// candidates were not listed beforehand (`--delete-pruned`), or as a plain
+/// "deleted" right under the prompt that listed them.
+#[derive(Clone, Copy)]
+enum DeletionReport {
+    WithDetail,
+    Plain,
+}
+
 fn delete_candidate(
-    branch: &str,
+    candidate: &Candidate,
     current_wt: &Option<std::path::PathBuf>,
     worktrees: &[crate::git::WorktreeEntry],
     main_wt_path: &str,
+    report_as: DeletionReport,
     json: bool,
     column: usize,
 ) -> BranchOutcome {
+    let branch = candidate.branch.as_str();
     match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
-        Ok(()) => BranchOutcome::deleted(branch),
+        Ok(()) => {
+            if !json {
+                report::print_deleted(
+                    candidate,
+                    matches!(report_as, DeletionReport::WithDetail),
+                    column,
+                );
+            }
+            BranchOutcome::deleted(branch)
+        }
         Err(e) => {
             if !json {
                 report::print_failure(branch, &e, column);
@@ -953,7 +975,10 @@ fn delete_candidate(
 /// offered for deletion again on every sync.
 fn keep_pruned_branch(branch: &str, column: usize) -> BranchOutcome {
     match crate::git::unset_upstream(branch) {
-        Ok(()) => BranchOutcome::kept(branch, Some("upstream unset")),
+        Ok(()) => {
+            report::print_kept(branch, column);
+            BranchOutcome::kept(branch, Some("upstream unset"))
+        }
         Err(e) => {
             let reason = format!("could not unset upstream: {e}");
             report::print_failure(branch, &reason, column);

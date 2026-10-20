@@ -350,23 +350,62 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
 }
 
 /// Print the branches whose remote is gone and that are offered for
-/// deletion, under `title`.
+/// deletion, under `title`. They are only marked as candidates here; what
+/// actually happened to each is printed by [`print_deleted`] and
+/// [`print_kept`] once it did.
 pub fn print_candidates(title: &str, candidates: &[Candidate], column: usize) {
-    eprintln!();
-    eprintln!(" {}", style(title).bold());
+    print_title(title);
     for candidate in candidates {
-        let detail_style = if candidate.warn {
-            Style::new().yellow()
-        } else {
-            Style::new().dim()
-        };
         print_entry(
-            style("⌫").red(),
+            style("·").dim(),
             &candidate.branch,
             &candidate.detail,
-            &detail_style,
+            &candidate_style(candidate),
             column,
         );
+    }
+}
+
+/// Print a section title whose entries follow one by one as they happen.
+pub fn print_title(title: &str) {
+    eprintln!();
+    eprintln!(" {}", style(title).bold());
+}
+
+/// Print a branch that was deleted. With `candidate_detail`, its candidate
+/// detail (e.g. "merged in #1156") is shown, for when the candidates were
+/// not listed before; otherwise just "deleted".
+pub fn print_deleted(candidate: &Candidate, candidate_detail: bool, column: usize) {
+    let (detail, detail_style) = if candidate_detail {
+        (candidate.detail.as_str(), candidate_style(candidate))
+    } else {
+        ("deleted", Style::new().dim())
+    };
+    print_entry(
+        style("⌫").red(),
+        &candidate.branch,
+        detail,
+        &detail_style,
+        column,
+    );
+}
+
+/// Print a branch that was offered for deletion but kept.
+pub fn print_kept(branch: &str, column: usize) {
+    print_entry(
+        style("·").dim(),
+        branch,
+        "kept",
+        &Style::new().dim(),
+        column,
+    );
+}
+
+fn candidate_style(candidate: &Candidate) -> Style {
+    if candidate.warn {
+        Style::new().yellow()
+    } else {
+        Style::new().dim()
     }
 }
 
