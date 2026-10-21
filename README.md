@@ -95,16 +95,15 @@ git mate finish feature/login       # finish a specific branch from anywhere
 
 Fetches all remotes and prunes stale remote-tracking references, then:
 
-- Fast-forwards other local branches whose upstream is still present
-- Resolves other local branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free; branches with conflicts or a dirty worktree are left untouched
+- Fast-forwards every local branch whose upstream is still present, including the current one
+- Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (or rebases the current branch with `--rebase` / `pull.rebase=true`); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
 - Auto-deletes local branches whose remote was deleted (if they have no unpushed commits and a clean working tree)
-- Pulls the current branch if an upstream is configured
-- Optionally merges the default branch into the current branch
+- Optionally merges the default branch into the current branch, when that is conflict-free
 
 ```bash
-git mate sync                       # fetch + prune, then pull
-git mate sync --rebase              # pull with --rebase
-git mate sync --ff-only             # pull with --ff-only (also skips diverged branches)
+git mate sync                       # fetch + prune, then bring every branch up to date
+git mate sync --rebase              # rebase the current branch instead of merging if it diverged
+git mate sync --ff-only             # only fast-forward; skip diverged branches
 git mate sync --diverged=skip       # leave diverged branches untouched (or: git config mate.divergedStrategy skip)
 git mate sync --merge               # also merge the default branch into the current branch
 git mate sync --no-merge            # skip auto-merge for this run

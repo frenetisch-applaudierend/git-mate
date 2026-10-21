@@ -156,6 +156,41 @@ impl BranchOutcome {
         )
     }
 
+    /// Only local commits on top of the upstream.
+    pub fn ahead(branch: &str, commits: usize) -> Self {
+        let plural = if commits == 1 { "" } else { "s" };
+        Self::new(
+            branch,
+            "up-to-date",
+            Some(&format!("ahead of upstream by {commits} commit{plural}")),
+            Group::Quiet,
+            format!("ahead, {commits} commit{plural} to push"),
+        )
+    }
+
+    pub fn rebased(branch: &str, dry_run: bool) -> Self {
+        let verb = if dry_run { "would rebase" } else { "rebased" };
+        Self::new(
+            branch,
+            "rebased",
+            Some("diverged; rebased onto upstream"),
+            Group::Updated,
+            format!("{verb} onto upstream"),
+        )
+    }
+
+    /// The default branch was merged into the current branch.
+    pub fn merged_default(branch: &str, default_branch: &str, dry_run: bool) -> Self {
+        let verb = if dry_run { "would merge" } else { "merged" };
+        Self::new(
+            branch,
+            "merged-default",
+            None,
+            Group::Updated,
+            format!("{verb} default branch '{default_branch}'"),
+        )
+    }
+
     /// Skipped for a reason the user should look at. `reason` goes into
     /// `--json`; `detail` is the shorter text shown in the report.
     pub fn needs_attention(branch: &str, reason: &str, detail: &str) -> Self {
@@ -339,7 +374,8 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
     match outcome.action.as_str() {
         "fast-forwarded" => (style("↠").green(), dim),
         "reset-to-upstream" => (style("↯").blue(), dim),
-        "merged" => (style("⇄").blue(), dim),
+        "merged" | "merged-default" => (style("⇄").blue(), dim),
+        "rebased" => (style("⤴").blue(), dim),
         "failed" => (style("✗").red().bold(), Style::new().red()),
         _ => match outcome.group {
             Group::Attention => (style("⚠").yellow(), Style::new()),
@@ -471,12 +507,18 @@ pub fn print_summary(outcomes: &[BranchOutcome], dry_run: bool) {
     } else {
         "to delete"
     };
-    let order: [(&str, &str, Style); 10] = [
+    let order: [(&str, &str, Style); 12] = [
         ("deleted", "deleted", Style::new().red()),
         ("deletion-candidate", to_delete, Style::new().red()),
         ("fast-forwarded", "fast-forwarded", Style::new().green()),
         ("reset-to-upstream", "reset", Style::new().blue()),
         ("merged", "merged", Style::new().blue()),
+        ("rebased", "rebased", Style::new().blue()),
+        (
+            "merged-default",
+            "merged default branch",
+            Style::new().blue(),
+        ),
         ("failed", "failed", Style::new().red()),
         ("skipped", "need attention", Style::new().yellow()),
         ("kept", "kept", Style::new().magenta()),

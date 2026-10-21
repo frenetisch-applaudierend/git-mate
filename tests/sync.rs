@@ -640,6 +640,267 @@ fn json_reports_merged_diverged_branch() {
     );
 }
 
+// --- the current branch is synced like any other ---
+
+/// Check out `branch`, which diverged from its upstream with the remote
+/// writing `remote_content` to the same file the local commit wrote.
+fn diverged_current_branch(setup: &common::RepoWithRemote, branch: &str, remote_content: &str) {
+    setup.push_branch_to_remote(branch);
+    setup.local_fetch();
+    setup.create_local_tracking_branch(branch);
+    setup.local_git(&["checkout", "-q", branch]);
+    commit_file(setup.local_path(), "shared.txt", "local", "local change");
+    let scratch = remote_scratch(setup, branch);
+    let name = if remote_content == "local" {
+        "remote.txt"
+    } else {
+        "shared.txt"
+    };
+    commit_file(scratch.path(), name, remote_content, "remote change");
+    common::git(scratch.path(), &["push", "-q"]);
+}
+
+fn git_path_exists(setup: &common::RepoWithRemote, path: &str) -> bool {
+    let out = Command::new("git")
+        .args(["rev-parse", "--git-path", path])
+        .current_dir(setup.local_path())
+        .output()
+        .unwrap();
+    let path = String::from_utf8(out.stdout).unwrap();
+    setup.local_path().join(path.trim()).exists()
+}
+
+#[test]
+fn merges_upstream_into_diverged_current_branch() {
+    let setup = common::RepoWithRemote::new();
+    // "local" makes the remote touch a different file: no conflict.
+    diverged_current_branch(&setup, "feature/cur", "local");
+    let before = setup.local_head_commit();
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry("feature/cur", "merged upstream"))
+        .stderr(predicates::str::contains("hint:").not());
+
+    let head = setup.local_head_commit();
+    assert_eq!(parent_count(setup.local_path(), &head), 2);
+    assert!(is_ancestor(setup.local_path(), &before, &head));
+    assert!(is_ancestor(setup.local_path(), "origin/feature/cur", &head));
+    assert!(setup.local_path().join("remote.txt").exists());
+}
+
+#[test]
+fn rebase_flag_rebases_diverged_current_branch() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "local");
+
+    common::git_mate()
+        .args(["sync", "--rebase"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry("feature/cur", "rebased onto upstream"));
+
+    let head = setup.local_head_commit();
+    assert_eq!(parent_count(setup.local_path(), &head), 1);
+    assert!(is_ancestor(setup.local_path(), "origin/feature/cur", &head));
+}
+
+#[test]
+fn diverged_current_branch_with_conflicts_needs_attention() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "remote");
+    let before = setup.local_head_commit();
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Needs attention"))
+        .stderr(entry(
+            "feature/cur",
+            "diverged, merging upstream would conflict",
+        ))
+        .stderr(predicates::str::contains("resolve with: git pull"))
+        .stderr(predicates::str::contains("1 need attention"));
+
+    assert_eq!(setup.local_head_commit(), before);
+    assert!(!git_path_exists(&setup, "MERGE_HEAD"));
+}
+
+#[test]
+fn rebase_with_conflicts_is_aborted() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "remote");
+    let before = setup.local_head_commit();
+
+    common::git_mate()
+        .args(["sync", "--rebase"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry(
+            "feature/cur",
+            "diverged, rebasing onto upstream would conflict",
+        ))
+        .stderr(predicates::str::contains("resolve with: git pull --rebase"));
+
+    assert_eq!(setup.local_head_commit(), before);
+    assert_eq!(setup.local_current_branch(), "feature/cur");
+    assert!(!git_path_exists(&setup, "rebase-merge"));
+    assert!(!git_path_exists(&setup, "rebase-apply"));
+}
+
+#[test]
+fn pull_rebase_config_rebases_diverged_current_branch() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "local");
+    setup.local_git(&["config", "pull.rebase", "true"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry("feature/cur", "rebased onto upstream"));
+}
+
+#[test]
+fn diverged_current_branch_with_uncommitted_changes_needs_attention() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "local");
+    std::fs::write(setup.local_path().join("shared.txt"), "uncommitted").unwrap();
+    let before = setup.local_head_commit();
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry(
+            "feature/cur",
+            "diverged, but worktree has uncommitted changes",
+        ))
+        .stderr(predicates::str::contains("commit or stash, then: git pull"));
+
+    assert_eq!(setup.local_head_commit(), before);
+    assert_eq!(
+        std::fs::read_to_string(setup.local_path().join("shared.txt")).unwrap(),
+        "uncommitted"
+    );
+}
+
+#[test]
+fn current_branch_blocked_by_uncommitted_changes_needs_attention() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_file_commit_to_remote("clash.txt", "remote", "add clash.txt");
+    std::fs::write(setup.local_path().join("clash.txt"), "local").unwrap();
+    let before = setup.local_head_commit();
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry("main", "could not fast-forward: "))
+        .stderr(predicates::str::contains("commit or stash, then: git pull"));
+
+    assert_eq!(setup.local_head_commit(), before);
+}
+
+#[test]
+fn json_reports_current_branch_needing_attention() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "remote");
+
+    let output = common::git_mate()
+        .args(["--json", "sync"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["data"]["currentBranch"]["pulled"], false);
+    assert_eq!(
+        json["data"]["currentBranch"]["pullSkippedReason"],
+        "diverged with conflicts"
+    );
+    let branches = json["data"]["branches"].as_array().unwrap();
+    assert!(
+        branches
+            .iter()
+            .any(|b| b["branch"] == "feature/cur" && b["action"] == "skipped"),
+        "unexpected branches: {branches:?}"
+    );
+}
+
+#[test]
+fn branch_ahead_of_upstream_is_left_alone() {
+    let setup = common::RepoWithRemote::new();
+    prepare_feature_branch(&setup, "feature/ahead");
+    setup.local_git(&["commit", "--allow-empty", "-m", "unpushed"]);
+    let before = setup.local_head_commit();
+    setup.local_git(&["checkout", "-q", "main"]);
+    setup.local_git(&["checkout", "-q", "-b", "other"]);
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("merged").not());
+
+    assert_eq!(setup.branch_tip("feature/ahead"), before);
+}
+
+#[test]
+fn current_branch_ahead_of_upstream_is_left_alone() {
+    let setup = common::RepoWithRemote::new();
+    setup.local_git(&["commit", "--allow-empty", "-m", "unpushed"]);
+    let before = setup.local_head_commit();
+
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Already up to date."));
+
+    assert_eq!(setup.local_head_commit(), before);
+}
+
+#[test]
+fn conflicting_auto_merge_needs_attention_and_leaves_branch_untouched() {
+    let setup = common::RepoWithRemote::new();
+    prepare_feature_branch(&setup, "feature/clash");
+    commit_file(
+        setup.local_path(),
+        "shared.txt",
+        "feature",
+        "feature change",
+    );
+    setup.local_git(&["push", "-q"]);
+    let before = setup.local_head_commit();
+    setup.push_file_commit_to_remote("shared.txt", "main", "main change");
+
+    common::git_mate()
+        .args(["sync", "--merge"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .stderr(entry("feature/clash", "merging main would conflict"))
+        .stderr(predicates::str::contains("resolve with: git merge main"));
+
+    assert_eq!(setup.local_head_commit(), before);
+    assert!(!git_path_exists(&setup, "MERGE_HEAD"));
+}
+
 // --- a single branch's error must not abort the rest of the run ---
 
 #[test]
@@ -686,9 +947,13 @@ fn branch_failure_does_not_abort_remaining_branches() {
         .current_dir(setup.local_path())
         .assert()
         .success()
-        .stderr(entry("feature/broken", "failed: "))
+        .stderr(entry("feature/broken", "could not fast-forward: "))
+        .stderr(predicates::str::contains(format!(
+            "worktree: {}",
+            wt_dir.path().display()
+        )))
         .stderr(entry("feature/ok", "fast-forwarded"))
-        .stderr(predicates::str::contains("1 failed"));
+        .stderr(predicates::str::contains("1 need attention"));
 
     assert_eq!(
         setup.branch_tip("feature/ok"),
@@ -1220,7 +1485,7 @@ fn dry_run_does_not_pull_or_fast_forward() {
         .assert()
         .success()
         .stderr(entry("feature/ff", "would fast-forward"))
-        .stderr(predicates::str::contains("would pull"));
+        .stderr(entry("main", "would fast-forward"));
 
     assert_eq!(
         setup.branch_tip("feature/ff"),

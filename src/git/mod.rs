@@ -9,17 +9,17 @@ mod worktree;
 pub use branch::{
     checkout, checkout_in, checkout_new_in, current_branch, delete_branch_force_in,
     detect_default_branch, ensure_branch_allowed_in_linked_worktree, has_unpushed_commits,
-    is_valid_branch_name, list_local_branches_with_upstream, local_branch_for_ref, merge,
+    is_valid_branch_name, list_local_branches_with_upstream, local_branch_for_ref,
     merge_ff_only_in, stash_pop_in, stash_push_in, unset_upstream,
 };
 pub use merge::{
     MergedAt, commit_tree, content_merged_into, merge_no_edit_in, merge_tree, patches_already_in,
-    reset_hard_in,
+    rebase_in, reset_hard_in,
 };
 pub use refs::{
     commit_summary, count_commits, is_ancestor, resolve_ref, update_ref, update_ref_from,
 };
-pub use remote::{fetch, fetch_all, list_remote_tracking_refs, pull};
+pub use remote::{fetch, fetch_all, list_remote_tracking_refs};
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
     OperationTarget, WorktreeEntry, add_worktree, current_worktree_root, find_main_worktree,

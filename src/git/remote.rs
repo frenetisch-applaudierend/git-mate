@@ -16,9 +16,3 @@ pub fn fetch(remote: &str) -> Result<(), String> {
 pub fn fetch_all() -> Result<(), String> {
     run(&["fetch", "--all", "--prune"])
 }
-
-pub fn pull(extra_args: &[&str]) -> Result<(), String> {
-    let mut args = vec!["pull"];
-    args.extend_from_slice(extra_args);
-    run(&args)
-}

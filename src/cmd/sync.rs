@@ -5,17 +5,18 @@ use super::sync_report::{self as report, BranchOutcome, Candidate, Hint};
     about = "Fetch and merge the latest changes",
     long_about = "Fetch the latest changes from all remotes and bring your local repository up to date.
 
-Fetches all remotes, fast-forwards local branches that haven't diverged from their
-upstream, and pulls the current branch. Use --rebase or --ff-only to control how the
-pull is applied.
+Fetches all remotes and fast-forwards every local branch that hasn't diverged from
+its upstream, including the current one.
 
-Other local branches that have diverged from their upstream are resolved instead of
-skipped. If the remote was rewritten (e.g. rebased and force-pushed) and the local
+Branches that have diverged from their upstream are resolved instead of skipped. If the remote was rewritten (e.g. rebased and force-pushed) and the local
 branch has no work of its own, it is reset to the upstream; the previous tip is printed
 and kept in the reflog. If the local branch does have its own commits, the upstream is
 merged into it — but only when that merge is conflict-free; otherwise the branch is
 left untouched. Pass --diverged=skip (or set mate.divergedStrategy=skip, or use
---ff-only) to skip diverged branches instead.
+--ff-only) to skip diverged branches instead. Pass --rebase (or set pull.rebase=true)
+to rebase the current branch onto its upstream instead of merging. A branch whose
+working tree has uncommitted changes in the way, or whose rebase would conflict, is
+left as it was and listed under \"Needs attention\".
 
 When a remote branch is deleted — typically after a PR is merged — sync lists every
 local branch (and worktree) left without a remote and asks once whether to delete all
@@ -29,16 +30,19 @@ candidates). Branches you keep stop tracking their deleted upstream, so they are
 offered again.
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
-branch into the current branch after pulling, keeping feature branches up to date
-with main.
+branch into the current branch after syncing it, keeping feature branches up to date
+with main. The merge only happens when it is conflict-free.
 
 Pass --dry-run to preview what sync would do (fast-forwards, deletion candidates,
 pull, auto-merge) without changing anything or prompting."
 )]
 pub struct SyncArgs {
-    #[arg(long, help = "Pull with --rebase")]
+    #[arg(
+        long,
+        help = "Rebase the current branch onto its upstream if it diverged"
+    )]
     pub rebase: bool,
-    #[arg(long, help = "Pull with --ff-only")]
+    #[arg(long, help = "Only fast-forward; skip diverged branches")]
     pub ff_only: bool,
     #[arg(
         long,
@@ -66,12 +70,12 @@ pub struct SyncArgs {
     #[arg(
         long,
         value_enum,
-        help = "How to handle other branches that diverged from their upstream [default: merge]"
+        help = "How to handle branches that diverged from their upstream [default: merge]"
     )]
     pub diverged: Option<DivergedStrategy>,
 }
 
-/// How to bring a diverged non-current branch back in line with its upstream.
+/// How to bring a diverged branch back in line with its upstream.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DivergedStrategy {
     /// Reset to a rewritten upstream when nothing local would be lost,
@@ -108,6 +112,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     let dry_run = args.dry_run;
     let mut branch_outcomes: Vec<BranchOutcome> = Vec::new();
     let diverged_strategy = diverged_strategy(&args)?;
+    let rebase_current = rebase_current(&args);
 
     let progress = report::Progress::new(json);
 
@@ -222,28 +227,50 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
                 &mut branch_outcomes,
                 &mut deletion_candidates,
             );
-        } else if !is_current {
+        } else {
             // Remote still exists — try to fast-forward, resolving divergence
-            // according to the configured strategy. A failure here (e.g. a
-            // fast-forward merge conflict) is specific to this branch — report
-            // it and move on rather than aborting the remaining branches.
+            // according to the configured strategy. The current branch is
+            // treated like any other: it is checked out in a worktree, so the
+            // worktree-aware paths apply. A failure here (e.g. a fast-forward
+            // merge conflict) is specific to this branch — report it and move
+            // on rather than aborting the remaining branches.
             let upstream_before = branches_before
                 .iter()
                 .find(|(b, _, _)| b == branch)
                 .and_then(|(_, _, upstream_sha)| upstream_sha.as_deref());
-            match fast_forward_branch(
+            let target = SyncTarget {
                 branch,
                 upstream,
                 upstream_before,
-                &worktrees,
-                diverged_strategy,
-                dry_run,
-            ) {
+                is_current,
+                rebase: is_current && rebase_current,
+            };
+            match fast_forward_branch(&target, &worktrees, diverged_strategy, dry_run) {
                 Ok(outcome) => branch_outcomes.push(outcome),
                 Err(e) => branch_outcomes.push(BranchOutcome::failed(branch, &e)),
             }
         }
-        // Current branch with live upstream is handled by pull below.
+    }
+
+    // 5. Merge the default branch into the current branch, if enabled. This
+    //    happens before the report so its outcome is listed with the rest.
+    let mut merge_skipped_reason = None;
+    let mut merge_skipped_note = None;
+    let mut merged_default = false;
+    if !current_branch_pruned && auto_merge_enabled(&args)? {
+        match merge_default_branch(current_branch.as_deref(), current_wt.as_deref(), dry_run) {
+            DefaultMerge::Done(outcome) => {
+                merged_default = outcome.action == "merged-default";
+                if !merged_default {
+                    merge_skipped_reason = outcome.reason.clone();
+                }
+                branch_outcomes.push(outcome);
+            }
+            DefaultMerge::Skipped(reason) => {
+                merge_skipped_note = Some(reason.clone());
+                merge_skipped_reason = Some(reason);
+            }
+        }
     }
     progress.clear();
 
@@ -285,75 +312,44 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         report::print_summary(&branch_outcomes, dry_run);
     }
 
-    // 5. Pull the current branch (if it still has an upstream).
-    if current_branch_pruned {
-        if json {
-            crate::output::emit_json_success(
-                "sync",
-                SyncData {
-                    dry_run,
-                    branches: branch_outcomes,
-                    current_branch: CurrentBranchOutcome {
-                        name: current_branch,
-                        pulled: false,
-                        pull_skipped_reason: Some(
-                            "current branch's upstream was deleted".to_string(),
-                        ),
-                        merged_default: false,
-                        merge_skipped_reason: None,
-                    },
-                },
-            );
-        } else {
-            crate::output::success(final_status_message(
-                any_branch_action_taken(&branch_outcomes),
-                dry_run,
-            ));
-        }
-        return Ok(());
-    }
-
-    let auto_merge = auto_merge_enabled(&args)?;
-    let has_upstream = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    let mut synced_current_branch = false;
-    let mut pull_skipped_reason = None;
-    if !has_upstream {
-        crate::output::info("No upstream configured for current branch, skipping pull.");
-        pull_skipped_reason = Some("no upstream configured for current branch".to_string());
+    let current_outcome = current_branch
+        .as_deref()
+        .and_then(|name| branch_outcomes.iter().find(|o| o.branch == name));
+    let (pulled, pull_skipped_reason) = if current_branch_pruned {
+        (
+            false,
+            Some("current branch's upstream was deleted".to_string()),
+        )
     } else {
-        let mut extra_flags = vec![];
-        if args.rebase {
-            extra_flags.push("--rebase");
+        match current_outcome {
+            Some(o) if is_synced(o) => (true, None),
+            Some(o) if o.action == "no-upstream" => (
+                false,
+                Some("no upstream configured for current branch".to_string()),
+            ),
+            Some(o) => (false, o.reason.clone()),
+            None => (
+                false,
+                Some("no upstream configured for current branch".to_string()),
+            ),
         }
-        if args.ff_only {
-            extra_flags.push("--ff-only");
-        }
-        if dry_run {
-            crate::output::info(&format!(
-                "{}: would pull",
-                current_branch.as_deref().unwrap_or("current branch")
-            ));
-        } else {
-            crate::git::pull(&extra_flags)?;
-        }
-        synced_current_branch = true;
-    }
-
-    let (merged_default, merge_skipped_reason) = if auto_merge {
-        merge_default_branch(current_branch.as_deref(), dry_run)?
-    } else {
-        (false, None)
     };
 
     if !json {
-        let any_work =
-            synced_current_branch || merged_default || any_branch_action_taken(&branch_outcomes);
-        crate::output::success(final_status_message(any_work, dry_run));
+        if !current_branch_pruned && current_outcome.is_none_or(|o| o.action == "no-upstream") {
+            crate::output::info("No upstream configured for current branch, skipping sync.");
+        }
+        if let Some(reason) = &merge_skipped_note {
+            crate::output::info(&format!("Skipping auto-merge: {reason}."));
+        }
+        let any_work = any_branch_action_taken(&branch_outcomes);
+        // "Already up to date" would contradict a "Needs attention" entry.
+        let needs_attention = branch_outcomes
+            .iter()
+            .any(|o| o.group == report::Group::Attention);
+        if any_work || !needs_attention {
+            crate::output::success(final_status_message(any_work, dry_run));
+        }
     }
 
     if json {
@@ -364,7 +360,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
                 branches: branch_outcomes,
                 current_branch: CurrentBranchOutcome {
                     name: current_branch,
-                    pulled: synced_current_branch,
+                    pulled,
                     pull_skipped_reason,
                     merged_default,
                     merge_skipped_reason,
@@ -376,6 +372,15 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether a branch is in line with its upstream after this run (or, under
+/// `--dry-run`, would be).
+fn is_synced(outcome: &BranchOutcome) -> bool {
+    matches!(
+        outcome.action.as_str(),
+        "up-to-date" | "fast-forwarded" | "reset-to-upstream" | "merged" | "rebased"
+    )
+}
+
 /// Whether any branch was actually (or, under `--dry-run`, would be) changed
 /// during this run. Used to pick the final status message: the old logic
 /// based this solely on the current branch's own pull/merge, so a run that
@@ -385,7 +390,13 @@ fn any_branch_action_taken(outcomes: &[BranchOutcome]) -> bool {
     outcomes.iter().any(|o| {
         matches!(
             o.action.as_str(),
-            "fast-forwarded" | "reset-to-upstream" | "merged" | "deleted" | "deletion-candidate"
+            "fast-forwarded"
+                | "reset-to-upstream"
+                | "merged"
+                | "rebased"
+                | "merged-default"
+                | "deleted"
+                | "deletion-candidate"
         )
     })
 }
@@ -421,6 +432,16 @@ fn diverged_strategy(args: &SyncArgs) -> Result<DivergedStrategy, String> {
     })
 }
 
+/// Whether a diverged current branch is rebased rather than merged:
+/// `--rebase`, or `pull.rebase` set to anything but false (as `git pull`
+/// would).
+fn rebase_current(args: &SyncArgs) -> bool {
+    args.rebase
+        || crate::git::config::read_string("pull.rebase").is_some_and(|value| {
+            !matches!(value.to_lowercase().as_str(), "false" | "no" | "off" | "0")
+        })
+}
+
 fn auto_merge_enabled(args: &SyncArgs) -> Result<bool, String> {
     if args.merge {
         return Ok(true);
@@ -441,45 +462,71 @@ fn auto_merge_enabled(args: &SyncArgs) -> Result<bool, String> {
     }
 }
 
-/// Returns (merged, skip_reason). `skip_reason` is set whenever `merged` is
-/// `false`, describing why auto-merge did not happen.
+enum DefaultMerge {
+    /// Merged, or (for a reason the user should look at) not merged.
+    Done(BranchOutcome),
+    /// Not applicable, e.g. the current branch is the default branch.
+    Skipped(String),
+}
+
+/// Merge the default branch into the current branch, but only if that is
+/// conflict-free; otherwise nothing is touched and the branch is reported
+/// as needing attention.
 fn merge_default_branch(
     current_branch: Option<&str>,
+    current_wt: Option<&std::path::Path>,
     dry_run: bool,
-) -> Result<(bool, Option<String>), String> {
+) -> DefaultMerge {
     let Some(current_branch) = current_branch else {
-        crate::output::info("Could not determine current branch, skipping auto-merge.");
-        return Ok((
-            false,
-            Some("could not determine current branch".to_string()),
-        ));
+        return DefaultMerge::Skipped("could not determine current branch".to_string());
     };
     if current_branch == "HEAD" {
-        crate::output::info("Detached HEAD, skipping auto-merge.");
-        return Ok((false, Some("detached HEAD".to_string())));
+        return DefaultMerge::Skipped("detached HEAD".to_string());
     }
-
-    let default_branch = crate::git::detect_default_branch(false)?;
+    let Ok(default_branch) = crate::git::detect_default_branch(false) else {
+        return DefaultMerge::Skipped("could not detect the default branch".to_string());
+    };
     if current_branch == default_branch {
-        crate::output::info("Current branch is the default branch, skipping auto-merge.");
-        return Ok((
-            false,
-            Some("current branch is the default branch".to_string()),
-        ));
+        return DefaultMerge::Skipped("current branch is the default branch".to_string());
+    }
+    let Some(path) = current_wt.and_then(|p| p.to_str()) else {
+        return DefaultMerge::Skipped("could not determine the current worktree".to_string());
+    };
+
+    let resolve_hint = || Hint::new("resolve with", format!("git merge {default_branch}"));
+    let conflicts = match crate::git::merge_tree("HEAD", &default_branch) {
+        Ok(tree) => tree.is_none(),
+        Err(e) => {
+            return DefaultMerge::Done(BranchOutcome::failed(current_branch, &e));
+        }
+    };
+    if conflicts {
+        return DefaultMerge::Done(
+            BranchOutcome::needs_attention(
+                current_branch,
+                &format!("merging default branch '{default_branch}' would conflict"),
+                &format!("merging {default_branch} would conflict"),
+            )
+            .with_hint(resolve_hint()),
+        );
     }
 
-    if dry_run {
-        crate::output::info(&format!(
-            "{current_branch}: would merge default branch '{default_branch}'"
-        ));
-        return Ok((true, None));
+    if !dry_run && let Err(e) = crate::git::merge_no_edit_in(path, &default_branch) {
+        let first_line = e.lines().next().unwrap_or(&e).to_string();
+        return DefaultMerge::Done(
+            BranchOutcome::needs_attention(
+                current_branch,
+                &format!("could not merge default branch '{default_branch}': {e}"),
+                &format!("could not merge {default_branch}: {first_line}"),
+            )
+            .with_hint(resolve_hint()),
+        );
     }
-
-    crate::git::merge(&["--no-edit", &default_branch])?;
-    crate::output::info(&format!(
-        "{current_branch}: merged default branch '{default_branch}'"
-    ));
-    Ok((true, None))
+    DefaultMerge::Done(BranchOutcome::merged_default(
+        current_branch,
+        &default_branch,
+        dry_run,
+    ))
 }
 
 /// Returns (branch, local_sha, upstream_sha) for every local branch that has an upstream.
@@ -500,14 +547,51 @@ fn snapshot_branch_upstreams() -> Vec<(String, Option<String>, Option<String>)> 
         .collect()
 }
 
+/// A branch whose upstream still exists, to bring in line with it.
+struct SyncTarget<'a> {
+    branch: &'a str,
+    upstream: &'a str,
+    /// The upstream's tip before this sync fetched.
+    upstream_before: Option<&'a str>,
+    /// The branch `sync` was run from.
+    is_current: bool,
+    /// Rebase onto the upstream instead of merging it when diverged.
+    rebase: bool,
+}
+
+impl SyncTarget<'_> {
+    /// The command that finishes what sync could not, from where the user is.
+    fn pull_command(&self) -> String {
+        let pull = if self.rebase {
+            "git pull --rebase"
+        } else {
+            "git pull"
+        };
+        if self.is_current {
+            pull.to_string()
+        } else {
+            format!("git checkout {} && {pull}", self.branch)
+        }
+    }
+
+    /// Uncommitted changes are in the way: point at them.
+    fn dirty_hint(&self, worktree: &str) -> Hint {
+        if self.is_current {
+            Hint::new("commit or stash, then", self.pull_command())
+        } else {
+            Hint::new("worktree", worktree)
+        }
+    }
+}
+
 fn fast_forward_branch(
-    branch: &str,
-    upstream: &str,
-    upstream_before: Option<&str>,
+    target: &SyncTarget,
     worktrees: &[crate::git::WorktreeEntry],
     diverged_strategy: DivergedStrategy,
     dry_run: bool,
 ) -> Result<BranchOutcome, String> {
+    let branch = target.branch;
+    let upstream = target.upstream;
     let local_sha = match crate::git::resolve_ref(branch) {
         Ok(sha) => sha,
         Err(_) => {
@@ -528,13 +612,16 @@ fn fast_forward_branch(
     if local_sha == remote_sha {
         return Ok(BranchOutcome::up_to_date(branch));
     }
+    if crate::git::is_ancestor(&remote_sha, &local_sha)? {
+        // Only local commits on top of the upstream: nothing to bring in.
+        let commits = crate::git::count_commits(&remote_sha, &local_sha)?;
+        return Ok(BranchOutcome::ahead(branch, commits));
+    }
     if !crate::git::is_ancestor(&local_sha, &remote_sha)? {
         return resolve_diverged_branch(
-            branch,
-            upstream,
+            target,
             &local_sha,
             &remote_sha,
-            upstream_before,
             worktrees,
             diverged_strategy,
             dry_run,
@@ -552,31 +639,41 @@ fn fast_forward_branch(
     // report phantom modifications there.
     if let Some(wt) = crate::git::worktree_for_branch(branch, worktrees) {
         let path = wt.path.to_str().ok_or("worktree path is not valid UTF-8")?;
-        crate::git::merge_ff_only_in(path, upstream)?;
+        if let Err(e) = crate::git::merge_ff_only_in(path, upstream) {
+            // Typically uncommitted changes the upstream would overwrite.
+            // Nothing was changed, so this is for the user to sort out.
+            let first_line = e.lines().next().unwrap_or(&e).to_string();
+            return Ok(BranchOutcome::needs_attention(
+                branch,
+                &format!("could not fast-forward: {e}"),
+                &format!("could not fast-forward: {first_line}"),
+            )
+            .with_hint(target.dirty_hint(path)));
+        }
     } else {
         crate::git::update_ref(&format!("refs/heads/{branch}"), &remote_sha)?;
     }
     Ok(BranchOutcome::fast_forwarded(branch, commits, false))
 }
 
-/// Bring a branch that diverged from its upstream back in line without
+/// Bring a branch that diverged from its upstream back in line, without
 /// checking it out. If the local branch has no work of its own — it was at or
 /// behind the upstream before fetching (the remote was rewritten), or all its
 /// patches are already upstream — it is reset to the upstream. Otherwise the
-/// upstream is merged in, but only if the merge is conflict-free; a branch is
-/// never left half-merged.
-#[allow(clippy::too_many_arguments)]
+/// current branch is rebased onto the upstream if asked to, and any other
+/// branch has the upstream merged in, but only if the merge is conflict-free.
+/// A branch is never left half-merged or half-rebased.
 fn resolve_diverged_branch(
-    branch: &str,
-    upstream: &str,
+    target: &SyncTarget,
     local_sha: &str,
     remote_sha: &str,
-    upstream_before: Option<&str>,
     worktrees: &[crate::git::WorktreeEntry],
     diverged_strategy: DivergedStrategy,
     dry_run: bool,
 ) -> Result<BranchOutcome, String> {
-    let resolve_hint = || Hint::new("resolve with", format!("git checkout {branch} && git pull"));
+    let branch = target.branch;
+    let upstream = target.upstream;
+    let resolve_hint = || Hint::new("resolve with", target.pull_command());
 
     if diverged_strategy == DivergedStrategy::Skip {
         return Ok(BranchOutcome::needs_attention(
@@ -604,10 +701,10 @@ fn resolve_diverged_branch(
             "diverged but working tree is dirty",
             "diverged, but worktree has uncommitted changes",
         )
-        .with_hint(Hint::new("worktree", path.clone())));
+        .with_hint(target.dirty_hint(path)));
     }
 
-    let no_local_work = match upstream_before {
+    let no_local_work = match target.upstream_before {
         Some(before) => crate::git::is_ancestor(local_sha, before)?,
         None => false,
     } || crate::git::patches_already_in(remote_sha, local_sha)?;
@@ -632,6 +729,23 @@ fn resolve_diverged_branch(
             previous_tip,
             false,
         ));
+    }
+
+    if target.rebase
+        && let Some(path) = &worktree_path
+    {
+        if dry_run {
+            return Ok(BranchOutcome::rebased(branch, true));
+        }
+        if crate::git::rebase_in(path, upstream).is_err() {
+            return Ok(BranchOutcome::needs_attention(
+                branch,
+                "diverged with conflicts; rebase aborted",
+                "diverged, rebasing onto upstream would conflict",
+            )
+            .with_hint(resolve_hint()));
+        }
+        return Ok(BranchOutcome::rebased(branch, false));
     }
 
     let Some(tree) = crate::git::merge_tree(local_sha, remote_sha)? else {
