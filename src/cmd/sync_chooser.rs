@@ -54,7 +54,19 @@ impl Selection {
     }
 }
 
-/// The chooser's rows on screen, redrawn as a whole on every change.
+/// What the board shows: a row being chosen, a row being applied, or every
+/// row once all is done.
+#[derive(Clone, Copy)]
+enum View {
+    Choosing(usize),
+    Applying(usize),
+    Done,
+}
+
+/// The chooser's rows on screen, redrawn as a whole on every change. While
+/// choosing or applying, a board taller than the terminal shows a window of
+/// rows around the one in focus, since redrawing what scrolled off is not
+/// possible; once done, every row is printed.
 struct Board<'a> {
     term: &'a Term,
     candidates: &'a [Candidate],
@@ -62,17 +74,23 @@ struct Board<'a> {
     detail_column: usize,
     /// Terminal lines drawn last time, to move back over.
     drawn: usize,
+    /// The first row in the window, kept while the focus stays inside it.
+    first: usize,
 }
 
 impl Board<'_> {
-    /// The rows, plus the key help while `focus` marks a row being chosen.
-    fn lines(&self, rows: &[DecisionRow], focus: Option<usize>) -> Vec<String> {
-        let mut lines: Vec<String> = self
+    fn lines(&mut self, rows: &[DecisionRow], view: View) -> Vec<String> {
+        let (anchor, focus) = match view {
+            View::Choosing(i) => (Some(i), Some(i)),
+            View::Applying(i) => (Some(i), None),
+            View::Done => (None, None),
+        };
+        let row_lines: Vec<Vec<String>> = self
             .candidates
             .iter()
             .zip(rows)
             .enumerate()
-            .flat_map(|(i, (candidate, row))| {
+            .map(|(i, (candidate, row))| {
                 report::decision_lines(
                     candidate,
                     row,
@@ -82,11 +100,44 @@ impl Board<'_> {
                 )
             })
             .collect();
-        if focus.is_some() {
-            lines.push(String::new());
-            lines.push(format!("   {}", style(HELP).dim()));
+        let footer = match focus {
+            Some(_) => vec![String::new(), format!("   {}", style(HELP).dim())],
+            None => Vec::new(),
+        };
+
+        let heights: Vec<usize> = row_lines.iter().map(|l| self.height(l)).collect();
+        // One line to spare, so the cursor below the board never scrolls
+        // its top off screen.
+        let budget = (self.term.size().0 as usize).saturating_sub(1);
+        let fixed = self.height(&footer);
+        let Some(anchor) = anchor.filter(|_| heights.iter().sum::<usize>() + fixed > budget) else {
+            return row_lines.into_iter().flatten().chain(footer).collect();
+        };
+
+        // Two lines for the "more above / below" markers.
+        let room = budget.saturating_sub(fixed + 2).max(heights[anchor]);
+        let span = |from: usize, to: usize| heights[from..to].iter().sum::<usize>();
+        self.first = self.first.min(anchor);
+        while self.first < anchor && span(self.first, anchor + 1) > room {
+            self.first += 1;
         }
-        lines
+        let mut end = anchor + 1;
+        while end < heights.len() && span(self.first, end + 1) <= room {
+            end += 1;
+        }
+        while self.first > 0 && span(self.first - 1, end) <= room {
+            self.first -= 1;
+        }
+
+        let more = |n: usize, arrow: &str| match n {
+            0 => String::new(),
+            n => format!("   {}", style(format!("{arrow} {n} more")).dim()),
+        };
+        std::iter::once(more(self.first, "↑"))
+            .chain(row_lines[self.first..end].iter().flatten().cloned())
+            .chain(std::iter::once(more(heights.len() - end, "↓")))
+            .chain(footer)
+            .collect()
     }
 
     /// Terminal lines `lines` take up, counting the ones that wrap.
@@ -98,8 +149,8 @@ impl Board<'_> {
             .sum()
     }
 
-    fn draw(&mut self, rows: &[DecisionRow], focus: Option<usize>) {
-        let lines = self.lines(rows, focus);
+    fn draw(&mut self, rows: &[DecisionRow], view: View) {
+        let lines = self.lines(rows, view);
         if self.drawn > 0 {
             let _ = self.term.move_cursor_up(self.drawn);
             let _ = self.term.clear_to_end_of_screen();
@@ -132,8 +183,7 @@ impl Drop for HiddenCursor<'_> {
 /// leaves every branch as it is.
 ///
 /// Returns `None` without printing anything when there is no terminal to
-/// interact with, or when the rows would not fit on screen (redrawing them
-/// would scroll); the caller then falls back to a line prompt.
+/// interact with.
 pub fn resolve(
     candidates: &[Candidate],
     column: usize,
@@ -152,17 +202,13 @@ pub fn resolve(
         column,
         detail_column: report::detail_column(candidates),
         drawn: 0,
+        first: 0,
     };
-    // The title and its blank line sit above the board.
-    let needed = board.height(&board.lines(&selection.rows(), Some(0))) + 2;
-    if needed >= term.size().0 as usize {
-        return None;
-    }
 
     report::print_title("Remote gone");
     let cursor = HiddenCursor::new(&term);
     let step = loop {
-        board.draw(&selection.rows(), Some(selection.focus));
+        board.draw(&selection.rows(), View::Choosing(selection.focus));
         match term.read_key_raw() {
             Ok(key) => match selection.handle(&key) {
                 Step::Continue => {}
@@ -176,7 +222,7 @@ pub fn resolve(
 
     if step == Step::Cancel {
         let rows = vec![DecisionRow::Left; candidates.len()];
-        board.draw(&rows, None);
+        board.draw(&rows, View::Done);
         return Some(rows);
     }
 
@@ -184,10 +230,10 @@ pub fn resolve(
     for (i, candidate) in candidates.iter().enumerate() {
         let choice = selection.choices[i];
         rows[i] = DecisionRow::Applying(choice);
-        board.draw(&rows, None);
+        board.draw(&rows, View::Applying(i));
         rows[i] = apply(candidate, choice);
     }
-    board.draw(&rows, None);
+    board.draw(&rows, View::Done);
     Some(rows)
 }
 

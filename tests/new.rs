@@ -1,6 +1,5 @@
 mod common;
 
-use predicates::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -58,12 +57,15 @@ fn no_default_branch() {
     let sha = repo.head_commit();
     repo.git(&["checkout", "--detach", &sha]);
     repo.git(&["branch", "-D", "main"]);
-    common::git_mate()
-        .args(["new", "feat/x"])
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/x"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--from"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["--from"]);
 }
 
 #[test]
@@ -329,24 +331,44 @@ fn worktree_mode_invalid_branch_name_fails() {
         wt_root.path().to_str().unwrap(),
     ]);
 
-    common::git_mate()
-        .args(["new", "../evil", "--linked-worktree", "--from", "main"])
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "new",
+            "../evil",
+            "--linked-worktree",
+            "--from",
+            "main",
+        ])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("invalid branch name"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["invalid branch name"]);
 }
 
 #[test]
 fn worktree_mode_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
-    common::git_mate()
-        .args(["new", "feat/x", "--linked-worktree", "--from", "main"])
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "new",
+            "feat/x",
+            "--linked-worktree",
+            "--from",
+            "main",
+        ])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.worktreeRoot"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["mate.worktreeRoot"]);
 }
 
 #[test]
@@ -354,12 +376,15 @@ fn invalid_default_branch_mode_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["config", "mate.defaultBranchMode", "banana"]);
 
-    common::git_mate()
-        .args(["new", "feat/x", "--from", "main"])
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/x", "--from", "main"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.defaultBranchMode"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["mate.defaultBranchMode"]);
 }
 
 #[test]
@@ -426,13 +451,15 @@ fn worktree_mode_rejects_default_branch() {
     setup.local_git(&["checkout", "-b", "feature/current"]);
     setup.local_git(&["branch", "-D", "main"]);
 
-    common::git_mate()
-        .args(["new", "main"])
+    let output = common::git_mate()
+        .args(["--json", "new", "main"])
         .current_dir(setup.local_path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("default branch"))
-        .stderr(predicate::str::contains("main worktree"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["default branch", "main worktree"]);
 
     let repo_name = setup.local_path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("main");
@@ -493,13 +520,22 @@ fn worktree_mode_requires_decision_for_dirty_starting_branch_in_other_worktree()
 
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["new", "feat/dirty", "--linked-worktree", "--from", "main"])
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "new",
+            "feat/dirty",
+            "--linked-worktree",
+            "--from",
+            "main",
+        ])
         .current_dir(&linked_wt)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--take-changes"))
-        .stderr(predicate::str::contains("--start-fresh"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["--take-changes", "--start-fresh"]);
     assert_eq!(
         std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
         "changed\n"
@@ -622,8 +658,9 @@ fn main_worktree_mode_rejects_start_fresh_when_destination_is_dirty() {
     repo.git(&["branch", "branch-b"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
+    let output = common::git_mate()
         .args([
+            "--json",
             "new",
             "feat/no-ignore",
             "--main-worktree",
@@ -634,7 +671,10 @@ fn main_worktree_mode_rejects_start_fresh_when_destination_is_dirty() {
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("cannot use --start-fresh"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["cannot use --start-fresh"]);
 }
 
 #[test]
@@ -762,12 +802,22 @@ fn main_worktree_mode_requires_take_changes_for_dirty_unrelated_branch() {
     repo.git(&["checkout", "-b", "feat/old"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["new", "feat/x", "--main-worktree", "--from", "main"])
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "new",
+            "feat/x",
+            "--main-worktree",
+            "--from",
+            "main",
+        ])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--take-changes"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["--take-changes"]);
     assert_eq!(repo.current_branch(), "feat/old");
 }
 
@@ -779,12 +829,21 @@ fn main_worktree_mode_rejects_start_fresh_in_place() {
     repo.git(&["commit", "-m", "add tracked file"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["new", "feat/x", "--main-worktree", "--start-fresh"])
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "new",
+            "feat/x",
+            "--main-worktree",
+            "--start-fresh",
+        ])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--start-fresh"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["--start-fresh"]);
     assert_eq!(repo.current_branch(), "main");
 }
 
@@ -898,6 +957,17 @@ fn parse_single_json(stdout: &[u8]) -> serde_json::Value {
         "stdout must be exactly one JSON line, got: {text:?}"
     );
     serde_json::from_str(&text).unwrap()
+}
+
+/// Asserts that a failed `--json` run reported an error mentioning each of
+/// `needles`.
+fn assert_json_error(stdout: &[u8], needles: &[&str]) {
+    let json = parse_single_json(stdout);
+    assert_eq!(json["ok"], false);
+    let message = json["error"]["message"].as_str().unwrap();
+    for needle in needles {
+        assert!(message.contains(needle), "unexpected error: {message}");
+    }
 }
 
 #[test]
@@ -1163,12 +1233,15 @@ fn invalid_changes_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["config", "mate.new.changes", "banana"]);
 
-    common::git_mate()
-        .args(["new", "feat/x"])
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/x"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.new.changes"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["mate.new.changes"]);
     assert!(!repo.branch_exists("feat/x"));
 }
 
@@ -1236,12 +1309,15 @@ fn invalid_copy_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["config", "mate.new.copyConfig", "banana"]);
 
-    common::git_mate()
-        .args(["new", "feat/x"])
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/x"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.new.copyConfig"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["mate.new.copyConfig"]);
 }
 
 fn new_reports_fetched(setup: &common::RepoWithRemote, args: &[&str]) -> bool {
@@ -1299,46 +1375,45 @@ fn invalid_fetch_config_fails() {
     let setup = common::RepoWithRemote::new();
     setup.local_git(&["config", "mate.new.fetch", "banana"]);
 
-    common::git_mate()
-        .args(["new", "feat/x"])
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/x"])
         .current_dir(setup.local_path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.new.fetch"));
+        .get_output()
+        .stdout
+        .clone();
+    assert_json_error(&output, &["mate.new.fetch"]);
 }
 
 #[test]
-fn success_message_names_starting_point() {
+fn reports_starting_point() {
     let setup = common::RepoWithRemote::new();
-    common::git_mate()
-        .args(["new", "feat/x", "-m"])
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/x", "-m"])
         .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "Created and switched to branch feat/x from origin/main",
-        ));
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = parse_single_json(&output.stdout);
+    assert_eq!(json["data"]["branch"], "feat/x");
+    assert_eq!(json["data"]["from"], "origin/main");
 }
 
 #[test]
-fn success_message_ends_with_worktree_path() {
+fn reports_worktree_path() {
     let repo = common::RepoWithoutRemote::new();
     let wt_root = TempDir::new().unwrap();
     configure_worktree_root(&repo, &wt_root);
 
     let output = common::git_mate()
-        .args(["new", "feat/x", "-w", "--from", "main"])
+        .args(["--json", "new", "feat/x", "-w", "--from", "main"])
         .current_dir(repo.path())
         .output()
         .unwrap();
     assert!(output.status.success());
-    let stderr = String::from_utf8(output.stderr).unwrap();
+    let json = parse_single_json(&output.stdout);
     let wt_path = std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, "feat/x")).unwrap();
-    assert!(
-        stderr.contains(&format!(
-            "Created worktree for feat/x from main in {}\n",
-            wt_path.display()
-        )),
-        "unexpected output: {stderr}"
-    );
+    assert_eq!(json["data"]["from"], "main");
+    assert_eq!(json["data"]["path"], wt_path.to_str().unwrap());
 }

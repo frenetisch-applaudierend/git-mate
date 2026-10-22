@@ -57,9 +57,21 @@ impl Hint {
     }
 }
 
+/// Who decided on the action taken for a branch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DecidedBy {
+    /// Sync, on its own (fast-forward, reset, merge, rebase).
+    Auto,
+    /// A flag such as `--delete-pruned`.
+    Flag,
+    /// The user, when asked.
+    User,
+}
+
 /// The action taken (or not taken) for a single local branch during sync.
-/// `branch`, `action` and `reason` are reported verbatim in `--json` mode;
-/// the rest only drives the human-readable report.
+/// The serialized fields are reported verbatim in `--json` mode; the rest
+/// only drives the human-readable report.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchOutcome {
@@ -67,6 +79,18 @@ pub struct BranchOutcome {
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// A deletion candidate's detail, e.g. "merged in #1156".
+    #[serde(rename = "detail", skip_serializing_if = "Option::is_none")]
+    candidate_detail: Option<String>,
+    /// The action the chooser would preselect for a deletion candidate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recommended: Option<Choice>,
+    /// The actions a deletion candidate can be resolved with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    choices: Option<&'static [Choice]>,
+    /// Set once sync acted (or tried to act) on the branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    decided_by: Option<DecidedBy>,
     #[serde(skip)]
     pub group: Group,
     #[serde(skip)]
@@ -81,6 +105,10 @@ impl BranchOutcome {
             branch: branch.to_string(),
             action: action.to_string(),
             reason: reason.map(str::to_string),
+            candidate_detail: None,
+            recommended: None,
+            choices: None,
+            decided_by: None,
             group,
             detail,
             hint: None,
@@ -89,6 +117,11 @@ impl BranchOutcome {
 
     pub fn with_hint(mut self, hint: Hint) -> Self {
         self.hint = Some(hint);
+        self
+    }
+
+    pub fn decided_by(mut self, decided_by: DecidedBy) -> Self {
+        self.decided_by = Some(decided_by);
         self
     }
 
@@ -126,6 +159,7 @@ impl BranchOutcome {
             Group::Updated,
             format!("{verb}, {commits} commit{plural}"),
         )
+        .decided_by(DecidedBy::Auto)
     }
 
     pub fn reset_to_upstream(branch: &str, previous_tip: &str, dry_run: bool) -> Self {
@@ -143,6 +177,7 @@ impl BranchOutcome {
             Group::Updated,
             detail,
         )
+        .decided_by(DecidedBy::Auto)
     }
 
     pub fn merged(branch: &str, dry_run: bool) -> Self {
@@ -154,6 +189,7 @@ impl BranchOutcome {
             Group::Updated,
             format!("{verb} upstream"),
         )
+        .decided_by(DecidedBy::Auto)
     }
 
     /// Only local commits on top of the upstream.
@@ -177,6 +213,7 @@ impl BranchOutcome {
             Group::Updated,
             format!("{verb} onto upstream"),
         )
+        .decided_by(DecidedBy::Auto)
     }
 
     /// The default branch was merged into the current branch.
@@ -189,6 +226,7 @@ impl BranchOutcome {
             Group::Updated,
             format!("{verb} default branch '{default_branch}'"),
         )
+        .decided_by(DecidedBy::Auto)
     }
 
     /// Skipped for a reason the user should look at. `reason` goes into
@@ -227,40 +265,40 @@ impl BranchOutcome {
         )
     }
 
-    pub fn deletion_candidate(branch: &str, reason: &str) -> Self {
-        Self::new(
-            branch,
-            "deletion-candidate",
+    /// A branch whose remote is gone, resolved with `action` (or not yet).
+    fn gone(candidate: &Candidate, action: &str, reason: &str) -> Self {
+        let mut outcome = Self::new(
+            &candidate.branch,
+            action,
             Some(reason),
             Group::Gone,
             String::new(),
-        )
+        );
+        outcome.candidate_detail = Some(candidate.detail.clone());
+        outcome
     }
 
-    pub fn deleted(branch: &str) -> Self {
-        Self::new(
-            branch,
-            "deleted",
-            Some("remote deleted"),
-            Group::Gone,
-            String::new(),
-        )
+    pub fn deletion_candidate(candidate: &Candidate) -> Self {
+        let mut outcome = Self::gone(candidate, "deletion-candidate", "remote deleted");
+        outcome.recommended = Some(candidate.recommended);
+        outcome.choices = Some(&Choice::ALL);
+        outcome
     }
 
-    pub fn kept(branch: &str, reason: Option<&str>) -> Self {
-        Self::new(branch, "kept", reason, Group::Gone, String::new())
+    pub fn deleted(candidate: &Candidate) -> Self {
+        Self::gone(candidate, "deleted", "remote deleted")
     }
 
-    /// Remote gone, but the chooser was cancelled: nothing changed, so the
-    /// next sync asks again.
-    pub fn left_as_is(branch: &str) -> Self {
-        Self::new(
-            branch,
-            "left-as-is",
-            Some("remote deleted"),
-            Group::Gone,
-            String::new(),
-        )
+    /// Kept, and its deleted upstream no longer tracked.
+    pub fn kept(candidate: &Candidate) -> Self {
+        Self::gone(candidate, "kept", "upstream unset")
+    }
+
+    /// Remote gone, but nobody decided (the chooser was cancelled, or there
+    /// was no terminal to ask in): nothing changed, so the next sync asks
+    /// again.
+    pub fn left_as_is(candidate: &Candidate) -> Self {
+        Self::gone(candidate, "left-as-is", "remote deleted")
     }
 }
 
@@ -276,7 +314,8 @@ pub struct Candidate {
 }
 
 /// What to do with a branch whose remote is gone.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Choice {
     Delete,
     Keep,
@@ -542,28 +581,12 @@ pub fn print_title(title: &str) {
 /// Print a branch that was deleted. With `candidate_detail`, its candidate
 /// detail (e.g. "merged in #1156") is shown, for when the candidates were
 /// not listed before; otherwise just "deleted".
-pub fn print_deleted(candidate: &Candidate, candidate_detail: bool, column: usize) {
-    let (detail, detail_style) = if candidate_detail {
-        (candidate.detail.as_str(), candidate_style(candidate))
-    } else {
-        ("deleted", Style::new().dim())
-    };
+pub fn print_deleted(candidate: &Candidate, column: usize) {
     print_entry(
         style("⌫").red(),
         &candidate.branch,
-        detail,
-        &detail_style,
-        column,
-    );
-}
-
-/// Print a branch that was offered for deletion but kept.
-pub fn print_kept(branch: &str, column: usize) {
-    print_entry(
-        style("·").dim(),
-        branch,
-        "kept",
-        &Style::new().dim(),
+        &candidate.detail,
+        &candidate_style(candidate),
         column,
     );
 }

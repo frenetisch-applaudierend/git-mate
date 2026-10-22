@@ -1,6 +1,5 @@
 mod common;
 
-use predicates::prelude::PredicateBooleanExt;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -11,23 +10,44 @@ fn prepare_feature_branch(setup: &common::RepoWithRemote, branch: &str) -> Strin
     setup.local_head_commit()
 }
 
-/// Matches a report line: glyph, branch name, padding, then `detail`.
-fn entry(branch: &str, detail: &str) -> predicates::str::RegexPredicate {
-    predicates::str::is_match(format!(r"(?m)^ \S {} +{}", escape(branch), escape(detail))).unwrap()
+/// Runs `git mate --json sync` with `args` in `dir` and returns the
+/// envelope's `data`.
+fn sync_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
+    let output = common::git_mate()
+        .args(["--json", "sync"])
+        .args(args)
+        .current_dir(dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["ok"], true, "unexpected JSON: {json}");
+    json["data"].clone()
 }
 
-/// A report line naming `branch` with no detail after it.
-fn bare_entry(branch: &str) -> predicates::str::RegexPredicate {
-    predicates::str::is_match(format!(r"(?m)^ \S {}$", escape(branch))).unwrap()
-}
-
-fn escape(text: &str) -> String {
-    text.chars()
-        .flat_map(|c| {
-            let special = "\\.+*?()|[]{}^$#&-~".contains(c);
-            special.then_some('\\').into_iter().chain([c])
+/// Asserts that sync reported `action` for `branch`, and returns that entry.
+fn assert_action<'a>(
+    data: &'a serde_json::Value,
+    branch: &str,
+    action: &str,
+) -> &'a serde_json::Value {
+    data["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["branch"] == branch && b["action"] == action)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected {branch} to be {action}, got: {}",
+                data["branches"]
+            )
         })
-        .collect()
+}
+
+fn reason(entry: &serde_json::Value) -> &str {
+    entry["reason"].as_str().unwrap_or_default()
 }
 
 fn is_ancestor(dir: &std::path::Path, ancestor: &str, descendant: &str) -> bool {
@@ -43,12 +63,12 @@ fn is_ancestor(dir: &std::path::Path, ancestor: &str, descendant: &str) -> bool 
 fn no_upstream() {
     // Repo with no remote → fetch is a no-op; upstream check fails → prints notice and exits 0.
     let repo = common::RepoWithoutRemote::new();
-    common::git_mate()
-        .arg("sync")
-        .current_dir(repo.path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("No upstream"));
+    let data = sync_json(repo.path(), &[]);
+    assert_eq!(data["currentBranch"]["pulled"], false);
+    assert_eq!(
+        data["currentBranch"]["pullSkippedReason"],
+        "no upstream configured for current branch"
+    );
 }
 
 #[test]
@@ -91,12 +111,9 @@ fn merge_flag_merges_default_branch_into_current_branch() {
     let before = prepare_feature_branch(&setup, "feature/merge");
     setup.push_commit_to_remote("advance main");
 
-    common::git_mate()
-        .args(["sync", "--merge"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("merged default branch 'main'"));
+    let data = sync_json(setup.local_path(), &["--merge"]);
+    assert_action(&data, "feature/merge", "merged-default");
+    assert_eq!(data["currentBranch"]["mergedDefault"], true);
 
     let main_tip = setup.branch_tip("main");
     assert_ne!(setup.local_head_commit(), before);
@@ -113,12 +130,9 @@ fn auto_merge_config_merges_default_branch_into_current_branch() {
     setup.local_git(&["config", "mate.autoMerge", "true"]);
     setup.push_commit_to_remote("advance main");
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("merged default branch 'main'"));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/config-merge", "merged-default");
+    assert_eq!(data["currentBranch"]["mergedDefault"], true);
 
     let main_tip = setup.branch_tip("main");
     assert!(
@@ -134,12 +148,9 @@ fn merge_flag_overrides_disabled_config() {
     setup.local_git(&["config", "mate.autoMerge", "false"]);
     setup.push_commit_to_remote("advance main");
 
-    common::git_mate()
-        .args(["sync", "--merge"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("merged default branch 'main'"));
+    let data = sync_json(setup.local_path(), &["--merge"]);
+    assert_action(&data, "feature/override-merge", "merged-default");
+    assert_eq!(data["currentBranch"]["mergedDefault"], true);
 
     let main_tip = setup.branch_tip("main");
     assert!(
@@ -177,13 +188,14 @@ fn merge_runs_without_upstream_when_enabled() {
     let main_tip = repo.head_commit();
     repo.git(&["checkout", "feature/local"]);
 
-    common::git_mate()
-        .args(["sync", "--merge"])
-        .current_dir(repo.path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("No upstream"))
-        .stderr(predicates::str::contains("merged default branch 'main'"));
+    let data = sync_json(repo.path(), &["--merge"]);
+    assert_eq!(data["currentBranch"]["pulled"], false);
+    assert_eq!(
+        data["currentBranch"]["pullSkippedReason"],
+        "no upstream configured for current branch"
+    );
+    assert_action(&data, "feature/local", "merged-default");
+    assert_eq!(data["currentBranch"]["mergedDefault"], true);
 
     assert!(
         is_ancestor(repo.path(), &main_tip, "HEAD"),
@@ -235,12 +247,8 @@ fn fast_forwards_non_current_branch() {
     // Push a new commit to the remote feature branch.
     setup.push_commit_to_remote_branch("feature/ff", "advance feature");
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/ff", "fast-forwarded"));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/ff", "fast-forwarded");
 
     assert_ne!(
         setup.branch_tip("feature/ff"),
@@ -274,12 +282,8 @@ fn fast_forward_in_worktree_context_updates_main_worktree_index() {
     setup.push_file_commit_to_remote("new.txt", "hello", "add new.txt");
 
     // Run sync from inside the linked worktree so main is a non-current branch.
-    common::git_mate()
-        .arg("sync")
-        .current_dir(wt_dir.path())
-        .assert()
-        .success()
-        .stderr(entry("main", "fast-forwarded"));
+    let data = sync_json(wt_dir.path(), &[]);
+    assert_action(&data, "main", "fast-forwarded");
 
     // The main worktree must be clean.  Before the fix, fast_forward_branch used
     // git-update-ref which moved refs/heads/main without touching the index, so
@@ -318,12 +322,9 @@ fn skips_diverged_non_current_branch() {
     setup.push_commit_to_remote_branch("feature/div", "remote-only commit");
     let before = setup.branch_tip("feature/div");
 
-    common::git_mate()
-        .args(["sync", "--diverged=skip"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("cannot fast-forward"));
+    let data = sync_json(setup.local_path(), &["--diverged=skip"]);
+    let entry = assert_action(&data, "feature/div", "skipped");
+    assert_eq!(entry["reason"], "cannot fast-forward (diverged)");
     assert_eq!(setup.branch_tip("feature/div"), before);
 }
 
@@ -385,13 +386,8 @@ fn merges_diverged_branch_with_local_work() {
     let before = diverged_with_local_work(&setup, "feature/div");
     let main_before = setup.local_head_commit();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/div", "merged upstream"))
-        .stderr(predicates::str::contains("1 merged"));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/div", "merged");
 
     let tip = setup.branch_tip("feature/div");
     assert_eq!(parent_count(setup.local_path(), &tip), 2);
@@ -417,12 +413,8 @@ fn merges_diverged_branch_checked_out_in_clean_worktree() {
         "feature/wt",
     ]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/wt", "merged upstream"));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/wt", "merged");
 
     let tip = setup.branch_tip("feature/wt");
     assert!(is_ancestor(setup.local_path(), &before, &tip));
@@ -451,15 +443,9 @@ fn skips_diverged_branch_with_dirty_worktree() {
     ]);
     std::fs::write(wt_dir.path().join("wip.txt"), "uncommitted").unwrap();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry(
-            "feature/dirty",
-            "diverged, but worktree has uncommitted changes",
-        ));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/dirty", "skipped");
+    assert_eq!(entry["reason"], "diverged but working tree is dirty");
     assert_eq!(setup.branch_tip("feature/dirty"), before);
 }
 
@@ -475,18 +461,9 @@ fn skips_diverged_branch_with_conflicts() {
     common::git(scratch.path(), &["push", "-q"]);
     let before = setup.branch_tip("feature/clash");
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry(
-            "feature/clash",
-            "diverged, merging upstream would conflict",
-        ))
-        .stderr(predicates::str::contains(
-            "resolve with: git checkout feature/clash && git pull",
-        ));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/clash", "skipped");
+    assert_eq!(entry["reason"], "diverged with conflicts");
     assert_eq!(
         setup.branch_tip("feature/clash"),
         before,
@@ -516,13 +493,12 @@ fn resets_branch_when_remote_was_rewritten() {
     );
     common::git(scratch.path(), &["push", "-q", "--force"]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/rewrite", "rewritten, was "))
-        .stderr(predicates::str::contains("1 reset"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/rewrite", "reset-to-upstream");
+    assert!(
+        reason(entry).starts_with("remote was rewritten; previous tip "),
+        "unexpected reason: {entry}"
+    );
 
     assert_eq!(
         setup.branch_tip("feature/rewrite"),
@@ -549,12 +525,8 @@ fn resets_branch_whose_local_patches_are_already_upstream() {
     );
     common::git(scratch.path(), &["push", "-q"]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/picked", "rewritten, was "));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/picked", "reset-to-upstream");
 
     assert_eq!(
         setup.branch_tip("feature/picked"),
@@ -567,12 +539,9 @@ fn diverged_dry_run_changes_nothing() {
     let setup = common::RepoWithRemote::new();
     let before = diverged_with_local_work(&setup, "feature/dry");
 
-    common::git_mate()
-        .args(["sync", "--dry-run"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/dry", "would merge upstream"));
+    let data = sync_json(setup.local_path(), &["--dry-run"]);
+    assert_eq!(data["dryRun"], true);
+    assert_action(&data, "feature/dry", "merged");
     assert_eq!(setup.branch_tip("feature/dry"), before);
 }
 
@@ -581,12 +550,9 @@ fn ff_only_skips_diverged_branches() {
     let setup = common::RepoWithRemote::new();
     let before = diverged_with_local_work(&setup, "feature/ffonly");
 
-    common::git_mate()
-        .args(["sync", "--ff-only"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("cannot fast-forward (diverged)"));
+    let data = sync_json(setup.local_path(), &["--ff-only"]);
+    let entry = assert_action(&data, "feature/ffonly", "skipped");
+    assert_eq!(entry["reason"], "cannot fast-forward (diverged)");
     assert_eq!(setup.branch_tip("feature/ffonly"), before);
 }
 
@@ -596,12 +562,9 @@ fn diverged_strategy_config_skip_is_respected() {
     let before = diverged_with_local_work(&setup, "feature/cfg");
     setup.local_git(&["config", "mate.divergedStrategy", "skip"]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("cannot fast-forward (diverged)"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/cfg", "skipped");
+    assert_eq!(entry["reason"], "cannot fast-forward (diverged)");
     assert_eq!(setup.branch_tip("feature/cfg"), before);
 }
 
@@ -610,14 +573,23 @@ fn invalid_diverged_strategy_config_is_an_error() {
     let setup = common::RepoWithRemote::new();
     setup.local_git(&["config", "mate.divergedStrategy", "bogus"]);
 
-    common::git_mate()
-        .arg("sync")
+    let output = common::git_mate()
+        .args(["--json", "sync"])
         .current_dir(setup.local_path())
         .assert()
         .failure()
-        .stderr(predicates::str::contains(
-            "invalid value for mate.divergedStrategy",
-        ));
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["ok"], false);
+    assert!(
+        json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid value for mate.divergedStrategy"),
+        "unexpected JSON: {json}"
+    );
 }
 
 #[test]
@@ -677,13 +649,8 @@ fn merges_upstream_into_diverged_current_branch() {
     diverged_current_branch(&setup, "feature/cur", "local");
     let before = setup.local_head_commit();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/cur", "merged upstream"))
-        .stderr(predicates::str::contains("hint:").not());
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/cur", "merged");
 
     let head = setup.local_head_commit();
     assert_eq!(parent_count(setup.local_path(), &head), 2);
@@ -697,12 +664,8 @@ fn rebase_flag_rebases_diverged_current_branch() {
     let setup = common::RepoWithRemote::new();
     diverged_current_branch(&setup, "feature/cur", "local");
 
-    common::git_mate()
-        .args(["sync", "--rebase"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/cur", "rebased onto upstream"));
+    let data = sync_json(setup.local_path(), &["--rebase"]);
+    assert_action(&data, "feature/cur", "rebased");
 
     let head = setup.local_head_commit();
     assert_eq!(parent_count(setup.local_path(), &head), 1);
@@ -715,18 +678,9 @@ fn diverged_current_branch_with_conflicts_needs_attention() {
     diverged_current_branch(&setup, "feature/cur", "remote");
     let before = setup.local_head_commit();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Needs attention"))
-        .stderr(entry(
-            "feature/cur",
-            "diverged, merging upstream would conflict",
-        ))
-        .stderr(predicates::str::contains("resolve with: git pull"))
-        .stderr(predicates::str::contains("1 need attention"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/cur", "skipped");
+    assert_eq!(entry["reason"], "diverged with conflicts");
 
     assert_eq!(setup.local_head_commit(), before);
     assert!(!git_path_exists(&setup, "MERGE_HEAD"));
@@ -738,16 +692,9 @@ fn rebase_with_conflicts_is_aborted() {
     diverged_current_branch(&setup, "feature/cur", "remote");
     let before = setup.local_head_commit();
 
-    common::git_mate()
-        .args(["sync", "--rebase"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry(
-            "feature/cur",
-            "diverged, rebasing onto upstream would conflict",
-        ))
-        .stderr(predicates::str::contains("resolve with: git pull --rebase"));
+    let data = sync_json(setup.local_path(), &["--rebase"]);
+    let entry = assert_action(&data, "feature/cur", "skipped");
+    assert_eq!(entry["reason"], "diverged with conflicts; rebase aborted");
 
     assert_eq!(setup.local_head_commit(), before);
     assert_eq!(setup.local_current_branch(), "feature/cur");
@@ -761,12 +708,8 @@ fn pull_rebase_config_rebases_diverged_current_branch() {
     diverged_current_branch(&setup, "feature/cur", "local");
     setup.local_git(&["config", "pull.rebase", "true"]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/cur", "rebased onto upstream"));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/cur", "rebased");
 }
 
 #[test]
@@ -776,16 +719,9 @@ fn diverged_current_branch_with_uncommitted_changes_needs_attention() {
     std::fs::write(setup.local_path().join("shared.txt"), "uncommitted").unwrap();
     let before = setup.local_head_commit();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry(
-            "feature/cur",
-            "diverged, but worktree has uncommitted changes",
-        ))
-        .stderr(predicates::str::contains("commit or stash, then: git pull"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/cur", "skipped");
+    assert_eq!(entry["reason"], "diverged but working tree is dirty");
 
     assert_eq!(setup.local_head_commit(), before);
     assert_eq!(
@@ -801,13 +737,12 @@ fn current_branch_blocked_by_uncommitted_changes_needs_attention() {
     std::fs::write(setup.local_path().join("clash.txt"), "local").unwrap();
     let before = setup.local_head_commit();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("main", "could not fast-forward: "))
-        .stderr(predicates::str::contains("commit or stash, then: git pull"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "main", "skipped");
+    assert!(
+        reason(entry).starts_with("could not fast-forward: "),
+        "unexpected reason: {entry}"
+    );
 
     assert_eq!(setup.local_head_commit(), before);
 }
@@ -849,12 +784,8 @@ fn branch_ahead_of_upstream_is_left_alone() {
     setup.local_git(&["checkout", "-q", "main"]);
     setup.local_git(&["checkout", "-q", "-b", "other"]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("merged").not());
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/ahead", "up-to-date");
 
     assert_eq!(setup.branch_tip("feature/ahead"), before);
 }
@@ -865,12 +796,8 @@ fn current_branch_ahead_of_upstream_is_left_alone() {
     setup.local_git(&["commit", "--allow-empty", "-m", "unpushed"]);
     let before = setup.local_head_commit();
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Already up to date."));
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "main", "up-to-date");
 
     assert_eq!(setup.local_head_commit(), before);
 }
@@ -889,13 +816,13 @@ fn conflicting_auto_merge_needs_attention_and_leaves_branch_untouched() {
     let before = setup.local_head_commit();
     setup.push_file_commit_to_remote("shared.txt", "main", "main change");
 
-    common::git_mate()
-        .args(["sync", "--merge"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/clash", "merging main would conflict"))
-        .stderr(predicates::str::contains("resolve with: git merge main"));
+    let data = sync_json(setup.local_path(), &["--merge"]);
+    let entry = assert_action(&data, "feature/clash", "skipped");
+    assert_eq!(
+        entry["reason"],
+        "merging default branch 'main' would conflict"
+    );
+    assert_eq!(data["currentBranch"]["mergedDefault"], false);
 
     assert_eq!(setup.local_head_commit(), before);
     assert!(!git_path_exists(&setup, "MERGE_HEAD"));
@@ -942,18 +869,13 @@ fn branch_failure_does_not_abort_remaining_branches() {
     setup.create_local_tracking_branch("feature/ok");
     setup.push_commit_to_remote_branch("feature/ok", "advance feature/ok");
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/broken", "could not fast-forward: "))
-        .stderr(predicates::str::contains(format!(
-            "worktree: {}",
-            wt_dir.path().display()
-        )))
-        .stderr(entry("feature/ok", "fast-forwarded"))
-        .stderr(predicates::str::contains("1 need attention"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/broken", "skipped");
+    assert!(
+        reason(entry).starts_with("could not fast-forward: "),
+        "unexpected reason: {entry}"
+    );
+    assert_action(&data, "feature/ok", "fast-forwarded");
 
     assert_eq!(
         setup.branch_tip("feature/ok"),
@@ -964,174 +886,36 @@ fn branch_failure_does_not_abort_remaining_branches() {
 
 // --- final status message ---
 
-#[test]
-fn final_status_reflects_other_branch_work_when_current_branch_untouched() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/ff");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/ff");
-    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
-
-    // Switch to a branch with no upstream, so the current-branch pull/merge
-    // path contributes nothing to the final status — before the fix, that
-    // meant no final status line printed at all even though feature/ff was
-    // fast-forwarded.
-    setup.local_git(&["checkout", "-b", "scratch"]);
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/ff", "fast-forwarded"))
-        .stderr(predicates::str::contains("Synced."));
-}
-
-#[test]
-fn final_status_reports_nothing_to_do() {
-    let setup = common::RepoWithRemote::new();
-    setup.local_git(&["checkout", "-b", "scratch"]);
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Already up to date."));
-}
-
 // --- Deletion of local branches whose remote was pruned ---
 
 #[test]
-fn deletes_local_branch_when_remote_pruned_and_user_confirms_all() {
+fn leaves_pruned_branch_as_is_without_terminal() {
     let setup = common::RepoWithRemote::new();
 
     setup.push_branch_to_remote("feature/gone");
     setup.local_fetch();
     setup.create_local_tracking_branch("feature/gone");
+    setup.delete_remote_branch("feature/gone");
+
+    // Without a terminal nobody can answer, so nothing is asked or changed:
+    // the branch survives and still tracks its (deleted) upstream, so the
+    // next sync offers it again.
+    common::git_mate()
+        .arg("sync")
+        .current_dir(setup.local_path())
+        .assert()
+        .success();
+
+    let upstream = std::process::Command::new("git")
+        .args(["config", "branch.feature/gone.merge"])
+        .current_dir(setup.local_path())
+        .output()
+        .unwrap();
+    assert!(
+        upstream.status.success(),
+        "upstream of feature/gone should still be configured"
+    );
     assert!(setup.local_branch_exists("feature/gone"));
-
-    setup.delete_remote_branch("feature/gone");
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .write_stdin("a\n")
-        .assert()
-        .success()
-        .stderr(entry("feature/gone", "merged into origin/main"))
-        .stderr(predicates::str::contains("1 deleted"));
-
-    assert!(
-        !setup.local_branch_exists("feature/gone"),
-        "local branch should have been deleted"
-    );
-}
-
-#[test]
-fn keeps_local_branch_when_remote_pruned_and_user_declines() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/gone");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/gone");
-
-    setup.delete_remote_branch("feature/gone");
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .write_stdin("n\n")
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("1 kept"));
-
-    assert!(
-        setup.local_branch_exists("feature/gone"),
-        "local branch should have been kept"
-    );
-}
-
-#[test]
-fn keeps_local_branch_when_remote_pruned_and_no_input_given() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/gone");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/gone");
-
-    setup.delete_remote_branch("feature/gone");
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("1 kept"));
-
-    assert!(
-        setup.local_branch_exists("feature/gone"),
-        "local branch should default to kept when no confirmation is given"
-    );
-}
-
-#[test]
-fn prompts_once_for_multiple_pruned_branches_and_deletes_all() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/one");
-    setup.push_branch_to_remote("feature/two");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/one");
-    setup.create_local_tracking_branch("feature/two");
-
-    setup.delete_remote_branch("feature/one");
-    setup.delete_remote_branch("feature/two");
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .write_stdin("a\n")
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Delete these 2 branches?"))
-        .stderr(predicates::str::contains("2 deleted"));
-
-    assert!(!setup.local_branch_exists("feature/one"));
-    assert!(!setup.local_branch_exists("feature/two"));
-}
-
-#[test]
-fn decide_choice_prompts_per_branch() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/one");
-    setup.push_branch_to_remote("feature/two");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/one");
-    setup.create_local_tracking_branch("feature/two");
-
-    setup.delete_remote_branch("feature/one");
-    setup.delete_remote_branch("feature/two");
-
-    // "d" picks decide-per-branch; then confirm the first, decline the second.
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .write_stdin("d\ny\nn\n")
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Delete feature/one?"))
-        .stderr(predicates::str::contains("Delete feature/two?"))
-        .stderr(predicates::str::contains("1 deleted · 1 kept"))
-        // Only the branch that was actually deleted is marked ⌫.
-        .stderr(predicates::str::contains("⌫ feature/one"))
-        .stderr(predicates::str::contains("⌫ feature/two").not())
-        .stderr(predicates::str::contains("· feature/two"));
-
-    assert!(!setup.local_branch_exists("feature/one"));
-    assert!(setup.local_branch_exists("feature/two"));
 }
 
 #[test]
@@ -1145,12 +929,12 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
 
     setup.delete_remote_branch("feature/keep");
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("unpushed commits"));
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/keep", "skipped");
+    assert_eq!(
+        entry["reason"],
+        "remote deleted but has unpushed commits, skipping"
+    );
 
     assert!(
         setup.local_branch_exists("feature/keep"),
@@ -1161,7 +945,7 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
 // --- --delete-pruned ---
 
 #[test]
-fn delete_pruned_deletes_without_prompting() {
+fn delete_pruned_deletes_pruned_branch() {
     let setup = common::RepoWithRemote::new();
 
     setup.push_branch_to_remote("feature/gone");
@@ -1171,14 +955,11 @@ fn delete_pruned_deletes_without_prompting() {
 
     setup.delete_remote_branch("feature/gone");
 
-    // No stdin provided: if --delete-pruned still prompted, this would hang
-    // waiting on input rather than complete.
     common::git_mate()
         .args(["sync", "--delete-pruned"])
         .current_dir(setup.local_path())
         .assert()
-        .success()
-        .stderr(predicates::str::contains("1 deleted"));
+        .success();
 
     assert!(
         !setup.local_branch_exists("feature/gone"),
@@ -1219,16 +1000,75 @@ fn delete_pruned_makes_json_actually_delete() {
     assert_eq!(json["ok"], true);
     let branches = json["data"]["branches"].as_array().unwrap();
     assert!(
-        branches
-            .iter()
-            .any(|b| b["branch"] == "feature/gone" && b["action"] == "deleted"),
-        "expected feature/gone reported as deleted, got: {branches:?}"
+        branches.iter().any(|b| b["branch"] == "feature/gone"
+            && b["action"] == "deleted"
+            && b["decidedBy"] == "flag"),
+        "expected feature/gone reported as deleted by flag, got: {branches:?}"
     );
 
     assert!(
         !setup.local_branch_exists("feature/gone"),
         "local branch should have been deleted"
     );
+}
+
+#[test]
+fn json_reports_deletion_candidates_with_recommended_action() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/merged");
+    setup.push_branch_to_remote("feature/ff");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/merged");
+    setup.create_local_tracking_branch("feature/ff");
+    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
+
+    // Pushed work that never landed in main.
+    setup.local_git(&["checkout", "-q", "-b", "feature/unmerged"]);
+    commit_file(setup.local_path(), "u.txt", "u", "unmerged work");
+    setup.local_git(&["push", "-q", "-u", "origin", "feature/unmerged"]);
+    setup.local_git(&["checkout", "-q", "main"]);
+
+    setup.delete_remote_branch("feature/merged");
+    setup.delete_remote_branch("feature/unmerged");
+
+    let output = common::git_mate()
+        .args(["--json", "sync"])
+        .current_dir(setup.local_path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let branches = json["data"]["branches"].as_array().unwrap();
+    let branch = |name: &str| {
+        branches
+            .iter()
+            .find(|b| b["branch"] == name)
+            .unwrap_or_else(|| panic!("{name} missing from {branches:?}"))
+    };
+
+    let merged = branch("feature/merged");
+    assert_eq!(merged["action"], "deletion-candidate");
+    assert_eq!(merged["detail"], "merged into origin/main");
+    assert_eq!(merged["recommended"], "delete");
+    assert_eq!(merged["choices"], serde_json::json!(["delete", "keep"]));
+    assert!(merged.get("decidedBy").is_none(), "nothing was decided yet");
+
+    let unmerged = branch("feature/unmerged");
+    assert_eq!(unmerged["action"], "deletion-candidate");
+    assert_eq!(unmerged["detail"], "not merged into origin/main");
+    assert_eq!(unmerged["recommended"], "keep");
+
+    let ff = branch("feature/ff");
+    assert_eq!(ff["action"], "fast-forwarded");
+    assert_eq!(ff["decidedBy"], "auto");
+    assert!(ff.get("recommended").is_none());
+
+    assert!(setup.local_branch_exists("feature/merged"));
+    assert!(setup.local_branch_exists("feature/unmerged"));
 }
 
 // --- Branches whose upstream was already gone before sync ---
@@ -1254,14 +1094,12 @@ fn offers_gone_branch_that_was_merged() {
     setup.local_git(&["merge", "-q", "--no-ff", "-m", "merge", "feature/merged"]);
     setup.local_git(&["push", "-q", "origin", "main"]);
 
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .write_stdin("a\n")
-        .assert()
-        .success()
-        .stderr(entry("feature/merged", "merged in "))
-        .stderr(predicates::str::contains("1 deleted"));
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    let entry = assert_action(&data, "feature/merged", "deleted");
+    assert!(
+        entry["detail"].as_str().unwrap().starts_with("merged in "),
+        "unexpected detail: {entry}"
+    );
 
     assert!(!setup.local_branch_exists("feature/merged"));
 }
@@ -1278,13 +1116,9 @@ fn offers_gone_branch_that_was_squash_merged() {
     commit_file(scratch.path(), "c.txt", "c", "later work");
     common::git(scratch.path(), &["push", "-q"]);
 
-    common::git_mate()
-        .args(["sync", "--delete-pruned"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/squashed", "merged in #42"))
-        .stderr(predicates::str::contains("1 deleted"));
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    let entry = assert_action(&data, "feature/squashed", "deleted");
+    assert_eq!(entry["detail"], "merged in #42");
 
     assert!(!setup.local_branch_exists("feature/squashed"));
 }
@@ -1307,12 +1141,8 @@ fn offers_gone_branch_that_was_squash_merged_before_files_moved_and_edited() {
     common::git(scratch.path(), &["commit", "-q", "-am", "move and rewrite"]);
     common::git(scratch.path(), &["push", "-q"]);
 
-    common::git_mate()
-        .args(["sync", "--delete-pruned"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("1 deleted"));
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    assert_action(&data, "feature/moved", "deleted");
 
     assert!(!setup.local_branch_exists("feature/moved"));
 }
@@ -1327,12 +1157,8 @@ fn offers_gone_branch_that_was_rebase_merged() {
     commit_file(scratch.path(), "b.txt", "b", "add b (rebased)");
     common::git(scratch.path(), &["push", "-q"]);
 
-    common::git_mate()
-        .args(["sync", "--delete-pruned"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("1 deleted"));
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    assert_action(&data, "feature/rebased", "deleted");
 
     assert!(!setup.local_branch_exists("feature/rebased"));
 }
@@ -1342,20 +1168,16 @@ fn skips_gone_branch_with_unmerged_changes_and_explains() {
     let setup = common::RepoWithRemote::new();
     gone_branch_with_changes(&setup, "feature/unmerged");
 
-    common::git_mate()
-        .args(["sync", "--delete-pruned"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains(
-            "Remote gone, not merged into origin/main",
-        ))
-        .stderr(bare_entry("feature/unmerged"))
-        .stderr(predicates::str::contains("delete: git branch -D <branch>"))
-        .stderr(predicates::str::contains(
-            "keep: git branch --unset-upstream <branch>",
-        ))
-        .stderr(predicates::str::contains("could not resolve upstream").not());
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    let entry = assert_action(&data, "feature/unmerged", "skipped");
+    assert!(
+        reason(entry).contains("has changes not in origin/main"),
+        "unexpected reason: {entry}"
+    );
+    assert!(
+        !reason(entry).contains("could not resolve upstream"),
+        "unexpected reason: {entry}"
+    );
 
     assert!(setup.local_branch_exists("feature/unmerged"));
 }
@@ -1368,77 +1190,17 @@ fn skips_gone_branch_when_only_part_was_squash_merged() {
     commit_file(scratch.path(), "a.txt", "a", "only part of the feature");
     common::git(scratch.path(), &["push", "-q"]);
 
-    common::git_mate()
-        .args(["sync", "--delete-pruned"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains(
-            "Remote gone, not merged into origin/main",
-        ))
-        .stderr(bare_entry("feature/partial"));
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    let entry = assert_action(&data, "feature/partial", "skipped");
+    assert!(
+        reason(entry).contains("has changes not in origin/main"),
+        "unexpected reason: {entry}"
+    );
 
     assert!(setup.local_branch_exists("feature/partial"));
 }
 
-#[test]
-fn kept_pruned_branch_stops_tracking_and_is_not_offered_again() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/gone");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/gone");
-    setup.delete_remote_branch("feature/gone");
-
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .write_stdin("n\n")
-        .assert()
-        .success()
-        .stderr(predicates::str::contains(
-            "stopped tracking the deleted upstream",
-        ));
-
-    assert!(setup.local_branch_exists("feature/gone"));
-
-    // No stdin: a second prompt would read EOF and keep — assert it never asks.
-    common::git_mate()
-        .arg("sync")
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Delete this").not())
-        .stderr(predicates::str::contains("kept").not());
-}
-
 // --- end-of-run summary ---
-
-#[test]
-fn summary_reports_counts_grouped_by_outcome() {
-    let setup = common::RepoWithRemote::new();
-
-    setup.push_branch_to_remote("feature/ff");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/ff");
-    setup.push_commit_to_remote_branch("feature/ff", "advance feature");
-
-    setup.push_branch_to_remote("feature/div");
-    setup.local_fetch();
-    setup.create_local_tracking_branch("feature/div");
-    setup.make_local_commit_on("feature/div", "local-only commit");
-    setup.push_commit_to_remote_branch("feature/div", "remote-only commit");
-
-    common::git_mate()
-        .args(["sync", "--diverged=skip"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains(
-            "1 fast-forwarded · 1 need attention",
-        ))
-        .stderr(entry("feature/div", "cannot fast-forward (diverged)"));
-}
 
 #[test]
 fn summary_omitted_in_json_mode() {
@@ -1479,13 +1241,10 @@ fn dry_run_does_not_pull_or_fast_forward() {
     let main_before = setup.local_head_commit();
     setup.push_commit_to_remote("advance main");
 
-    common::git_mate()
-        .args(["sync", "--dry-run"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success()
-        .stderr(entry("feature/ff", "would fast-forward"))
-        .stderr(entry("main", "would fast-forward"));
+    let data = sync_json(setup.local_path(), &["--dry-run"]);
+    assert_eq!(data["dryRun"], true);
+    assert_action(&data, "feature/ff", "fast-forwarded");
+    assert_action(&data, "main", "fast-forwarded");
 
     assert_eq!(
         setup.branch_tip("feature/ff"),
@@ -1500,7 +1259,7 @@ fn dry_run_does_not_pull_or_fast_forward() {
 }
 
 #[test]
-fn dry_run_does_not_delete_pruned_branch_or_prompt() {
+fn dry_run_does_not_delete_pruned_branch() {
     let setup = common::RepoWithRemote::new();
 
     setup.push_branch_to_remote("feature/gone");
@@ -1510,15 +1269,11 @@ fn dry_run_does_not_delete_pruned_branch_or_prompt() {
 
     setup.delete_remote_branch("feature/gone");
 
-    // No stdin provided: if --dry-run still prompted, this would hang or read
-    // EOF and be interpreted as "keep" anyway, so also assert on the message
-    // to prove the prompt path was skipped entirely.
     common::git_mate()
         .args(["sync", "--dry-run"])
         .current_dir(setup.local_path())
         .assert()
-        .success()
-        .stderr(predicates::str::contains("dry run: not deleting anything"));
+        .success();
 
     assert!(
         setup.local_branch_exists("feature/gone"),

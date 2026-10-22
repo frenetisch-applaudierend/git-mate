@@ -1,5 +1,7 @@
 use super::sync_chooser;
-use super::sync_report::{self as report, BranchOutcome, Candidate, Choice, DecisionRow, Hint};
+use super::sync_report::{
+    self as report, BranchOutcome, Candidate, Choice, DecidedBy, DecisionRow, Hint,
+};
 
 #[derive(clap::Args)]
 #[command(
@@ -24,8 +26,8 @@ local branch (and worktree) left without a remote, each with an action to choose
 delete it, or keep it and stop tracking the deleted remote. Branches already merged
 into the default branch start out as delete, the others as keep; use the arrow keys
 to change them and Enter to apply, or Esc to leave them all as they are. Without a
-terminal, sync asks once whether to delete all of them, keep all of them, or decide
-branch by branch instead. Branches with unpushed commits
+terminal there is nobody to ask, so they are listed and left as they are. Branches
+with unpushed commits
 or a dirty working tree are never offered for deletion. Branches whose remote was
 already gone before this sync (e.g. pruned by an earlier fetch) are offered too, but
 only if everything on them has landed in the default branch — whether it was merged,
@@ -252,7 +254,8 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
             };
             match fast_forward_branch(&target, &worktrees, diverged_strategy, dry_run) {
                 Ok(outcome) => branch_outcomes.push(outcome),
-                Err(e) => branch_outcomes.push(BranchOutcome::failed(branch, &e)),
+                Err(e) => branch_outcomes
+                    .push(BranchOutcome::failed(branch, &e).decided_by(DecidedBy::Auto)),
             }
         }
     }
@@ -502,7 +505,9 @@ fn merge_default_branch(
     let conflicts = match crate::git::merge_tree("HEAD", &default_branch) {
         Ok(tree) => tree.is_none(),
         Err(e) => {
-            return DefaultMerge::Done(BranchOutcome::failed(current_branch, &e));
+            return DefaultMerge::Done(
+                BranchOutcome::failed(current_branch, &e).decided_by(DecidedBy::Auto),
+            );
         }
     };
     if conflicts {
@@ -961,8 +966,8 @@ struct PruneMode {
 /// what makes `--json` actually delete rather than just report); otherwise
 /// plain `--json` never prompts (which would block on stdin) and reports
 /// candidates without acting; otherwise let the user pick an action per
-/// branch in the chooser, or, without a terminal for it, ask once about
-/// every branch: delete them all, keep them all, or decide branch by branch.
+/// branch in the chooser, or, without a terminal for it, leave them all as
+/// they are.
 fn resolve_pruned_deletions(
     candidates: &[Candidate],
     current_wt: &Option<std::path::PathBuf>,
@@ -978,7 +983,7 @@ fn resolve_pruned_deletions(
     let as_candidates = || {
         candidates
             .iter()
-            .map(|c| BranchOutcome::deletion_candidate(&c.branch, "remote deleted"))
+            .map(BranchOutcome::deletion_candidate)
             .collect()
     };
 
@@ -997,15 +1002,8 @@ fn resolve_pruned_deletions(
         return Ok(candidates
             .iter()
             .map(|c| {
-                delete_candidate(
-                    c,
-                    current_wt,
-                    worktrees,
-                    main_wt_path,
-                    DeletionReport::WithDetail,
-                    mode.json,
-                    column,
-                )
+                delete_candidate(c, current_wt, worktrees, main_wt_path, mode.json, column)
+                    .decided_by(DecidedBy::Flag)
             })
             .collect());
     }
@@ -1029,49 +1027,30 @@ fn resolve_pruned_deletions(
             },
         }
     });
-    if let Some(rows) = chosen {
-        let kept = rows.iter().filter(|r| **r == DecisionRow::Kept).count();
-        print_kept_note(kept);
-        return Ok(candidates
-            .iter()
-            .zip(&rows)
-            .map(|(candidate, row)| decision_outcome(&candidate.branch, row))
-            .collect());
-    }
-
-    report::print_candidates("Remote gone, can be deleted", candidates, column);
-    let to_delete: Vec<&str> = match prompt_bulk_choice(candidates.len()) {
-        BulkChoice::All => candidates.iter().map(|c| c.branch.as_str()).collect(),
-        BulkChoice::None => Vec::new(),
-        BulkChoice::Decide => candidates
-            .iter()
-            .filter(|c| prompt_yes_no(&format!("   Delete {}?", c.branch)))
-            .map(|c| c.branch.as_str())
-            .collect(),
-    };
-
-    let mut outcomes = Vec::with_capacity(candidates.len());
-    let mut kept = 0;
-    for candidate in candidates {
-        let branch = candidate.branch.as_str();
-        if to_delete.contains(&branch) {
-            outcomes.push(delete_candidate(
-                candidate,
-                current_wt,
-                worktrees,
-                main_wt_path,
-                DeletionReport::Plain,
-                false,
-                column,
-            ));
-        } else {
-            outcomes.push(keep_pruned_branch(branch, column));
-            kept += 1;
+    let Some(rows) = chosen else {
+        // Without a terminal nobody can answer a prompt: leave every branch
+        // as it is and say how to resolve them.
+        report::print_title("Remote gone");
+        let detail_column = report::detail_column(candidates);
+        for candidate in candidates {
+            for line in
+                report::decision_lines(candidate, &DecisionRow::Left, false, column, detail_column)
+            {
+                eprintln!("{line}");
+            }
         }
-    }
+        report::print_note(
+            "no terminal to choose in; run sync in one, or pass --delete-pruned to delete them all",
+        );
+        return Ok(candidates.iter().map(BranchOutcome::left_as_is).collect());
+    };
+    let kept = rows.iter().filter(|r| **r == DecisionRow::Kept).count();
     print_kept_note(kept);
-
-    Ok(outcomes)
+    Ok(candidates
+        .iter()
+        .zip(&rows)
+        .map(|(candidate, row)| decision_outcome(candidate, row))
+        .collect())
 }
 
 fn print_kept_note(kept: usize) {
@@ -1084,24 +1063,16 @@ fn print_kept_note(kept: usize) {
 }
 
 /// The outcome of a row the chooser resolved.
-fn decision_outcome(branch: &str, row: &DecisionRow) -> BranchOutcome {
-    match row {
-        DecisionRow::Deleted => BranchOutcome::deleted(branch),
-        DecisionRow::Kept => BranchOutcome::kept(branch, Some("upstream unset")),
-        DecisionRow::Failed(e) => BranchOutcome::failed(branch, e),
+fn decision_outcome(candidate: &Candidate, row: &DecisionRow) -> BranchOutcome {
+    let outcome = match row {
+        DecisionRow::Deleted => BranchOutcome::deleted(candidate),
+        DecisionRow::Kept => BranchOutcome::kept(candidate),
+        DecisionRow::Failed(e) => BranchOutcome::failed(&candidate.branch, e),
         DecisionRow::Left | DecisionRow::Choice(_) | DecisionRow::Applying(_) => {
-            BranchOutcome::left_as_is(branch)
+            BranchOutcome::left_as_is(candidate)
         }
-    }
-}
-
-/// How a deleted candidate is reported: with its candidate detail when the
-/// candidates were not listed beforehand (`--delete-pruned`), or as a plain
-/// "deleted" right under the prompt that listed them.
-#[derive(Clone, Copy)]
-enum DeletionReport {
-    WithDetail,
-    Plain,
+    };
+    outcome.decided_by(DecidedBy::User)
 }
 
 fn delete_candidate(
@@ -1109,7 +1080,6 @@ fn delete_candidate(
     current_wt: &Option<std::path::PathBuf>,
     worktrees: &[crate::git::WorktreeEntry],
     main_wt_path: &str,
-    report_as: DeletionReport,
     json: bool,
     column: usize,
 ) -> BranchOutcome {
@@ -1117,13 +1087,9 @@ fn delete_candidate(
     match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
         Ok(()) => {
             if !json {
-                report::print_deleted(
-                    candidate,
-                    matches!(report_as, DeletionReport::WithDetail),
-                    column,
-                );
+                report::print_deleted(candidate, column);
             }
-            BranchOutcome::deleted(branch)
+            BranchOutcome::deleted(candidate)
         }
         Err(e) => {
             if !json {
@@ -1131,53 +1097,6 @@ fn delete_candidate(
             }
             BranchOutcome::failed(branch, &e)
         }
-    }
-}
-
-/// Keep a branch whose remote was deleted and stop tracking the missing
-/// upstream, so it moves to the "no upstream" bucket instead of being
-/// offered for deletion again on every sync.
-fn keep_pruned_branch(branch: &str, column: usize) -> BranchOutcome {
-    match crate::git::unset_upstream(branch) {
-        Ok(()) => {
-            report::print_kept(branch, column);
-            BranchOutcome::kept(branch, Some("upstream unset"))
-        }
-        Err(e) => {
-            let reason = format!("could not unset upstream: {e}");
-            report::print_failure(branch, &reason, column);
-            BranchOutcome::kept(branch, Some(&reason))
-        }
-    }
-}
-
-enum BulkChoice {
-    All,
-    None,
-    Decide,
-}
-
-fn prompt_bulk_choice(count: usize) -> BulkChoice {
-    use std::io::Write as _;
-    let what = if count == 1 {
-        "this branch".to_string()
-    } else {
-        format!("these {count} branches")
-    };
-    eprint!(
-        " Delete {what}? {} ",
-        console::style("[a]ll / [N]one / [d]ecide").dim()
-    );
-    let _ = std::io::stderr().flush();
-    let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_err() {
-        return BulkChoice::None;
-    }
-    end_prompt_line();
-    match line.trim().to_lowercase().as_str() {
-        "a" | "all" => BulkChoice::All,
-        "d" | "decide" => BulkChoice::Decide,
-        _ => BulkChoice::None,
     }
 }
 
@@ -1217,27 +1136,6 @@ fn delete_pruned_branch(
 
     crate::git::delete_branch_force_in(main_wt_path, branch)?;
     Ok(())
-}
-
-fn prompt_yes_no(question: &str) -> bool {
-    use std::io::Write as _;
-    eprint!("{} [y/N] ", question);
-    let _ = std::io::stderr().flush();
-    let mut line = String::new();
-    if std::io::stdin().read_line(&mut line).is_err() {
-        return false;
-    }
-    end_prompt_line();
-    matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
-}
-
-/// Without a terminal the typed answer (and its newline) is never echoed, so
-/// end the prompt's line ourselves before printing anything else.
-fn end_prompt_line() {
-    use std::io::IsTerminal as _;
-    if !std::io::stdin().is_terminal() {
-        eprintln!();
-    }
 }
 
 #[cfg(test)]
