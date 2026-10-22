@@ -1,4 +1,5 @@
-use super::sync_report::{self as report, BranchOutcome, Candidate, Hint};
+use super::sync_chooser;
+use super::sync_report::{self as report, BranchOutcome, Candidate, Choice, DecisionRow, Hint};
 
 #[derive(clap::Args)]
 #[command(
@@ -19,8 +20,12 @@ working tree has uncommitted changes in the way, or whose rebase would conflict,
 left as it was and listed under \"Needs attention\".
 
 When a remote branch is deleted — typically after a PR is merged — sync lists every
-local branch (and worktree) left without a remote and asks once whether to delete all
-of them, keep all of them, or decide branch by branch. Branches with unpushed commits
+local branch (and worktree) left without a remote, each with an action to choose:
+delete it, or keep it and stop tracking the deleted remote. Branches already merged
+into the default branch start out as delete, the others as keep; use the arrow keys
+to change them and Enter to apply, or Esc to leave them all as they are. Without a
+terminal, sync asks once whether to delete all of them, keep all of them, or decide
+branch by branch instead. Branches with unpushed commits
 or a dirty working tree are never offered for deletion. Branches whose remote was
 already gone before this sync (e.g. pruned by an earlier fetch) are offered too, but
 only if everything on them has landed in the default branch — whether it was merged,
@@ -844,6 +849,7 @@ fn gone_branch_status(
             branch: branch.to_string(),
             detail: merged_detail(&merged_at, remote),
             warn: false,
+            recommended: Choice::Delete,
         },
     )
 }
@@ -865,16 +871,19 @@ fn pruned_branch_status(
             branch: branch.to_string(),
             detail: merged_detail(&merged_at, remote),
             warn: false,
+            recommended: Choice::Delete,
         },
         Some((remote, Ok(None))) => Candidate {
             branch: branch.to_string(),
             detail: format!("not merged into {remote}"),
             warn: true,
+            recommended: Choice::Keep,
         },
         _ => Candidate {
             branch: branch.to_string(),
             detail: "remote deleted".to_string(),
             warn: false,
+            recommended: Choice::Keep,
         },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
@@ -951,9 +960,9 @@ struct PruneMode {
 /// then `--delete-pruned` deletes all candidates without prompting (this is
 /// what makes `--json` actually delete rather than just report); otherwise
 /// plain `--json` never prompts (which would block on stdin) and reports
-/// candidates without acting; otherwise ask once about every branch and act
-/// on the choice: delete them all, keep them all, or decide branch by
-/// branch.
+/// candidates without acting; otherwise let the user pick an action per
+/// branch in the chooser, or, without a terminal for it, ask once about
+/// every branch: delete them all, keep them all, or decide branch by branch.
 fn resolve_pruned_deletions(
     candidates: &[Candidate],
     current_wt: &Option<std::path::PathBuf>,
@@ -1005,6 +1014,31 @@ fn resolve_pruned_deletions(
         return Ok(as_candidates());
     }
 
+    let chosen = sync_chooser::resolve(candidates, column, |candidate, choice| {
+        let branch = candidate.branch.as_str();
+        match choice {
+            Choice::Delete => {
+                match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
+                    Ok(()) => DecisionRow::Deleted,
+                    Err(e) => DecisionRow::Failed(e),
+                }
+            }
+            Choice::Keep => match crate::git::unset_upstream(branch) {
+                Ok(()) => DecisionRow::Kept,
+                Err(e) => DecisionRow::Failed(format!("could not unset upstream: {e}")),
+            },
+        }
+    });
+    if let Some(rows) = chosen {
+        let kept = rows.iter().filter(|r| **r == DecisionRow::Kept).count();
+        print_kept_note(kept);
+        return Ok(candidates
+            .iter()
+            .zip(&rows)
+            .map(|(candidate, row)| decision_outcome(&candidate.branch, row))
+            .collect());
+    }
+
     report::print_candidates("Remote gone, can be deleted", candidates, column);
     let to_delete: Vec<&str> = match prompt_bulk_choice(candidates.len()) {
         BulkChoice::All => candidates.iter().map(|c| c.branch.as_str()).collect(),
@@ -1035,14 +1069,30 @@ fn resolve_pruned_deletions(
             kept += 1;
         }
     }
+    print_kept_note(kept);
+
+    Ok(outcomes)
+}
+
+fn print_kept_note(kept: usize) {
     if kept > 0 {
         let plural = if kept == 1 { "" } else { "es" };
         report::print_note(&format!(
             "kept {kept} branch{plural}; stopped tracking the deleted upstream so sync won't ask again"
         ));
     }
+}
 
-    Ok(outcomes)
+/// The outcome of a row the chooser resolved.
+fn decision_outcome(branch: &str, row: &DecisionRow) -> BranchOutcome {
+    match row {
+        DecisionRow::Deleted => BranchOutcome::deleted(branch),
+        DecisionRow::Kept => BranchOutcome::kept(branch, Some("upstream unset")),
+        DecisionRow::Failed(e) => BranchOutcome::failed(branch, e),
+        DecisionRow::Left | DecisionRow::Choice(_) | DecisionRow::Applying(_) => {
+            BranchOutcome::left_as_is(branch)
+        }
+    }
 }
 
 /// How a deleted candidate is reported: with its candidate detail when the

@@ -97,7 +97,7 @@ Fetches all remotes and prunes stale remote-tracking references, then:
 
 - Fast-forwards every local branch whose upstream is still present, including the current one
 - Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (or rebases the current branch with `--rebase` / `pull.rebase=true`); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
-- Auto-deletes local branches whose remote was deleted (if they have no unpushed commits and a clean working tree)
+- Offers to delete local branches whose remote was deleted (if they have no unpushed commits and a clean working tree): pick delete or keep per branch, with branches already merged into the default branch preselected for deletion
 - Optionally merges the default branch into the current branch, when that is conflict-free
 
 ```bash

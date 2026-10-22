@@ -250,6 +250,18 @@ impl BranchOutcome {
     pub fn kept(branch: &str, reason: Option<&str>) -> Self {
         Self::new(branch, "kept", reason, Group::Gone, String::new())
     }
+
+    /// Remote gone, but the chooser was cancelled: nothing changed, so the
+    /// next sync asks again.
+    pub fn left_as_is(branch: &str) -> Self {
+        Self::new(
+            branch,
+            "left-as-is",
+            Some("remote deleted"),
+            Group::Gone,
+            String::new(),
+        )
+    }
 }
 
 /// A branch whose remote is gone and that is offered for deletion.
@@ -259,6 +271,125 @@ pub struct Candidate {
     pub detail: String,
     /// Show `detail` as a warning rather than dimmed context.
     pub warn: bool,
+    /// The action preselected in the chooser.
+    pub recommended: Choice,
+}
+
+/// What to do with a branch whose remote is gone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Choice {
+    Delete,
+    Keep,
+}
+
+impl Choice {
+    const ALL: [Choice; 2] = [Choice::Delete, Choice::Keep];
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    pub fn previous(self) -> Self {
+        let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
+        Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Choice::Delete => "delete",
+            Choice::Keep => "keep",
+        }
+    }
+
+    fn style(self) -> Style {
+        match self {
+            Choice::Delete => Style::new().red(),
+            Choice::Keep => Style::new().magenta(),
+        }
+    }
+}
+
+/// The state of a candidate's row in the chooser, from picking an action to
+/// its result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DecisionRow {
+    Choice(Choice),
+    Applying(Choice),
+    Deleted,
+    /// Kept, and its deleted upstream no longer tracked.
+    Kept,
+    /// Left untouched because the chooser was cancelled.
+    Left,
+    Failed(String),
+}
+
+/// Width of the longest candidate detail, which the chooser's action column
+/// is aligned after.
+pub fn detail_column(candidates: &[Candidate]) -> usize {
+    candidates
+        .iter()
+        .map(|c| console::measure_text_width(&c.detail))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The lines of a candidate's row in the chooser: the entry as everywhere
+/// else in the report, followed by the action column. Once decided, the
+/// column keeps the action taken, which sets these rows apart from the ones
+/// sync handled on its own.
+pub fn decision_lines(
+    candidate: &Candidate,
+    row: &DecisionRow,
+    focused: bool,
+    column: usize,
+    detail_column: usize,
+) -> Vec<String> {
+    let dim = Style::new().dim();
+    let (glyph, cell) = match row {
+        DecisionRow::Choice(choice) if focused => (
+            style("❯").cyan().bold(),
+            format!(
+                "{} {} {}",
+                style("‹").cyan(),
+                choice.style().bold().apply_to(choice.label()),
+                style("›").cyan()
+            ),
+        ),
+        DecisionRow::Choice(choice) => (
+            style("?").cyan(),
+            format!("  {}", choice.style().apply_to(choice.label())),
+        ),
+        DecisionRow::Applying(choice) => (
+            style(SPINNER_FRAMES[0]).cyan(),
+            format!("  {}", dim.apply_to(choice.label())),
+        ),
+        DecisionRow::Deleted => (style("⌫").red(), format!("  {}", dim.apply_to("deleted"))),
+        DecisionRow::Kept => (style("·").dim(), format!("  {}", dim.apply_to("kept"))),
+        DecisionRow::Left => (
+            style("·").dim(),
+            format!("  {}", dim.apply_to("left as is")),
+        ),
+        DecisionRow::Failed(error) => {
+            let first_line = error.lines().next().unwrap_or(error);
+            return entry_lines(
+                style("✗").red().bold(),
+                &candidate.branch,
+                &format!("failed: {first_line}"),
+                &Style::new().red(),
+                column,
+                None,
+            );
+        }
+    };
+    entry_lines(
+        glyph,
+        &candidate.branch,
+        &candidate.detail,
+        &candidate_style(candidate),
+        column,
+        Some((&cell, detail_column)),
+    )
 }
 
 /// Width of the branch-name column for `(name, detail)` entries: wide enough
@@ -473,25 +604,47 @@ fn print_entry(
     detail_style: &Style,
     column: usize,
 ) {
-    if detail.is_empty() {
-        eprintln!(" {glyph} {}", style(name).bold());
-        return;
+    for line in entry_lines(glyph, name, detail, detail_style, column, None) {
+        eprintln!("{line}");
+    }
+}
+
+/// The lines of an entry: on one line if it fits the terminal, else with the
+/// detail on a second line. `cell`, with the detail width it is aligned
+/// after, adds a column after the detail.
+fn entry_lines(
+    glyph: StyledObject<&str>,
+    name: &str,
+    detail: &str,
+    detail_style: &Style,
+    column: usize,
+    cell: Option<(&str, usize)>,
+) -> Vec<String> {
+    let bold_name = style(name).bold();
+    if detail.is_empty() && cell.is_none() {
+        return vec![format!(" {glyph} {bold_name}")];
     }
     let name_width = console::measure_text_width(name);
     let detail_width = console::measure_text_width(detail);
+    let (tail, tail_width) = match cell {
+        Some((cell, detail_column)) => (
+            format!(
+                "{}{}  {cell}",
+                detail_style.apply_to(detail),
+                " ".repeat(detail_column.saturating_sub(detail_width))
+            ),
+            detail_column.max(detail_width) + 2 + console::measure_text_width(cell),
+        ),
+        None => (detail_style.apply_to(detail).to_string(), detail_width),
+    };
     let fits_terminal = console::Term::stderr()
         .size_checked()
-        .is_none_or(|(_, cols)| 3 + column + 2 + detail_width <= cols as usize);
+        .is_none_or(|(_, cols)| 3 + column + 2 + tail_width <= cols as usize);
     if name_width <= column && fits_terminal {
         let padding = " ".repeat(column - name_width);
-        eprintln!(
-            " {glyph} {}{padding}  {}",
-            style(name).bold(),
-            detail_style.apply_to(detail)
-        );
+        vec![format!(" {glyph} {bold_name}{padding}  {tail}")]
     } else {
-        eprintln!(" {glyph} {}", style(name).bold());
-        eprintln!("     {}", detail_style.apply_to(detail));
+        vec![format!(" {glyph} {bold_name}"), format!("     {tail}")]
     }
 }
 
@@ -507,7 +660,7 @@ pub fn print_summary(outcomes: &[BranchOutcome], dry_run: bool) {
     } else {
         "to delete"
     };
-    let order: [(&str, &str, Style); 12] = [
+    let order: [(&str, &str, Style); 13] = [
         ("deleted", "deleted", Style::new().red()),
         ("deletion-candidate", to_delete, Style::new().red()),
         ("fast-forwarded", "fast-forwarded", Style::new().green()),
@@ -522,6 +675,7 @@ pub fn print_summary(outcomes: &[BranchOutcome], dry_run: bool) {
         ("failed", "failed", Style::new().red()),
         ("skipped", "need attention", Style::new().yellow()),
         ("kept", "kept", Style::new().magenta()),
+        ("left-as-is", "left as is", Style::new().dim()),
         ("up-to-date", "up to date", Style::new().dim()),
         ("no-upstream", "without upstream", Style::new().dim()),
     ];
