@@ -1071,6 +1071,54 @@ fn json_reports_deletion_candidates_with_recommended_action() {
     assert!(setup.local_branch_exists("feature/unmerged"));
 }
 
+#[test]
+fn apply_recommended_deletes_merged_and_keeps_unmerged_branches() {
+    let setup = common::RepoWithRemote::new();
+
+    setup.push_branch_to_remote("feature/merged");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/merged");
+
+    // Pushed work that never landed in main.
+    setup.local_git(&["checkout", "-q", "-b", "feature/unmerged"]);
+    commit_file(setup.local_path(), "u.txt", "u", "unmerged work");
+    setup.local_git(&["push", "-q", "-u", "origin", "feature/unmerged"]);
+    setup.local_git(&["checkout", "-q", "main"]);
+
+    setup.delete_remote_branch("feature/merged");
+    setup.delete_remote_branch("feature/unmerged");
+
+    let data = sync_json(setup.local_path(), &["--apply-recommended"]);
+    let merged = assert_action(&data, "feature/merged", "deleted");
+    assert_eq!(merged["decidedBy"], "flag");
+    let unmerged = assert_action(&data, "feature/unmerged", "kept");
+    assert_eq!(unmerged["decidedBy"], "flag");
+    assert_eq!(unmerged["detail"], "not merged into origin/main");
+
+    assert!(!setup.local_branch_exists("feature/merged"));
+    assert!(setup.local_branch_exists("feature/unmerged"));
+    let upstream = std::process::Command::new("git")
+        .args(["config", "branch.feature/unmerged.merge"])
+        .current_dir(setup.local_path())
+        .output()
+        .unwrap();
+    assert!(
+        !upstream.status.success(),
+        "kept branch should no longer track its deleted upstream"
+    );
+}
+
+#[test]
+fn apply_recommended_conflicts_with_delete_pruned() {
+    let setup = common::RepoWithRemote::new();
+
+    common::git_mate()
+        .args(["sync", "--apply-recommended", "--delete-pruned"])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure();
+}
+
 // --- Branches whose upstream was already gone before sync ---
 
 /// Local branch with two file commits, pushed with upstream tracking; its

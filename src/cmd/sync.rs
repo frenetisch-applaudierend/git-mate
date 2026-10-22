@@ -27,14 +27,14 @@ delete it, or keep it and stop tracking the deleted remote. Branches already mer
 into the default branch start out as delete, the others as keep; use the arrow keys
 to change them and Enter to apply, or Esc to leave them all as they are. Without a
 terminal there is nobody to ask, so they are listed and left as they are. Branches
-with unpushed commits
-or a dirty working tree are never offered for deletion. Branches whose remote was
+with unpushed commits or a dirty working tree are never offered for deletion. Branches whose remote was
 already gone before this sync (e.g. pruned by an earlier fetch) are offered too, but
 only if everything on them has landed in the default branch — whether it was merged,
-rebase-merged or squash-merged, and even if those files were moved or edited since. Pass --delete-pruned to skip that prompt and delete
-all of them (this also makes --json actually delete instead of just reporting
-candidates). Branches you keep stop tracking their deleted upstream, so they aren't
-offered again.
+rebase-merged or squash-merged, and even if those files were moved or edited since.
+Pass --apply-recommended to skip the chooser and apply the preselected actions, or
+--delete-pruned to delete all of them (either also makes --json act instead of just
+reporting candidates). Branches you keep stop tracking their deleted upstream, so they
+aren't offered again.
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
 branch into the current branch after syncing it, keeping feature branches up to date
@@ -69,6 +69,12 @@ pub struct SyncArgs {
         help = "Delete every local branch whose remote was pruned, without prompting"
     )]
     pub delete_pruned: bool,
+    #[arg(
+        long,
+        conflicts_with_all = ["dry_run", "delete_pruned"],
+        help = "Delete merged branches whose remote was pruned and keep the rest, without prompting"
+    )]
+    pub apply_recommended: bool,
     #[arg(
         long,
         help = "Preview planned actions without making any changes or prompting"
@@ -312,6 +318,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
             json,
             dry_run,
             delete_pruned: args.delete_pruned,
+            apply_recommended: args.apply_recommended,
         },
         column,
     )?);
@@ -958,12 +965,14 @@ struct PruneMode {
     json: bool,
     dry_run: bool,
     delete_pruned: bool,
+    apply_recommended: bool,
 }
 
 /// Resolves what to do with branches whose remote was deleted, in priority
 /// order: `--dry-run` always previews only, regardless of the other flags;
-/// then `--delete-pruned` deletes all candidates without prompting (this is
-/// what makes `--json` actually delete rather than just report); otherwise
+/// then `--delete-pruned` deletes all candidates and `--apply-recommended`
+/// applies each one's recommended action, both without prompting (this is
+/// what makes `--json` actually act rather than just report); otherwise
 /// plain `--json` never prompts (which would block on stdin) and reports
 /// candidates without acting; otherwise let the user pick an action per
 /// branch in the chooser, or, without a terminal for it, leave them all as
@@ -1008,25 +1017,44 @@ fn resolve_pruned_deletions(
             .collect());
     }
 
+    let apply = |candidate: &Candidate, choice: Choice| {
+        apply_choice(candidate, choice, current_wt, worktrees, main_wt_path)
+    };
+
+    if mode.apply_recommended {
+        if !mode.json {
+            report::print_title("Remote gone");
+        }
+        let detail_column = report::detail_column(candidates);
+        let rows: Vec<DecisionRow> = candidates
+            .iter()
+            .map(|candidate| {
+                let row = apply(candidate, candidate.recommended);
+                if !mode.json {
+                    for line in
+                        report::decision_lines(candidate, &row, false, column, detail_column)
+                    {
+                        eprintln!("{line}");
+                    }
+                }
+                row
+            })
+            .collect();
+        if !mode.json {
+            print_kept_note(rows.iter().filter(|r| **r == DecisionRow::Kept).count());
+        }
+        return Ok(candidates
+            .iter()
+            .zip(&rows)
+            .map(|(candidate, row)| decision_outcome(candidate, row, DecidedBy::Flag))
+            .collect());
+    }
+
     if mode.json {
         return Ok(as_candidates());
     }
 
-    let chosen = sync_chooser::resolve(candidates, column, |candidate, choice| {
-        let branch = candidate.branch.as_str();
-        match choice {
-            Choice::Delete => {
-                match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
-                    Ok(()) => DecisionRow::Deleted,
-                    Err(e) => DecisionRow::Failed(e),
-                }
-            }
-            Choice::Keep => match crate::git::unset_upstream(branch) {
-                Ok(()) => DecisionRow::Kept,
-                Err(e) => DecisionRow::Failed(format!("could not unset upstream: {e}")),
-            },
-        }
-    });
+    let chosen = sync_chooser::resolve(candidates, column, apply);
     let Some(rows) = chosen else {
         // Without a terminal nobody can answer a prompt: leave every branch
         // as it is and say how to resolve them.
@@ -1040,7 +1068,7 @@ fn resolve_pruned_deletions(
             }
         }
         report::print_note(
-            "no terminal to choose in; run sync in one, or pass --delete-pruned to delete them all",
+            "no terminal to choose in; run sync in one, or pass --apply-recommended or --delete-pruned",
         );
         return Ok(candidates.iter().map(BranchOutcome::left_as_is).collect());
     };
@@ -1049,8 +1077,30 @@ fn resolve_pruned_deletions(
     Ok(candidates
         .iter()
         .zip(&rows)
-        .map(|(candidate, row)| decision_outcome(candidate, row))
+        .map(|(candidate, row)| decision_outcome(candidate, row, DecidedBy::User))
         .collect())
+}
+
+/// Delete a branch whose remote is gone, or keep it and stop tracking the
+/// missing upstream so it isn't offered again.
+fn apply_choice(
+    candidate: &Candidate,
+    choice: Choice,
+    current_wt: &Option<std::path::PathBuf>,
+    worktrees: &[crate::git::WorktreeEntry],
+    main_wt_path: &str,
+) -> DecisionRow {
+    let branch = candidate.branch.as_str();
+    match choice {
+        Choice::Delete => match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
+            Ok(()) => DecisionRow::Deleted,
+            Err(e) => DecisionRow::Failed(e),
+        },
+        Choice::Keep => match crate::git::unset_upstream(branch) {
+            Ok(()) => DecisionRow::Kept,
+            Err(e) => DecisionRow::Failed(format!("could not unset upstream: {e}")),
+        },
+    }
 }
 
 fn print_kept_note(kept: usize) {
@@ -1062,8 +1112,12 @@ fn print_kept_note(kept: usize) {
     }
 }
 
-/// The outcome of a row the chooser resolved.
-fn decision_outcome(candidate: &Candidate, row: &DecisionRow) -> BranchOutcome {
+/// The outcome of a resolved row.
+fn decision_outcome(
+    candidate: &Candidate,
+    row: &DecisionRow,
+    decided_by: DecidedBy,
+) -> BranchOutcome {
     let outcome = match row {
         DecisionRow::Deleted => BranchOutcome::deleted(candidate),
         DecisionRow::Kept => BranchOutcome::kept(candidate),
@@ -1072,7 +1126,7 @@ fn decision_outcome(candidate: &Candidate, row: &DecisionRow) -> BranchOutcome {
             BranchOutcome::left_as_is(candidate)
         }
     };
-    outcome.decided_by(DecidedBy::User)
+    outcome.decided_by(decided_by)
 }
 
 fn delete_candidate(
