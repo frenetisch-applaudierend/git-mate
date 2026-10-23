@@ -1,7 +1,5 @@
 mod common;
 
-use predicates::prelude::*;
-
 #[test]
 fn finish_feature_branch_switches_to_main() {
     let repo = common::RepoWithoutRemote::new();
@@ -21,12 +19,15 @@ fn finish_feature_branch_switches_to_main() {
 #[test]
 fn finish_on_default_branch_fails() {
     let repo = common::RepoWithoutRemote::new();
-    common::git_mate()
-        .args(["finish"])
+    let output = common::git_mate()
+        .args(["--json", "finish"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("default branch"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["default branch"]);
 }
 
 #[test]
@@ -70,12 +71,15 @@ fn finish_unpushed_commits_requires_force() {
     repo.local_git(&["commit", "--allow-empty", "-m", "local only"]);
 
     // Without --force: should fail with a clear message
-    common::git_mate()
-        .args(["finish", "feature/x"])
+    let output = common::git_mate()
+        .args(["--json", "finish", "feature/x"])
         .current_dir(repo.local_path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unpushed commits"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["unpushed commits"]);
 
     // With --force: should succeed
     common::git_mate()
@@ -314,4 +318,51 @@ fn finish_completion_offers_only_linked_worktree_branches() {
     let branches: Vec<&str> = candidates.lines().filter(|c| !c.starts_with('-')).collect();
 
     assert_eq!(branches, vec!["linked-branch"]);
+}
+
+#[test]
+fn json_reports_where_the_branch_was_finished() {
+    let repo = common::RepoWithoutRemote::new();
+    let finish = |dir: &std::path::Path, args: &[&str]| {
+        let output = common::git_mate()
+            .args(["--json", "finish"])
+            .args(args)
+            .current_dir(dir)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        common::parse_single_json(&output)["data"].clone()
+    };
+
+    // Checked out in the main worktree: switched back to the default branch.
+    repo.git(&["checkout", "-q", "-b", "feature/main"]);
+    let data = finish(repo.path(), &[]);
+    assert_eq!(data["branch"], "feature/main");
+    assert_eq!(data["worktree"], "main");
+    assert_eq!(data["switchedTo"], "main");
+
+    // Checked out in a linked worktree: the worktree is removed.
+    let wt_path = repo.path().join("feature-linked-wt");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feature/linked",
+        wt_path.to_str().unwrap(),
+        "main",
+    ]);
+    let data = finish(repo.path(), &["feature/linked"]);
+    assert_eq!(data["worktree"], "linked");
+    assert_eq!(data["path"], wt_path.to_str().unwrap());
+    assert!(data.get("switchedTo").is_none());
+
+    // Not checked out anywhere: only the branch is deleted.
+    repo.git(&["branch", "feature/loose"]);
+    let data = finish(repo.path(), &["feature/loose"]);
+    assert_eq!(data["branch"], "feature/loose");
+    assert!(data.get("worktree").is_none());
+    assert!(data.get("path").is_none());
 }

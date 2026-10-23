@@ -65,7 +65,7 @@ fn no_default_branch() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["--from"]);
+    common::assert_json_error(&output, &["--from"]);
 }
 
 #[test]
@@ -346,7 +346,7 @@ fn worktree_mode_invalid_branch_name_fails() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["invalid branch name"]);
+    common::assert_json_error(&output, &["invalid branch name"]);
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn worktree_mode_missing_config_fails() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["mate.worktreeRoot"]);
+    common::assert_json_error(&output, &["mate.worktreeRoot"]);
 }
 
 #[test]
@@ -384,7 +384,7 @@ fn invalid_default_branch_mode_config_fails() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["mate.defaultBranchMode"]);
+    common::assert_json_error(&output, &["mate.defaultBranchMode"]);
 }
 
 #[test]
@@ -459,7 +459,7 @@ fn worktree_mode_rejects_default_branch() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["default branch", "main worktree"]);
+    common::assert_json_error(&output, &["default branch", "main worktree"]);
 
     let repo_name = setup.local_path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("main");
@@ -535,7 +535,7 @@ fn worktree_mode_requires_decision_for_dirty_starting_branch_in_other_worktree()
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["--take-changes", "--start-fresh"]);
+    common::assert_json_error(&output, &["--take-changes", "--start-fresh"]);
     assert_eq!(
         std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
         "changed\n"
@@ -674,7 +674,7 @@ fn main_worktree_mode_rejects_start_fresh_when_destination_is_dirty() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["cannot use --start-fresh"]);
+    common::assert_json_error(&output, &["cannot use --start-fresh"]);
 }
 
 #[test]
@@ -817,7 +817,7 @@ fn main_worktree_mode_requires_take_changes_for_dirty_unrelated_branch() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["--take-changes"]);
+    common::assert_json_error(&output, &["--take-changes"]);
     assert_eq!(repo.current_branch(), "feat/old");
 }
 
@@ -843,7 +843,7 @@ fn main_worktree_mode_rejects_start_fresh_in_place() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["--start-fresh"]);
+    common::assert_json_error(&output, &["--start-fresh"]);
     assert_eq!(repo.current_branch(), "main");
 }
 
@@ -949,27 +949,6 @@ fn from_dot_on_detached_head_uses_commit() {
     assert_eq!(repo.head_commit(), head);
 }
 
-fn parse_single_json(stdout: &[u8]) -> serde_json::Value {
-    let text = String::from_utf8(stdout.to_vec()).unwrap();
-    assert_eq!(
-        text.lines().count(),
-        1,
-        "stdout must be exactly one JSON line, got: {text:?}"
-    );
-    serde_json::from_str(&text).unwrap()
-}
-
-/// Asserts that a failed `--json` run reported an error mentioning each of
-/// `needles`.
-fn assert_json_error(stdout: &[u8], needles: &[&str]) {
-    let json = parse_single_json(stdout);
-    assert_eq!(json["ok"], false);
-    let message = json["error"]["message"].as_str().unwrap();
-    for needle in needles {
-        assert!(message.contains(needle), "unexpected error: {message}");
-    }
-}
-
 #[test]
 fn json_linked_worktree_success() {
     let repo = common::RepoWithoutRemote::new();
@@ -999,7 +978,7 @@ fn json_linked_worktree_success() {
             .output()
             .unwrap();
         assert!(output.status.success());
-        let json = parse_single_json(&output.stdout);
+        let json = common::parse_single_json(&output.stdout);
         let wt_path =
             std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, branch)).unwrap();
         let main_path = std::fs::canonicalize(repo.path()).unwrap();
@@ -1025,7 +1004,7 @@ fn json_main_worktree_with_remote() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json = parse_single_json(&output.stdout);
+    let json = common::parse_single_json(&output.stdout);
     assert_eq!(json["data"]["worktree"], "main");
     assert_eq!(json["data"]["fetched"], true);
     assert_eq!(json["data"]["upstream"], "origin/feat/json");
@@ -1042,7 +1021,7 @@ fn json_error_envelope() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let json = parse_single_json(&output.stdout);
+    let json = common::parse_single_json(&output.stdout);
     assert_eq!(json["ok"], false);
     assert_eq!(json["error"]["code"], "error");
     assert!(json.get("data").is_none());
@@ -1073,7 +1052,7 @@ fn json_stash_reapply_failure_reports_created_branch() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let json = parse_single_json(&output.stdout);
+    let json = common::parse_single_json(&output.stdout);
     assert_eq!(json["ok"], false);
     assert_eq!(json["error"]["code"], "stash_reapply_failed");
     assert_eq!(json["data"]["branch"], "feat/x");
@@ -1241,7 +1220,7 @@ fn invalid_changes_config_fails() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["mate.new.changes"]);
+    common::assert_json_error(&output, &["mate.new.changes"]);
     assert!(!repo.branch_exists("feat/x"));
 }
 
@@ -1317,7 +1296,7 @@ fn invalid_copy_config_fails() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["mate.new.copyConfig"]);
+    common::assert_json_error(&output, &["mate.new.copyConfig"]);
 }
 
 fn new_reports_fetched(setup: &common::RepoWithRemote, args: &[&str]) -> bool {
@@ -1328,7 +1307,7 @@ fn new_reports_fetched(setup: &common::RepoWithRemote, args: &[&str]) -> bool {
         .output()
         .unwrap();
     assert!(output.status.success());
-    parse_single_json(&output.stdout)["data"]["fetched"]
+    common::parse_single_json(&output.stdout)["data"]["fetched"]
         .as_bool()
         .unwrap()
 }
@@ -1383,7 +1362,7 @@ fn invalid_fetch_config_fails() {
         .get_output()
         .stdout
         .clone();
-    assert_json_error(&output, &["mate.new.fetch"]);
+    common::assert_json_error(&output, &["mate.new.fetch"]);
 }
 
 #[test]
@@ -1395,7 +1374,7 @@ fn reports_starting_point() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json = parse_single_json(&output.stdout);
+    let json = common::parse_single_json(&output.stdout);
     assert_eq!(json["data"]["branch"], "feat/x");
     assert_eq!(json["data"]["from"], "origin/main");
 }
@@ -1412,7 +1391,7 @@ fn reports_worktree_path() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json = parse_single_json(&output.stdout);
+    let json = common::parse_single_json(&output.stdout);
     let wt_path = std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, "feat/x")).unwrap();
     assert_eq!(json["data"]["from"], "main");
     assert_eq!(json["data"]["path"], wt_path.to_str().unwrap());

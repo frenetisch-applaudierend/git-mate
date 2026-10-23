@@ -52,7 +52,12 @@ fn main() {
 
     crate::output::set_json_mode(cli.json);
 
-    if cli.json && !matches!(cli.command, Commands::Sync(_) | Commands::New(_)) {
+    if cli.json
+        && !matches!(
+            cli.command,
+            Commands::Sync(_) | Commands::New(_) | Commands::Checkout(_) | Commands::Finish(_)
+        )
+    {
         unimplemented!("--json is not yet implemented for this command");
     }
 

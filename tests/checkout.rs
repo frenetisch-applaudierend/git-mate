@@ -1,6 +1,5 @@
 mod common;
 
-use predicates::prelude::*;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -48,7 +47,9 @@ fn co_completion_includes_remote_only_branches() {
     );
     // The `origin/HEAD` pointer must not leak into completions.
     assert!(
-        !branches.iter().any(|b| b.ends_with("/HEAD") || *b == "origin"),
+        !branches
+            .iter()
+            .any(|b| b.ends_with("/HEAD") || *b == "origin"),
         "remote HEAD pointer should not appear, got: {branches:?}"
     );
 }
@@ -291,12 +292,17 @@ fn checkout_worktree_noop_if_path_exists() {
         .success();
 
     // Second call should be a no-op
-    common::git_mate()
-        .args(["checkout", "existing", "--linked-worktree"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("already checked out"));
+        .get_output()
+        .stdout
+        .clone();
+    let json = common::parse_single_json(&output);
+    assert_eq!(json["data"]["action"], "navigated");
+    assert_eq!(json["data"]["worktree"], "linked");
 }
 
 #[test]
@@ -313,14 +319,15 @@ fn checkout_worktree_fails_if_directory_exists_but_is_not_worktree() {
     let wt_path = wt_root.path().join(repo_name).join("existing");
     std::fs::create_dir_all(&wt_path).unwrap();
 
-    common::git_mate()
-        .args(["checkout", "existing", "--linked-worktree"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "does not appear to be a git worktree",
-        ));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["does not appear to be a git worktree"]);
 }
 
 #[test]
@@ -338,12 +345,15 @@ fn checkout_worktree_fails_if_file_exists_at_path() {
     std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
     std::fs::write(&wt_path, "not a directory").unwrap();
 
-    common::git_mate()
-        .args(["checkout", "existing", "--linked-worktree"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "existing", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not a directory"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["not a directory"]);
 }
 
 #[test]
@@ -351,25 +361,31 @@ fn checkout_worktree_missing_config_fails() {
     let repo = common::RepoWithoutRemote::new();
     repo.git(&["branch", "some-branch"]);
 
-    common::git_mate()
-        .args(["checkout", "some-branch", "--linked-worktree"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "some-branch", "--linked-worktree"])
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("mate.worktreeRoot"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["mate.worktreeRoot"]);
 }
 
 #[test]
 fn checkout_without_branch_and_without_target_flag_fails() {
     let repo = common::RepoWithoutRemote::new();
 
-    common::git_mate()
-        .arg("checkout")
+    let output = common::git_mate()
+        .args(["--json", "checkout"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("branch name is required"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["branch name is required"]);
 }
 
 #[test]
@@ -378,12 +394,15 @@ fn checkout_target_without_branch_fails_on_detached_head() {
     let sha = repo.head_commit();
     repo.git(&["checkout", "--detach", &sha]);
 
-    common::git_mate()
-        .args(["checkout", "-w"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "-w"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("detached HEAD"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["detached HEAD"]);
 }
 
 #[test]
@@ -395,12 +414,20 @@ fn checkout_in_place_navigates_to_existing_worktree() {
     repo.git(&["branch", "feature/x"]);
     repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/x"]);
 
-    common::git_mate()
-        .args(["checkout", "feature/x"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "feature/x"])
         .current_dir(repo.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains(wt_path.to_str().unwrap()));
+        .get_output()
+        .stdout
+        .clone();
+    let json = common::parse_single_json(&output);
+    assert_eq!(json["data"]["action"], "navigated");
+    assert_eq!(
+        json["data"]["path"],
+        std::fs::canonicalize(&wt_path).unwrap().to_str().unwrap()
+    );
 }
 
 #[test]
@@ -505,12 +532,20 @@ fn checkout_worktree_navigates_to_existing_worktree() {
     repo.git(&["branch", "feature/x"]);
     repo.git(&["worktree", "add", wt_path.to_str().unwrap(), "feature/x"]);
 
-    common::git_mate()
-        .args(["checkout", "feature/x", "--linked-worktree"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "feature/x", "--linked-worktree"])
         .current_dir(repo.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains(wt_path.to_str().unwrap()));
+        .get_output()
+        .stdout
+        .clone();
+    let json = common::parse_single_json(&output);
+    assert_eq!(json["data"]["action"], "navigated");
+    assert_eq!(
+        json["data"]["path"],
+        std::fs::canonicalize(&wt_path).unwrap().to_str().unwrap()
+    );
 }
 
 #[test]
@@ -693,12 +728,15 @@ fn checkout_linked_flag_fails_on_dirty_main_without_stash() {
     repo.git(&["checkout", "-b", "feature/dirty"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["checkout", "feature/dirty", "-w"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "feature/dirty", "-w"])
         .current_dir(repo.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("retry with --stash"));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["retry with --stash"]);
 
     assert_eq!(repo.current_branch(), "feature/dirty");
 }
@@ -767,14 +805,15 @@ fn checkout_main_flag_still_fails_if_main_worktree_is_dirty() {
     repo.git(&["commit", "-m", "add tracked file"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["checkout", "feature/linked", "-m", "--stash"])
+    let output = common::git_mate()
+        .args(["--json", "checkout", "feature/linked", "-m", "--stash"])
         .current_dir(&wt_path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "main worktree has uncommitted changes",
-        ));
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["main worktree has uncommitted changes"]);
 }
 
 #[test]
@@ -851,4 +890,48 @@ fn create_linked_worktree_from(
         from_ref,
     ]);
     wt_path
+}
+
+#[test]
+fn json_reports_checkout_result() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
+    repo.git(&["branch", "feature/main"]);
+    repo.git(&["branch", "feature/linked"]);
+    let checkout = |args: &[&str]| {
+        let output = common::git_mate()
+            .args(["--json", "checkout"])
+            .args(args)
+            .current_dir(repo.path())
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        common::parse_single_json(&output)["data"].clone()
+    };
+
+    let data = checkout(&["feature/main"]);
+    assert_eq!(data["branch"], "feature/main");
+    assert_eq!(data["worktree"], "main");
+    assert_eq!(data["action"], "switched");
+    assert_eq!(data["stashed"], false);
+
+    let data = checkout(&["feature/linked", "-w"]);
+    assert_eq!(data["worktree"], "linked");
+    assert_eq!(data["action"], "created");
+    let repo_name = repo.path().file_name().unwrap().to_str().unwrap();
+    let wt_path =
+        std::fs::canonicalize(wt_root.path().join(repo_name).join("feature/linked")).unwrap();
+    assert_eq!(data["path"], wt_path.to_str().unwrap());
+
+    // feature/main is checked out in the main worktree; moving it out.
+    let data = checkout(&["feature/main", "-w"]);
+    assert_eq!(data["worktree"], "linked");
+    assert_eq!(data["action"], "moved");
 }

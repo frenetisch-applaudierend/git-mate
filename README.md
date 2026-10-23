@@ -71,6 +71,9 @@ worktree and reapply them in the destination. If reapplying fails, the stash ent
 
 The default branch is only allowed in the main worktree, so `-w` rejects it.
 
+With `--json`, `git mate checkout` prints a single JSON document on stdout describing the result
+(`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — and `stashed`).
+
 ```bash
 git mate checkout feature/login                 # follow default placement, or jump to where it's already checked out
 git mate co feature/login                       # same, using the alias
@@ -85,6 +88,9 @@ git mate checkout feature/login -m --stash      # move dirty changes from linked
 ### `git mate finish [<branch>]`
 
 You're done with a branch. Removes the worktree (if linked) or switches to the default branch (if in main worktree), then deletes the local branch ref.
+
+With `--json`, it prints a single JSON document on stdout (`branch`, plus `worktree` and `path` if the
+branch was checked out, and `switchedTo` if the main worktree switched branches).
 
 ```bash
 git mate finish                     # finish current branch/worktree

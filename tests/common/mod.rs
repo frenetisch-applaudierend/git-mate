@@ -286,3 +286,25 @@ fn rev_parse_output(dir: &std::path::Path, args: &[&str]) -> String {
         .unwrap();
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
+
+/// Parses a `--json` run's stdout, which must be exactly one JSON line.
+pub fn parse_single_json(stdout: &[u8]) -> serde_json::Value {
+    let text = String::from_utf8(stdout.to_vec()).unwrap();
+    assert_eq!(
+        text.lines().count(),
+        1,
+        "stdout must be exactly one JSON line, got: {text:?}"
+    );
+    serde_json::from_str(&text).unwrap()
+}
+
+/// Asserts that a failed `--json` run reported an error mentioning each of
+/// `needles`.
+pub fn assert_json_error(stdout: &[u8], needles: &[&str]) {
+    let json = parse_single_json(stdout);
+    assert_eq!(json["ok"], false);
+    let message = json["error"]["message"].as_str().unwrap();
+    for needle in needles {
+        assert!(message.contains(needle), "unexpected error: {message}");
+    }
+}
