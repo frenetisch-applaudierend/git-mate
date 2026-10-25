@@ -66,6 +66,14 @@ pub struct CommandError {
 }
 
 impl CommandError {
+    pub fn new(message: String, code: &'static str) -> Self {
+        Self {
+            message,
+            code,
+            data: None,
+        }
+    }
+
     pub fn with_data<T: serde::Serialize>(message: String, code: &'static str, data: T) -> Self {
         Self {
             message,

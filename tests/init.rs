@@ -52,3 +52,18 @@ fn pwsh_init_script_is_valid_shell() {
 
     assert_valid_syntax("pwsh", &["-NoProfile", "-Command"], &parse_cmd);
 }
+
+#[test]
+fn json_is_rejected_with_an_error_envelope() {
+    let output = common::git_mate()
+        .args(["--json", "init", "zsh"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json = common::parse_single_json(&output);
+    assert_eq!(json["command"], "init");
+    assert_eq!(json["error"]["code"], "unsupported");
+    common::assert_json_error(&output, &["--json is not supported for init"]);
+}

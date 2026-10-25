@@ -52,18 +52,17 @@ fn main() {
 
     crate::output::set_json_mode(cli.json);
 
-    if cli.json
-        && !matches!(
-            cli.command,
-            Commands::Sync(_) | Commands::New(_) | Commands::Checkout(_) | Commands::Finish(_)
-        )
-    {
-        unimplemented!("--json is not yet implemented for this command");
-    }
-
     let command_name = command_name(&cli.command);
 
     let result: Result<(), crate::output::CommandError> = match cli.command {
+        // `init` prints a shell script to eval, and `_protocol` is internal:
+        // neither has a result to describe in JSON.
+        Commands::Init(_) | Commands::Protocol(_) if cli.json => {
+            Err(crate::output::CommandError::new(
+                format!("--json is not supported for {command_name}"),
+                "unsupported",
+            ))
+        }
         Commands::Checkout(args) => cmd::checkout::run(args).map_err(Into::into),
         Commands::Finish(args) => cmd::finish::run(args).map_err(Into::into),
         Commands::Init(args) => cmd::init::run(args).map_err(Into::into),
