@@ -55,7 +55,9 @@ git mate new feature/login -w --start-fresh  # leave uncommitted changes behind
 
 ### `git mate checkout <branch>` (alias: `co`)
 
-Checks out an existing branch — local or remote.
+Checks out an existing branch — local or remote. If the branch is not known locally (neither as a
+local branch nor as a remote-tracking branch), the remotes are fetched first, so a branch someone just
+pushed can be checked out right away.
 
 Without `-m` or `-w`, this follows `mate.defaultBranchMode` for branches that are not checked out yet.
 If the branch is already checked out in any worktree, it navigates there instead. The default branch
@@ -72,7 +74,8 @@ worktree and reapply them in the destination. If reapplying fails, the stash ent
 The default branch is only allowed in the main worktree, so `-w` rejects it.
 
 With `--json`, `git mate checkout` prints a single JSON document on stdout describing the result
-(`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — and `stashed`).
+(`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — `stashed`
+and `fetched`).
 
 ```bash
 git mate checkout feature/login                 # follow default placement, or jump to where it's already checked out

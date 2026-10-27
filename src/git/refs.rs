@@ -4,6 +4,19 @@ pub fn resolve_ref(refname: &str) -> Result<String, String> {
     run_output(&["rev-parse", refname]).map(|s| s.trim().to_string())
 }
 
+/// Whether `rev` names a commit (a branch, tag, or any other revision).
+pub fn commit_exists(rev: &str) -> bool {
+    std::process::Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 pub fn is_ancestor(ancestor: &str, descendant: &str) -> Result<bool, String> {
     // exit 0 = is ancestor, exit 1 = is not ancestor; both are valid outcomes
     let output = std::process::Command::new("git")

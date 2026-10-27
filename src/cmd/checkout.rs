@@ -37,6 +37,8 @@ struct CheckoutData {
     action: &'static str,
     /// Uncommitted changes were stashed and reapplied at the destination.
     stashed: bool,
+    /// The remotes were fetched because the branch was not known locally.
+    fetched: bool,
 }
 
 impl CheckoutData {
@@ -52,13 +54,15 @@ impl CheckoutData {
             path: path.to_path_buf(),
             action,
             stashed: false,
+            fetched: false,
         }
     }
 }
 
 pub fn run(args: CheckoutArgs) -> Result<(), String> {
     let branch = resolve_branch(&args)?;
-    let data = if args.main_worktree || args.linked_worktree {
+    let fetched = fetch_if_unknown(&branch)?;
+    let mut data = if args.main_worktree || args.linked_worktree {
         let target = resolve_checkout_target(&args, &branch)?;
         match target {
             crate::git::OperationTarget::LinkedWorktree => {
@@ -71,6 +75,7 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
     } else {
         default_checkout(&branch)
     }?;
+    data.fetched = fetched;
     if crate::output::json_mode() {
         crate::output::emit_json_success("checkout", data);
     }
@@ -106,6 +111,28 @@ fn resolve_branch(args: &CheckoutArgs) -> Result<String, String> {
         );
     }
     Ok(branch)
+}
+
+/// Fetch all remotes when `branch` is neither a local ref nor a
+/// remote-tracking branch yet, so a branch someone just pushed can be checked
+/// out without a separate fetch. Returns whether a fetch happened.
+fn fetch_if_unknown(branch: &str) -> Result<bool, String> {
+    if crate::git::commit_exists(branch) {
+        return Ok(false);
+    }
+    let remotes = crate::git::list_remotes()?;
+    let tracked = remotes
+        .iter()
+        .any(|remote| crate::git::commit_exists(&format!("refs/remotes/{remote}/{branch}")));
+    if remotes.is_empty() || tracked {
+        return Ok(false);
+    }
+    crate::output::info(&format!(
+        "{} not found locally, fetching",
+        console::style(branch).bold()
+    ));
+    crate::git::fetch_all()?;
+    Ok(true)
 }
 
 fn default_checkout(branch: &str) -> Result<CheckoutData, String> {

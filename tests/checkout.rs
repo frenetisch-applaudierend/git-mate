@@ -935,3 +935,41 @@ fn json_reports_checkout_result() {
     assert_eq!(data["worktree"], "linked");
     assert_eq!(data["action"], "moved");
 }
+
+fn checkout_json(dir: &std::path::Path, branch: &str) -> serde_json::Value {
+    let output = common::git_mate()
+        .args(["--json", "checkout", branch])
+        .current_dir(dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    common::parse_single_json(&output)["data"].clone()
+}
+
+#[test]
+fn checkout_fetches_a_branch_not_known_locally() {
+    let repo = common::RepoWithRemote::new();
+    // Pushed after the clone's last fetch: no origin/late-feature yet.
+    repo.push_branch_to_remote("late-feature");
+    assert!(!repo.remote_tracking_exists("origin/late-feature"));
+
+    let data = checkout_json(repo.local_path(), "late-feature");
+    assert_eq!(data["fetched"], true);
+    assert_eq!(data["branch"], "late-feature");
+    assert_eq!(repo.local_current_branch(), "late-feature");
+}
+
+#[test]
+fn checkout_does_not_fetch_a_known_branch() {
+    let repo = common::RepoWithRemote::new();
+    repo.push_branch_to_remote("known-feature");
+    repo.local_fetch();
+    let fetched_tip = repo.branch_tip("origin/known-feature");
+    repo.push_commit_to_remote_branch("known-feature", "newer");
+
+    let data = checkout_json(repo.local_path(), "known-feature");
+    assert_eq!(data["fetched"], false);
+    assert_eq!(repo.branch_tip("origin/known-feature"), fetched_tip);
+}

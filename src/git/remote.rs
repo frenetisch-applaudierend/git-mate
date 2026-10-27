@@ -9,6 +9,13 @@ pub fn list_remote_tracking_refs() -> Result<Vec<String>, String> {
         .collect())
 }
 
+pub fn list_remotes() -> Result<Vec<String>, String> {
+    Ok(run_output(&["remote"])?
+        .lines()
+        .map(|s| s.to_string())
+        .collect())
+}
+
 pub fn fetch(remote: &str) -> Result<(), String> {
     run(&["fetch", remote])
 }

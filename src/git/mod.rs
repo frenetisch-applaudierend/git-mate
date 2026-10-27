@@ -17,9 +17,10 @@ pub use merge::{
     rebase_in, reset_hard_in,
 };
 pub use refs::{
-    commit_summary, count_commits, is_ancestor, resolve_ref, update_ref, update_ref_from,
+    commit_exists, commit_summary, count_commits, is_ancestor, resolve_ref, update_ref,
+    update_ref_from,
 };
-pub use remote::{fetch, fetch_all, list_remote_tracking_refs};
+pub use remote::{fetch, fetch_all, list_remote_tracking_refs, list_remotes};
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
     OperationTarget, WorktreeEntry, add_worktree, current_worktree_root, find_main_worktree,
