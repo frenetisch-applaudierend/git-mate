@@ -973,3 +973,17 @@ fn checkout_does_not_fetch_a_known_branch() {
     assert_eq!(data["fetched"], false);
     assert_eq!(repo.branch_tip("origin/known-feature"), fetched_tip);
 }
+
+#[test]
+fn checkout_fails_clearly_when_the_branch_is_not_on_any_remote() {
+    let repo = common::RepoWithRemote::new();
+    let output = common::git_mate()
+        .args(["--json", "checkout", "no-such-branch"])
+        .current_dir(repo.local_path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error(&output, &["no-such-branch", "not found", "origin"]);
+}

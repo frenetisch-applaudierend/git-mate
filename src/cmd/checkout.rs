@@ -115,24 +115,36 @@ fn resolve_branch(args: &CheckoutArgs) -> Result<String, String> {
 
 /// Fetch all remotes when `branch` is neither a local ref nor a
 /// remote-tracking branch yet, so a branch someone just pushed can be checked
-/// out without a separate fetch. Returns whether a fetch happened.
+/// out without a separate fetch. Returns whether a fetch happened, and fails
+/// when the branch cannot be found even after fetching.
 fn fetch_if_unknown(branch: &str) -> Result<bool, String> {
-    if crate::git::commit_exists(branch) {
+    let remotes = crate::git::list_remotes()?;
+    if is_known(branch, &remotes) {
         return Ok(false);
     }
-    let remotes = crate::git::list_remotes()?;
-    let tracked = remotes
-        .iter()
-        .any(|remote| crate::git::commit_exists(&format!("refs/remotes/{remote}/{branch}")));
-    if remotes.is_empty() || tracked {
-        return Ok(false);
+    if remotes.is_empty() {
+        return Err(format!("branch {branch} not found"));
     }
     crate::output::info(&format!(
         "{} not found locally, fetching",
         console::style(branch).bold()
     ));
     crate::git::fetch_all()?;
+    if !is_known(branch, &remotes) {
+        return Err(format!(
+            "branch {branch} not found, neither locally nor on {}",
+            remotes.join(", ")
+        ));
+    }
     Ok(true)
+}
+
+/// Whether `branch` names a local ref or a branch on one of the `remotes`.
+fn is_known(branch: &str, remotes: &[String]) -> bool {
+    crate::git::commit_exists(branch)
+        || remotes
+            .iter()
+            .any(|remote| crate::git::commit_exists(&format!("refs/remotes/{remote}/{branch}")))
 }
 
 fn default_checkout(branch: &str) -> Result<CheckoutData, String> {
