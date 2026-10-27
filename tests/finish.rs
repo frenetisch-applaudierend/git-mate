@@ -366,3 +366,113 @@ fn json_reports_where_the_branch_was_finished() {
     assert!(data.get("worktree").is_none());
     assert!(data.get("path").is_none());
 }
+
+/// Run `git-mate <args>` from `dir` after `prepare` (a shell snippet run
+/// inside `dir`) has deleted it, the way a worktree vanishes when it is
+/// removed from another shell.
+fn git_mate_in_deleted_dir(
+    dir: &std::path::Path,
+    prepare: &str,
+    args: &[&str],
+    proto: &std::path::Path,
+) -> std::process::Output {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("cd \"$1\" && {prepare} && shift && exec \"$@\""))
+        .arg("sh")
+        .arg(dir)
+        .arg(assert_cmd::cargo::cargo_bin!("git-mate"))
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_MATE_PROTO", proto)
+        .current_dir(std::env::temp_dir())
+        .output()
+        .unwrap()
+}
+
+/// A repo with `mate.worktreeRoot` set and linked worktrees for `branches`.
+fn repo_with_linked_worktrees(
+    branches: &[&str],
+) -> (
+    common::RepoWithoutRemote,
+    tempfile::TempDir,
+    std::path::PathBuf,
+) {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = tempfile::TempDir::new().unwrap();
+    repo.git(&[
+        "config",
+        "mate.worktreeRoot",
+        wt_root.path().to_str().unwrap(),
+    ]);
+    let project = repo.path().file_name().unwrap().to_str().unwrap();
+    let container = std::fs::canonicalize(wt_root.path()).unwrap().join(project);
+    for branch in branches {
+        let path = container.join(branch);
+        repo.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            branch,
+            path.to_str().unwrap(),
+            "main",
+        ]);
+    }
+    (repo, wt_root, container)
+}
+
+#[test]
+fn finish_in_a_worktree_finished_elsewhere_reports_it_as_already_finished() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/gone", "other"]);
+    let main = std::fs::canonicalize(repo.path()).unwrap();
+    let wt = container.join("feature/gone");
+    let (_guard, proto) = common::proto_file();
+
+    let prepare = format!(
+        "git -C '{main}' worktree remove '{wt}' && git -C '{main}' branch -q -D feature/gone",
+        main = main.display(),
+        wt = wt.display()
+    );
+    let output = git_mate_in_deleted_dir(&wt, &prepare, &["--json", "finish"], &proto);
+    assert!(output.status.success(), "{output:?}");
+
+    let data = common::parse_single_json(&output.stdout)["data"].clone();
+    assert_eq!(data["branch"], "feature/gone");
+    assert_eq!(data["alreadyFinished"], true);
+    let proto = std::fs::read_to_string(&proto).unwrap();
+    assert!(
+        proto.contains(&format!("CD:{}", main.display())),
+        "{proto:?}"
+    );
+}
+
+#[test]
+fn finish_in_a_deleted_worktree_directory_finishes_its_branch() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/deleted", "other"]);
+    let wt = container.join("feature/deleted");
+    let (_guard, proto) = common::proto_file();
+
+    let prepare = format!("rm -rf '{}'", wt.display());
+    let output = git_mate_in_deleted_dir(&wt, &prepare, &["--json", "finish"], &proto);
+    assert!(output.status.success(), "{output:?}");
+
+    let data = common::parse_single_json(&output.stdout)["data"].clone();
+    assert_eq!(data["branch"], "feature/deleted");
+    assert!(data.get("alreadyFinished").is_none());
+    assert!(!repo.branch_exists("feature/deleted"));
+}
+
+#[test]
+fn deleted_directory_outside_any_repository_is_an_error() {
+    let scratch = tempfile::TempDir::new().unwrap();
+    let dir = scratch.path().join("gone");
+    std::fs::create_dir(&dir).unwrap();
+    let (_guard, proto) = common::proto_file();
+
+    let prepare = format!("rmdir '{}'", dir.display());
+    let output = git_mate_in_deleted_dir(&dir, &prepare, &["--json", "finish"], &proto);
+    assert!(!output.status.success());
+    common::assert_json_error(&output.stdout, &["no longer exists"]);
+}

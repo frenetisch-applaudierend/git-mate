@@ -95,6 +95,11 @@ You're done with a branch. Removes the worktree (if linked) or switches to the d
 With `--json`, it prints a single JSON document on stdout (`branch`, plus `worktree` and `path` if the
 branch was checked out, and `switchedTo` if the main worktree switched branches).
 
+If the worktree you are in was already removed (say, finished from another shell), `git mate finish`
+recognizes the vanished directory, finishes whatever is left of its branch and takes you to the main
+worktree (`alreadyFinished` is `true` in `--json` output when nothing was left). Other commands run
+from a vanished worktree continue in the main worktree as well.
+
 ```bash
 git mate finish                     # finish current branch/worktree
 git mate finish feature/login       # finish a specific branch from anywhere

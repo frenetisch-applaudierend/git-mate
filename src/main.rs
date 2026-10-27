@@ -2,6 +2,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::CompleteEnv;
 mod cmd;
 mod complete;
+mod cwd;
 mod fs;
 mod git;
 mod output;
@@ -53,6 +54,15 @@ fn main() {
     crate::output::set_json_mode(cli.json);
 
     let command_name = command_name(&cli.command);
+
+    let recovered = match cli.command {
+        Commands::Init(_) | Commands::Protocol(_) => Ok(()),
+        _ => crate::cwd::recover(),
+    };
+    if let Err(e) = recovered {
+        crate::output::error(command_name, &e.into());
+        std::process::exit(1);
+    }
 
     let result: Result<(), crate::output::CommandError> = match cli.command {
         // `init` prints a shell script to eval, and `_protocol` is internal:

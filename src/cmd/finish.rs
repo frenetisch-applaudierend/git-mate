@@ -22,6 +22,9 @@ struct FinishData {
     /// The branch the main worktree switched to in its place.
     #[serde(skip_serializing_if = "Option::is_none")]
     switched_to: Option<String>,
+    /// The branch and its worktree were already gone; nothing was left to do.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    already_finished: bool,
 }
 
 pub fn run(args: FinishArgs) -> Result<(), String> {
@@ -40,9 +43,10 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         .filter(|wt| cwd.starts_with(&wt.path))
         .max_by_key(|wt| wt.path.components().count());
 
-    let target_branch = match args.branch {
-        Some(ref b) => b.clone(),
-        None => current_wt
+    let target_branch = match (args.branch, crate::cwd::vanished()) {
+        (Some(b), _) => b,
+        (None, Some(gone)) => vanished_branch(gone, &worktrees)?,
+        (None, None) => current_wt
             .and_then(|wt| wt.branch.clone())
             .ok_or("could not determine current branch (detached HEAD?)")?,
     };
@@ -50,6 +54,31 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
     let target_wt = worktrees
         .iter()
         .find(|wt| wt.branch.as_deref() == Some(&target_branch));
+
+    if target_wt.is_none() && !crate::git::commit_exists(&format!("refs/heads/{target_branch}")) {
+        let Some(gone) = crate::cwd::vanished() else {
+            return Err(format!("branch {target_branch} not found"));
+        };
+        // Finished from another shell, which removed the worktree this one
+        // was in.
+        crate::output::success(&format!(
+            "{} is already finished",
+            console::style(&target_branch).bold()
+        ));
+        if crate::output::json_mode() {
+            crate::output::emit_json_success(
+                "finish",
+                FinishData {
+                    branch: target_branch,
+                    worktree: Some("linked"),
+                    path: Some(gone.to_path_buf()),
+                    switched_to: None,
+                    already_finished: true,
+                },
+            );
+        }
+        return Ok(());
+    }
 
     if !args.force && crate::git::has_unpushed_commits(&main_wt_path, &target_branch)? {
         return Err(format!(
@@ -62,6 +91,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         worktree: None,
         path: None,
         switched_to: None,
+        already_finished: false,
     };
     match target_wt {
         Some(wt) if wt.path == main_wt.path => {
@@ -83,7 +113,12 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         }
         Some(wt) => {
             let in_this_wt = cwd.starts_with(&wt.path);
-            crate::git::remove_worktree(&wt.path, args.force)?;
+            if wt.path.exists() {
+                crate::git::remove_worktree(&wt.path, args.force)?;
+            } else {
+                // Its directory was deleted without git; drop the stale entry.
+                crate::git::prune_worktrees()?;
+            }
             if let Ok(root) = crate::git::read_worktree_root() {
                 crate::fs::remove_empty_parent_dirs(&wt.path, &root);
             }
@@ -117,4 +152,37 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         crate::output::emit_json_success("finish", data);
     }
     Ok(())
+}
+
+/// The branch of the worktree the command was started in, which no longer
+/// exists: a still-registered worktree at that path, or else the branch its
+/// path encodes under `<mate.worktreeRoot>/<project>/`.
+fn vanished_branch(
+    gone: &std::path::Path,
+    worktrees: &[crate::git::WorktreeEntry],
+) -> Result<String, String> {
+    if let Some(branch) = worktrees
+        .iter()
+        .skip(1)
+        .filter(|wt| gone.starts_with(&wt.path))
+        .max_by_key(|wt| wt.path.components().count())
+        .and_then(|wt| wt.branch.clone())
+    {
+        return Ok(branch);
+    }
+    let unknown = || {
+        format!(
+            "could not tell which branch {} belonged to; name the branch to finish",
+            crate::output::display_path(gone)
+        )
+    };
+    let placeholder = crate::git::worktree_path("_").map_err(|_| unknown())?;
+    let container = placeholder.parent().ok_or_else(unknown)?;
+    let container = std::fs::canonicalize(container).unwrap_or_else(|_| container.to_path_buf());
+    gone.strip_prefix(&container)
+        .ok()
+        .and_then(|rel| rel.to_str())
+        .filter(|rel| !rel.is_empty())
+        .map(str::to_string)
+        .ok_or_else(unknown)
 }

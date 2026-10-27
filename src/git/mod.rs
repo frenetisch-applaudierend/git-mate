@@ -23,7 +23,8 @@ pub use refs::{
 pub use remote::{fetch, fetch_all, list_remote_tracking_refs, list_remotes};
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
-    OperationTarget, WorktreeEntry, add_worktree, current_worktree_root, find_main_worktree,
-    is_main_worktree, is_worktree_clean, list_worktrees, read_worktree_root, remove_worktree,
-    resolve_operation_target, worktree_for_branch, worktree_path,
+    OperationTarget, WorktreeEntry, add_worktree, current_worktree_root, expand_tilde,
+    find_main_worktree, is_main_worktree, is_worktree_clean, list_worktrees, prune_worktrees,
+    read_worktree_root, remove_worktree, resolve_operation_target, worktree_for_branch,
+    worktree_path,
 };

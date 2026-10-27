@@ -60,7 +60,7 @@ pub fn read_worktree_root() -> Result<std::path::PathBuf, String> {
     Ok(expand_tilde(&value))
 }
 
-fn expand_tilde(path: &str) -> std::path::PathBuf {
+pub fn expand_tilde(path: &str) -> std::path::PathBuf {
     if let Some(rest) = path.strip_prefix("~/")
         && let Ok(home) = std::env::var("HOME")
     {
@@ -102,6 +102,10 @@ pub fn remove_worktree(path: &std::path::Path, force: bool) -> Result<(), String
     } else {
         run(&["worktree", "remove", path_str])
     }
+}
+
+pub fn prune_worktrees() -> Result<(), String> {
+    run(&["worktree", "prune"])
 }
 
 pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
