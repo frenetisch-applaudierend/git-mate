@@ -249,19 +249,20 @@ mod tests {
             detail: String::new(),
             warn: false,
             recommended,
+            bulk_delete_blocker: None,
         }
     }
 
     fn selection() -> Selection {
         Selection::new(&[
             candidate("merged", Choice::Delete),
-            candidate("unmerged", Choice::Keep),
+            candidate("unmerged", Choice::Later),
         ])
     }
 
     #[test]
     fn preselects_recommended_actions() {
-        assert_eq!(selection().choices, [Choice::Delete, Choice::Keep]);
+        assert_eq!(selection().choices, [Choice::Delete, Choice::Later]);
     }
 
     #[test]
@@ -272,7 +273,7 @@ mod tests {
         assert_eq!(selection.choices, [Choice::Delete, Choice::Delete]);
         selection.handle(&Key::ArrowUp);
         selection.handle(&Key::ArrowLeft);
-        assert_eq!(selection.choices, [Choice::Keep, Choice::Delete]);
+        assert_eq!(selection.choices, [Choice::Later, Choice::Delete]);
     }
 
     #[test]

@@ -17,15 +17,13 @@ pub enum Group {
     Updated,
     /// Skipped or failed for a reason the user should look at.
     Attention,
-    /// Remote gone and not merged: left alone on purpose.
-    NotMerged,
     /// Remote gone and offered for deletion (deleted, kept or candidate).
     Gone,
     /// Up to date or without upstream: only counted.
     Quiet,
 }
 
-/// A labelled, copyable command shown under an entry or a section.
+/// A labelled, copyable command shown under an entry.
 pub struct Hint {
     parts: Vec<(String, String)>,
 }
@@ -35,11 +33,6 @@ impl Hint {
         Self {
             parts: vec![(label.to_string(), command.into())],
         }
-    }
-
-    pub fn and(mut self, label: &str, command: impl Into<String>) -> Self {
-        self.parts.push((label.to_string(), command.into()));
-        self
     }
 
     fn render(&self) -> String {
@@ -241,18 +234,6 @@ impl BranchOutcome {
         )
     }
 
-    /// Remote gone, but the branch has changes not in the default branch.
-    /// The section title says so, so the entry itself carries no detail.
-    pub fn not_merged(branch: &str, reason: &str) -> Self {
-        Self::new(
-            branch,
-            "skipped",
-            Some(reason),
-            Group::NotMerged,
-            String::new(),
-        )
-    }
-
     pub fn failed(branch: &str, error: &str) -> Self {
         // git's stderr can span several lines; the first one says what failed.
         let first_line = error.lines().next().unwrap_or(error);
@@ -300,6 +281,11 @@ impl BranchOutcome {
     pub fn left_as_is(candidate: &Candidate) -> Self {
         Self::gone(candidate, "left-as-is", "remote deleted")
     }
+
+    /// Remote gone, and left alone by `--delete-pruned` for `reason`.
+    pub fn left_unasked(candidate: &Candidate, reason: &str) -> Self {
+        Self::gone(candidate, "left-as-is", reason)
+    }
 }
 
 /// A branch whose remote is gone and that is offered for deletion.
@@ -311,6 +297,9 @@ pub struct Candidate {
     pub warn: bool,
     /// The action preselected in the chooser.
     pub recommended: Choice,
+    /// Why `--delete-pruned` must leave this branch alone rather than delete
+    /// it without asking, if it must.
+    pub bulk_delete_blocker: Option<String>,
 }
 
 /// What to do with a branch whose remote is gone.
@@ -318,11 +307,15 @@ pub struct Candidate {
 #[serde(rename_all = "camelCase")]
 pub enum Choice {
     Delete,
+    /// Keep it and stop tracking the deleted upstream, so it is not offered
+    /// again.
     Keep,
+    /// Leave it as it is, so the next sync asks again.
+    Later,
 }
 
 impl Choice {
-    const ALL: [Choice; 2] = [Choice::Delete, Choice::Keep];
+    const ALL: [Choice; 3] = [Choice::Delete, Choice::Keep, Choice::Later];
 
     pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
@@ -338,6 +331,7 @@ impl Choice {
         match self {
             Choice::Delete => "delete",
             Choice::Keep => "keep",
+            Choice::Later => "ask later",
         }
     }
 
@@ -345,6 +339,7 @@ impl Choice {
         match self {
             Choice::Delete => Style::new().red(),
             Choice::Keep => Style::new().magenta(),
+            Choice::Later => Style::new(),
         }
     }
 }
@@ -358,7 +353,7 @@ pub enum DecisionRow {
     Deleted,
     /// Kept, and its deleted upstream no longer tracked.
     Kept,
-    /// Left untouched because the chooser was cancelled.
+    /// Left untouched: asked to, or the chooser was cancelled.
     Left,
     Failed(String),
 }
@@ -470,41 +465,25 @@ pub fn is_aligned(outcome: &BranchOutcome) -> bool {
     is_listed(outcome) && !outcome.detail.is_empty()
 }
 
-/// Print the updated, needs-attention and not-merged sections. Branches
-/// offered for deletion are printed separately by [`print_candidates`],
-/// next to the prompt that asks about them.
-pub fn print_sections(outcomes: &[BranchOutcome], default_branch: Option<&str>, column: usize) {
-    let not_merged_title = match default_branch {
-        Some(default_branch) => format!("Remote gone, not merged into {default_branch}"),
-        None => "Remote gone, not merged".to_string(),
-    };
+/// Print the updated and needs-attention sections. Branches offered for
+/// deletion are printed separately by [`print_preview`] or the chooser, next to the
+/// prompt that asks about them.
+pub fn print_sections(outcomes: &[BranchOutcome], column: usize) {
     print_section(
         style("Updated").bold(),
         outcomes.iter().filter(|o| o.group == Group::Updated),
         column,
-        None,
     );
     print_section(
         style("Needs attention").yellow().bold(),
         outcomes.iter().filter(|o| o.group == Group::Attention),
         column,
-        None,
-    );
-    print_section(
-        style(not_merged_title.as_str()).bold(),
-        outcomes.iter().filter(|o| o.group == Group::NotMerged),
-        column,
-        Some(
-            Hint::new("delete", "git branch -D <branch>")
-                .and("keep", "git branch --unset-upstream <branch>"),
-        ),
     );
     if crate::git::is_verbose() {
         print_section(
             style("Up to date").dim().bold(),
             outcomes.iter().filter(|o| o.group == Group::Quiet),
             column,
-            None,
         );
     }
 }
@@ -513,7 +492,6 @@ fn print_section<'a>(
     title: StyledObject<&str>,
     outcomes: impl Iterator<Item = &'a BranchOutcome>,
     column: usize,
-    footer: Option<Hint>,
 ) {
     let mut outcomes = outcomes.peekable();
     if outcomes.peek().is_none() {
@@ -534,9 +512,6 @@ fn print_section<'a>(
             eprintln!("     {}", hint.render());
         }
     }
-    if let Some(footer) = footer {
-        eprintln!("   {}", footer.render());
-    }
 }
 
 fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
@@ -549,26 +524,21 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
         "failed" => (style("✗").red().bold(), Style::new().red()),
         _ => match outcome.group {
             Group::Attention => (style("⚠").yellow(), Style::new()),
-            Group::NotMerged => (style("○").magenta().dim(), dim),
             _ => (style("·").dim(), dim),
         },
     }
 }
 
-/// Print the branches whose remote is gone and that are offered for
-/// deletion, under `title`. They are only marked as candidates here; what
-/// actually happened to each is printed by [`print_deleted`] and
-/// [`print_kept`] once it did.
-pub fn print_candidates(title: &str, candidates: &[Candidate], column: usize) {
-    print_title(title);
+/// Print the branches whose remote is gone as the chooser would offer them,
+/// each with its preselected action, without asking or acting on any.
+pub fn print_preview(candidates: &[Candidate], column: usize) {
+    print_title("Remote gone");
+    let detail_column = detail_column(candidates);
     for candidate in candidates {
-        print_entry(
-            style("·").dim(),
-            &candidate.branch,
-            &candidate.detail,
-            &candidate_style(candidate),
-            column,
-        );
+        let row = DecisionRow::Choice(candidate.recommended);
+        for line in decision_lines(candidate, &row, false, column, detail_column) {
+            eprintln!("{line}");
+        }
     }
 }
 
@@ -673,19 +643,18 @@ fn entry_lines(
 
 /// One line of per-outcome counts, each in its section's color, leaving out
 /// outcomes that didn't happen.
-pub fn print_summary(outcomes: &[BranchOutcome], dry_run: bool) {
+pub fn print_summary(outcomes: &[BranchOutcome]) {
     if outcomes.is_empty() {
         return;
     }
 
-    let to_delete = if dry_run {
-        "would be deleted"
-    } else {
-        "to delete"
-    };
-    let order: [(&str, &str, Style); 13] = [
+    let order: [(&str, &str, Style); 15] = [
         ("deleted", "deleted", Style::new().red()),
-        ("deletion-candidate", to_delete, Style::new().red()),
+        // Deletion candidates are only reported under --dry-run, by the
+        // action the chooser would preselect.
+        ("would-delete", "would be deleted", Style::new().red()),
+        ("would-keep", "would be kept", Style::new().magenta()),
+        ("would-ask-later", "would ask later", Style::new().dim()),
         ("fast-forwarded", "fast-forwarded", Style::new().green()),
         ("reset-to-upstream", "reset", Style::new().blue()),
         ("merged", "merged", Style::new().blue()),
@@ -706,25 +675,18 @@ pub fn print_summary(outcomes: &[BranchOutcome], dry_run: bool) {
     let count = |pred: &dyn Fn(&BranchOutcome) -> bool| outcomes.iter().filter(|o| pred(o)).count();
     let mut parts = Vec::new();
     for (action, label, color) in order {
-        let n = if action == "skipped" {
-            count(&|o| o.action == "skipped" && o.group == Group::Attention)
-        } else {
-            count(&|o| o.action == action)
+        let candidate = |choice: Choice| {
+            count(&|o| o.action == "deletion-candidate" && o.recommended == Some(choice))
+        };
+        let n = match action {
+            "skipped" => count(&|o| o.action == "skipped" && o.group == Group::Attention),
+            "would-delete" => candidate(Choice::Delete),
+            "would-keep" => candidate(Choice::Keep),
+            "would-ask-later" => candidate(Choice::Later),
+            _ => count(&|o| o.action == action),
         };
         if n > 0 {
             parts.push(color.apply_to(format!("{n} {label}")).to_string());
-        }
-        // Not-merged branches are skipped too, but need no attention.
-        if action == "skipped" {
-            let n = count(&|o| o.group == Group::NotMerged);
-            if n > 0 {
-                parts.push(
-                    Style::new()
-                        .magenta()
-                        .apply_to(format!("{n} not merged"))
-                        .to_string(),
-                );
-            }
         }
     }
 

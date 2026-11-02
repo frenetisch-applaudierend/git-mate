@@ -23,18 +23,19 @@ left as it was and listed under \"Needs attention\".
 
 When a remote branch is deleted — typically after a PR is merged — sync lists every
 local branch (and worktree) left without a remote, each with an action to choose:
-delete it, or keep it and stop tracking the deleted remote. Branches already merged
-into the default branch start out as delete, the others as keep; use the arrow keys
-to change them and Enter to apply, or Esc to leave them all as they are. Without a
-terminal there is nobody to ask, so they are listed and left as they are. Branches
-with unpushed commits or a dirty working tree are never offered for deletion. Branches whose remote was
-already gone before this sync (e.g. pruned by an earlier fetch) are offered too, but
-only if everything on them has landed in the default branch — whether it was merged,
-rebase-merged or squash-merged, and even if those files were moved or edited since.
+delete it, keep it and stop tracking the deleted remote, or ask again next time.
+Branches already merged into the default branch — whether merged, rebase-merged or
+squash-merged, even if those files were moved or edited since — start out as delete,
+the others as ask later; use the arrow keys to change them and Enter to apply, or Esc
+to leave them all as they are. Without a terminal there is nobody to ask, so they are
+listed and left as they are. Branches with unpushed commits or a dirty working tree
+are never offered for deletion. Branches whose remote was already gone before this
+sync (e.g. pruned by an earlier fetch) are offered too; since sync cannot tell whether
+they had unpushed commits, an unmerged one is only deleted when you pick it.
 Pass --apply-recommended to skip the chooser and apply the preselected actions, or
---delete-pruned to delete all of them (either also makes --json act instead of just
-reporting candidates). Branches you keep stop tracking their deleted upstream, so they
-aren't offered again.
+--delete-pruned to delete all of them except those unmerged, already-gone ones (either
+also makes --json act instead of just reporting candidates). Branches you keep stop
+tracking their deleted upstream, so they aren't offered again.
 
 Pass --merge (or set mate.autoMerge=true in git config) to also merge the default
 branch into the current branch after syncing it, keeping feature branches up to date
@@ -72,7 +73,7 @@ pub struct SyncArgs {
     #[arg(
         long,
         conflicts_with_all = ["dry_run", "delete_pruned"],
-        help = "Delete merged branches whose remote was pruned and keep the rest, without prompting"
+        help = "Delete merged branches whose remote was pruned and leave the rest, without prompting"
     )]
     pub apply_recommended: bool,
     #[arg(
@@ -302,7 +303,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
             ),
     );
     if !json {
-        report::print_sections(&branch_outcomes, default_branch.remote.as_deref(), column);
+        report::print_sections(&branch_outcomes, column);
     }
 
     // Ask once, up front, about every branch whose remote was deleted rather
@@ -324,7 +325,7 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
     )?);
 
     if !json {
-        report::print_summary(&branch_outcomes, dry_run);
+        report::print_summary(&branch_outcomes);
     }
 
     let current_outcome = current_branch
@@ -824,9 +825,11 @@ fn record_pruned_status(
     }
 }
 
-/// Decide whether a branch whose upstream was gone before this sync is safe
-/// to delete: only if everything on it is already in the default branch
-/// (merged, rebase-merged or squash-merged). Otherwise it is left alone.
+/// Decide how to offer a branch whose upstream was gone before this sync for
+/// deletion. Without a snapshot from before the remote went away, whether it
+/// had unpushed commits is unknown, so it is only recommended for deletion if
+/// everything on it is already in the default branch (merged, rebase-merged
+/// or squash-merged); otherwise only the user may delete it.
 fn gone_branch_status(
     branch: &str,
     upstream: &str,
@@ -846,24 +849,25 @@ fn gone_branch_status(
                 )),
         ));
     }
-    let Some(merged_at) = crate::git::content_merged_into(remote, branch)? else {
-        return Ok(PrunedStatus::Skip(BranchOutcome::not_merged(
-            branch,
-            &format!(
-                "upstream {upstream} is gone and branch has changes not in {remote}, skipping"
-            ),
-        )));
-    };
-    deletable_unless_dirty(
-        branch,
-        worktrees,
-        Candidate {
+    let candidate = match crate::git::content_merged_into(remote, branch)? {
+        Some(merged_at) => Candidate {
             branch: branch.to_string(),
             detail: merged_detail(&merged_at, remote),
             warn: false,
             recommended: Choice::Delete,
+            bulk_delete_blocker: None,
         },
-    )
+        None => Candidate {
+            branch: branch.to_string(),
+            detail: format!("not merged into {remote}"),
+            warn: true,
+            recommended: Choice::Later,
+            bulk_delete_blocker: Some(format!(
+                "upstream {upstream} is gone and branch has changes not in {remote}, skipping"
+            )),
+        },
+    };
+    deletable_unless_dirty(branch, worktrees, candidate)
 }
 
 /// Decide whether a branch whose upstream was pruned during this sync (and
@@ -884,18 +888,21 @@ fn pruned_branch_status(
             detail: merged_detail(&merged_at, remote),
             warn: false,
             recommended: Choice::Delete,
+            bulk_delete_blocker: None,
         },
         Some((remote, Ok(None))) => Candidate {
             branch: branch.to_string(),
             detail: format!("not merged into {remote}"),
             warn: true,
-            recommended: Choice::Keep,
+            recommended: Choice::Later,
+            bulk_delete_blocker: None,
         },
         _ => Candidate {
             branch: branch.to_string(),
             detail: "remote deleted".to_string(),
             warn: false,
-            recommended: Choice::Keep,
+            recommended: Choice::Later,
+            bulk_delete_blocker: None,
         },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
@@ -970,7 +977,8 @@ struct PruneMode {
 
 /// Resolves what to do with branches whose remote was deleted, in priority
 /// order: `--dry-run` always previews only, regardless of the other flags;
-/// then `--delete-pruned` deletes all candidates and `--apply-recommended`
+/// then `--delete-pruned` deletes all candidates (except those it must not
+/// delete without asking, which are left as they are) and `--apply-recommended`
 /// applies each one's recommended action, both without prompting (this is
 /// what makes `--json` actually act rather than just report); otherwise
 /// plain `--json` never prompts (which would block on stdin) and reports
@@ -998,23 +1006,50 @@ fn resolve_pruned_deletions(
 
     if mode.dry_run {
         if !mode.json {
-            report::print_candidates("Remote gone, would be deleted", candidates, column);
-            report::print_note("dry run: not deleting anything");
+            report::print_preview(candidates, column);
+            report::print_note("dry run: showing the preselected actions; nothing was deleted");
         }
         return Ok(as_candidates());
     }
 
     if mode.delete_pruned {
-        if !mode.json {
-            report::print_title("Remote gone, deleted");
-        }
-        return Ok(candidates
+        let (blocked, deletable): (Vec<&Candidate>, Vec<&Candidate>) = candidates
             .iter()
-            .map(|c| {
+            .partition(|c| c.bulk_delete_blocker.is_some());
+        let mut outcomes = Vec::new();
+        if !deletable.is_empty() {
+            if !mode.json {
+                report::print_title("Remote gone, deleted");
+            }
+            outcomes.extend(deletable.into_iter().map(|c| {
                 delete_candidate(c, current_wt, worktrees, main_wt_path, mode.json, column)
                     .decided_by(DecidedBy::Flag)
-            })
-            .collect());
+            }));
+        }
+        if !blocked.is_empty() {
+            if !mode.json {
+                report::print_title("Remote gone, not merged");
+                let detail_column = report::detail_column(candidates);
+                for candidate in &blocked {
+                    for line in report::decision_lines(
+                        candidate,
+                        &DecisionRow::Left,
+                        false,
+                        column,
+                        detail_column,
+                    ) {
+                        eprintln!("{line}");
+                    }
+                }
+                report::print_note(
+                    "remote was already gone, so unpushed commits can't be ruled out; run sync without --delete-pruned to choose",
+                );
+            }
+            outcomes.extend(blocked.into_iter().map(|c| {
+                BranchOutcome::left_unasked(c, c.bulk_delete_blocker.as_deref().unwrap_or_default())
+            }));
+        }
+        return Ok(outcomes);
     }
 
     let apply = |candidate: &Candidate, choice: Choice| {
@@ -1081,8 +1116,8 @@ fn resolve_pruned_deletions(
         .collect())
 }
 
-/// Delete a branch whose remote is gone, or keep it and stop tracking the
-/// missing upstream so it isn't offered again.
+/// Delete a branch whose remote is gone, keep it and stop tracking the
+/// missing upstream so it isn't offered again, or leave it to ask again.
 fn apply_choice(
     candidate: &Candidate,
     choice: Choice,
@@ -1100,6 +1135,7 @@ fn apply_choice(
             Ok(()) => DecisionRow::Kept,
             Err(e) => DecisionRow::Failed(format!("could not unset upstream: {e}")),
         },
+        Choice::Later => DecisionRow::Left,
     }
 }
 

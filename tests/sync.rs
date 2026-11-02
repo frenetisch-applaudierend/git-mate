@@ -1054,13 +1054,16 @@ fn json_reports_deletion_candidates_with_recommended_action() {
     assert_eq!(merged["action"], "deletion-candidate");
     assert_eq!(merged["detail"], "merged into origin/main");
     assert_eq!(merged["recommended"], "delete");
-    assert_eq!(merged["choices"], serde_json::json!(["delete", "keep"]));
+    assert_eq!(
+        merged["choices"],
+        serde_json::json!(["delete", "keep", "later"])
+    );
     assert!(merged.get("decidedBy").is_none(), "nothing was decided yet");
 
     let unmerged = branch("feature/unmerged");
     assert_eq!(unmerged["action"], "deletion-candidate");
     assert_eq!(unmerged["detail"], "not merged into origin/main");
-    assert_eq!(unmerged["recommended"], "keep");
+    assert_eq!(unmerged["recommended"], "later");
 
     let ff = branch("feature/ff");
     assert_eq!(ff["action"], "fast-forwarded");
@@ -1072,7 +1075,7 @@ fn json_reports_deletion_candidates_with_recommended_action() {
 }
 
 #[test]
-fn apply_recommended_deletes_merged_and_keeps_unmerged_branches() {
+fn apply_recommended_deletes_merged_and_leaves_unmerged_branches() {
     let setup = common::RepoWithRemote::new();
 
     setup.push_branch_to_remote("feature/merged");
@@ -1091,21 +1094,26 @@ fn apply_recommended_deletes_merged_and_keeps_unmerged_branches() {
     let data = sync_json(setup.local_path(), &["--apply-recommended"]);
     let merged = assert_action(&data, "feature/merged", "deleted");
     assert_eq!(merged["decidedBy"], "flag");
-    let unmerged = assert_action(&data, "feature/unmerged", "kept");
+    let unmerged = assert_action(&data, "feature/unmerged", "left-as-is");
     assert_eq!(unmerged["decidedBy"], "flag");
     assert_eq!(unmerged["detail"], "not merged into origin/main");
 
     assert!(!setup.local_branch_exists("feature/merged"));
     assert!(setup.local_branch_exists("feature/unmerged"));
-    let upstream = std::process::Command::new("git")
-        .args(["config", "branch.feature/unmerged.merge"])
+    assert!(
+        tracks_upstream(&setup, "feature/unmerged"),
+        "unmerged branch should still track its deleted upstream, so sync asks again"
+    );
+}
+
+fn tracks_upstream(setup: &common::RepoWithRemote, branch: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["config", &format!("branch.{branch}.merge")])
         .current_dir(setup.local_path())
         .output()
-        .unwrap();
-    assert!(
-        !upstream.status.success(),
-        "kept branch should no longer track its deleted upstream"
-    );
+        .unwrap()
+        .status
+        .success()
 }
 
 #[test]
@@ -1212,12 +1220,38 @@ fn offers_gone_branch_that_was_rebase_merged() {
 }
 
 #[test]
-fn skips_gone_branch_with_unmerged_changes_and_explains() {
+fn offers_gone_branch_with_unmerged_changes_to_ask_later() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/unmerged");
+
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/unmerged", "deletion-candidate");
+    assert_eq!(entry["detail"], "not merged into origin/main");
+    assert_eq!(entry["recommended"], "later");
+
+    assert!(setup.local_branch_exists("feature/unmerged"));
+}
+
+#[test]
+fn apply_recommended_leaves_gone_branch_with_unmerged_changes() {
+    let setup = common::RepoWithRemote::new();
+    gone_branch_with_changes(&setup, "feature/unmerged");
+
+    let data = sync_json(setup.local_path(), &["--apply-recommended"]);
+    let entry = assert_action(&data, "feature/unmerged", "left-as-is");
+    assert_eq!(entry["decidedBy"], "flag");
+
+    assert!(setup.local_branch_exists("feature/unmerged"));
+    assert!(tracks_upstream(&setup, "feature/unmerged"));
+}
+
+#[test]
+fn delete_pruned_leaves_gone_branch_with_unmerged_changes_and_explains() {
     let setup = common::RepoWithRemote::new();
     gone_branch_with_changes(&setup, "feature/unmerged");
 
     let data = sync_json(setup.local_path(), &["--delete-pruned"]);
-    let entry = assert_action(&data, "feature/unmerged", "skipped");
+    let entry = assert_action(&data, "feature/unmerged", "left-as-is");
     assert!(
         reason(entry).contains("has changes not in origin/main"),
         "unexpected reason: {entry}"
@@ -1231,7 +1265,7 @@ fn skips_gone_branch_with_unmerged_changes_and_explains() {
 }
 
 #[test]
-fn skips_gone_branch_when_only_part_was_squash_merged() {
+fn delete_pruned_leaves_gone_branch_when_only_part_was_squash_merged() {
     let setup = common::RepoWithRemote::new();
     gone_branch_with_changes(&setup, "feature/partial");
     let scratch = remote_scratch(&setup, "main");
@@ -1239,7 +1273,7 @@ fn skips_gone_branch_when_only_part_was_squash_merged() {
     common::git(scratch.path(), &["push", "-q"]);
 
     let data = sync_json(setup.local_path(), &["--delete-pruned"]);
-    let entry = assert_action(&data, "feature/partial", "skipped");
+    let entry = assert_action(&data, "feature/partial", "left-as-is");
     assert!(
         reason(entry).contains("has changes not in origin/main"),
         "unexpected reason: {entry}"
