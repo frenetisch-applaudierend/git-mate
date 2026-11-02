@@ -987,3 +987,43 @@ fn checkout_fails_clearly_when_the_branch_is_not_on_any_remote() {
         .clone();
     common::assert_json_error(&output, &["no-such-branch", "not found", "origin"]);
 }
+
+#[test]
+fn checkout_recreates_worktree_whose_directory_was_deleted() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["config", "mate.defaultBranchMode", "linked"]);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/deleted");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    let data = checkout_json(repo.path(), "feature/deleted");
+    assert_eq!(data["worktree"], "linked");
+    assert_eq!(data["action"], "created");
+    assert_eq!(
+        data["path"],
+        std::fs::canonicalize(&wt_path).unwrap().to_str().unwrap()
+    );
+}
+
+#[test]
+fn checkout_main_flag_switches_branch_whose_worktree_directory_was_deleted() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/deleted");
+    std::fs::remove_dir_all(&wt_path).unwrap();
+
+    let output = common::git_mate()
+        .args(["--json", "checkout", "feature/deleted", "--main-worktree"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::parse_single_json(&output)["data"].clone();
+    assert_eq!(data["worktree"], "main");
+    assert_eq!(data["action"], "switched");
+    assert_eq!(repo.current_branch(), "feature/deleted");
+}

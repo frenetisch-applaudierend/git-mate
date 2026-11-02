@@ -62,6 +62,7 @@ impl CheckoutData {
 pub fn run(args: CheckoutArgs) -> Result<(), String> {
     let branch = resolve_branch(&args)?;
     let fetched = fetch_if_unknown(&branch)?;
+    prune_missing_worktree(&branch)?;
     let mut data = if args.main_worktree || args.linked_worktree {
         let target = resolve_checkout_target(&args, &branch)?;
         match target {
@@ -145,6 +146,25 @@ fn is_known(branch: &str, remotes: &[String]) -> bool {
         || remotes
             .iter()
             .any(|remote| crate::git::commit_exists(&format!("refs/remotes/{remote}/{branch}")))
+}
+
+/// Drop the worktree entry of `branch` when its directory was deleted without
+/// git, so the branch is treated as not checked out anywhere instead of
+/// navigating into a directory that no longer exists.
+fn prune_missing_worktree(branch: &str) -> Result<(), String> {
+    let worktrees = crate::git::list_worktrees()?;
+    let Some(worktree) = crate::git::worktree_for_branch(branch, &worktrees) else {
+        return Ok(());
+    };
+    if worktree.path.exists() {
+        return Ok(());
+    }
+    crate::output::info(&format!(
+        "Worktree for {} in {} no longer exists, removing it",
+        console::style(branch).bold(),
+        crate::output::display_path(&worktree.path)
+    ));
+    crate::git::prune_worktrees()
 }
 
 fn default_checkout(branch: &str) -> Result<CheckoutData, String> {
