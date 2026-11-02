@@ -68,8 +68,17 @@ Use `-m` or `-w` to make the destination explicit:
 - `-m` ensures the branch ends up in the main worktree
 - `-w` ensures the branch ends up in a linked worktree
 
-When relocating a dirty branch between worktrees, add `--stash` to stash changes in the source
-worktree and reapply them in the destination. If reapplying fails, the stash entry is kept.
+When `-m` or `-w` relocates a branch out of the worktree you are in, its uncommitted changes (tracked
+and untracked) come along: they are stashed in the source worktree and reapplied in the destination. If
+reapplying fails, the stash entry is kept. If the branch is relocated out of *another* worktree with
+uncommitted changes, `git mate checkout` fails unless you choose explicitly:
+
+- `--take-changes` brings those changes along
+- `--start-fresh` leaves them in the main worktree, which switches to the default branch (only when
+  moving out of the main worktree; a linked worktree is removed, so its changes cannot stay behind)
+
+Ignored local config files (such as `.env.local`) are copied into the destination either way, without
+overwriting files that already exist there.
 
 The default branch is only allowed in the main worktree, so `-w` rejects it.
 
@@ -78,14 +87,14 @@ With `--json`, `git mate checkout` prints a single JSON document on stdout descr
 and `fetched`).
 
 ```bash
-git mate checkout feature/login                 # follow default placement, or jump to where it's already checked out
-git mate co feature/login                       # same, using the alias
-git mate checkout -w                            # move the current branch into a linked worktree
-git mate checkout -m                            # move the current branch into the main worktree
-git mate checkout feature/login -w              # ensure the branch is in a linked worktree
-git mate checkout feature/login -m              # ensure the branch is in the main worktree
-git mate checkout feature/login -w --stash      # move dirty changes from main to linked
-git mate checkout feature/login -m --stash      # move dirty changes from linked to main
+git mate checkout feature/login                    # follow default placement, or jump to where it's already checked out
+git mate co feature/login                          # same, using the alias
+git mate checkout -w                               # move the current branch and its uncommitted changes into a linked worktree
+git mate checkout -m                               # move the current branch and its uncommitted changes into the main worktree
+git mate checkout feature/login -w                 # ensure the branch is in a linked worktree
+git mate checkout feature/login -m                 # ensure the branch is in the main worktree
+git mate checkout feature/login -m --take-changes  # bring changes along from a linked worktree you're not in
+git mate checkout feature/login -w --start-fresh   # leave uncommitted changes in the main worktree
 ```
 
 ### `git mate finish [<branch>]`

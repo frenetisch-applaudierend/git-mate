@@ -717,49 +717,54 @@ fn checkout_main_flag_replaces_clean_non_default_branch_in_main() {
 }
 
 #[test]
-fn checkout_linked_flag_fails_on_dirty_main_without_stash() {
-    let repo = common::RepoWithoutRemote::new();
-    let wt_root = TempDir::new().unwrap();
-    configure_worktree_root(&repo, &wt_root);
-
-    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
-    repo.git(&["add", "tracked.txt"]);
-    repo.git(&["commit", "-m", "add tracked file"]);
+fn checkout_linked_flag_takes_changes_from_current_main_worktree_by_default() {
+    let (repo, wt_root) = repo_with_tracked_file();
     repo.git(&["checkout", "-b", "feature/dirty"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    let output = common::git_mate()
-        .args(["--json", "checkout", "feature/dirty", "-w"])
-        .current_dir(repo.path())
-        .assert()
-        .failure()
-        .get_output()
-        .stdout
-        .clone();
-    common::assert_json_error(&output, &["retry with --stash"]);
+    let data = checkout_json_ok(repo.path(), &["feature/dirty", "-w"]);
+    assert_eq!(data["action"], "moved");
+    assert_eq!(data["stashed"], true);
 
-    assert_eq!(repo.current_branch(), "feature/dirty");
+    assert_eq!(repo.current_branch(), "main");
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feature/dirty");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "base\n"
+    );
 }
 
 #[test]
-fn checkout_linked_flag_stashes_dirty_main_and_reapplies_in_linked_worktree() {
-    let repo = common::RepoWithoutRemote::new();
-    let wt_root = TempDir::new().unwrap();
-    configure_worktree_root(&repo, &wt_root);
-
-    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
-    repo.git(&["add", "tracked.txt"]);
-    repo.git(&["commit", "-m", "add tracked file"]);
+fn checkout_linked_flag_requires_a_choice_for_dirty_main_from_another_worktree() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    let other_wt = create_linked_worktree(&repo, &wt_root, "feature/other");
     repo.git(&["checkout", "-b", "feature/dirty"]);
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["checkout", "feature/dirty", "-w", "--stash"])
-        .current_dir(repo.path())
-        .assert()
-        .success();
+    let output = checkout_json_err(&other_wt, &["feature/dirty", "-w"]);
+    common::assert_json_error(&output, &["--take-changes", "--start-fresh"]);
 
-    assert_eq!(repo.current_branch(), "main");
+    assert_eq!(repo.current_branch(), "feature/dirty");
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn checkout_linked_flag_take_changes_moves_dirty_main_from_another_worktree() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    let other_wt = create_linked_worktree(&repo, &wt_root, "feature/other");
+    repo.git(&["checkout", "-b", "feature/dirty"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+
+    let data = checkout_json_ok(&other_wt, &["feature/dirty", "-w", "--take-changes"]);
+    assert_eq!(data["stashed"], true);
+
     let wt_path = expected_worktree_path(&repo, &wt_root, "feature/dirty");
     assert_eq!(
         std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
@@ -768,22 +773,57 @@ fn checkout_linked_flag_stashes_dirty_main_and_reapplies_in_linked_worktree() {
 }
 
 #[test]
-fn checkout_main_flag_stashes_dirty_linked_branch_and_reapplies_in_main() {
-    let repo = common::RepoWithoutRemote::new();
-    let wt_root = TempDir::new().unwrap();
-    configure_worktree_root(&repo, &wt_root);
+fn checkout_linked_flag_start_fresh_leaves_changes_in_main_worktree() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    repo.git(&["checkout", "-b", "feature/dirty"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
-    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
-    repo.git(&["add", "tracked.txt"]);
-    repo.git(&["commit", "-m", "add tracked file"]);
+    let data = checkout_json_ok(repo.path(), &["feature/dirty", "-w", "--start-fresh"]);
+    assert_eq!(data["action"], "moved");
+    assert_eq!(data["stashed"], false);
+
+    assert_eq!(repo.current_branch(), "main");
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feature/dirty");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "base\n"
+    );
+}
+
+#[test]
+fn checkout_linked_flag_does_not_require_a_choice_for_config_only_main_worktree() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+    let other_wt = create_linked_worktree(&repo, &wt_root, "feature/other");
+    repo.git(&["checkout", "-b", "feature/config"]);
+    std::fs::write(repo.path().join(".env.local"), "SECRET=test").unwrap();
+
+    let data = checkout_json_ok(&other_wt, &["feature/config", "-w"]);
+    assert_eq!(data["action"], "moved");
+    assert_eq!(data["stashed"], false);
+
+    let wt_path = expected_worktree_path(&repo, &wt_root, "feature/config");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join(".env.local")).unwrap(),
+        "SECRET=test"
+    );
+}
+
+#[test]
+fn checkout_main_flag_takes_changes_from_current_linked_worktree_by_default() {
+    let (repo, wt_root) = repo_with_tracked_file();
     let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
     std::fs::write(wt_path.join("tracked.txt"), "changed\n").unwrap();
 
-    common::git_mate()
-        .args(["checkout", "feature/linked", "-m", "--stash"])
-        .current_dir(&wt_path)
-        .assert()
-        .success();
+    let data = checkout_json_ok(&wt_path, &["feature/linked", "-m"]);
+    assert_eq!(data["action"], "moved");
+    assert_eq!(data["stashed"], true);
 
     assert_eq!(repo.current_branch(), "feature/linked");
     assert!(!wt_path.exists(), "linked worktree should be removed");
@@ -791,6 +831,96 @@ fn checkout_main_flag_stashes_dirty_linked_branch_and_reapplies_in_main() {
         std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
         "changed\n"
     );
+}
+
+#[test]
+fn checkout_main_flag_requires_take_changes_for_dirty_linked_worktree_from_main() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
+    std::fs::write(wt_path.join("tracked.txt"), "changed\n").unwrap();
+
+    let output = checkout_json_err(repo.path(), &["feature/linked", "-m"]);
+    common::assert_json_error(&output, &["--take-changes"]);
+    assert_eq!(repo.current_branch(), "main");
+    assert!(wt_path.exists(), "linked worktree should be kept");
+
+    let data = checkout_json_ok(repo.path(), &["feature/linked", "-m", "--take-changes"]);
+    assert_eq!(data["stashed"], true);
+    assert_eq!(repo.current_branch(), "feature/linked");
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn checkout_main_flag_start_fresh_fails_for_dirty_linked_worktree() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
+    std::fs::write(wt_path.join("tracked.txt"), "changed\n").unwrap();
+
+    let output = checkout_json_err(&wt_path, &["feature/linked", "-m", "--start-fresh"]);
+    common::assert_json_error(&output, &["--start-fresh", "--take-changes"]);
+
+    assert_eq!(repo.current_branch(), "main");
+    assert_eq!(
+        std::fs::read_to_string(wt_path.join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn checkout_main_flag_copies_local_config_from_linked_worktree() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    std::fs::write(repo.path().join(".gitignore"), ".env.local\n").unwrap();
+    repo.git(&["add", ".gitignore"]);
+    repo.git(&["commit", "-m", "add gitignore"]);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/linked");
+    std::fs::write(wt_path.join(".env.local"), "SECRET=linked").unwrap();
+
+    checkout_json_ok(&wt_path, &["feature/linked", "-m"]);
+
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join(".env.local")).unwrap(),
+        "SECRET=linked"
+    );
+}
+
+/// A repo with a committed `tracked.txt` ("base") on `main` and
+/// `mate.worktreeRoot` configured.
+fn repo_with_tracked_file() -> (common::RepoWithoutRemote, TempDir) {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    (repo, wt_root)
+}
+
+fn checkout_json_ok(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
+    let output = common::git_mate()
+        .args(["--json", "checkout"])
+        .args(args)
+        .current_dir(dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    common::parse_single_json(&output)["data"].clone()
+}
+
+fn checkout_json_err(dir: &std::path::Path, args: &[&str]) -> Vec<u8> {
+    common::git_mate()
+        .args(["--json", "checkout"])
+        .args(args)
+        .current_dir(dir)
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone()
 }
 
 #[test]
@@ -806,7 +936,7 @@ fn checkout_main_flag_still_fails_if_main_worktree_is_dirty() {
     std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
 
     let output = common::git_mate()
-        .args(["--json", "checkout", "feature/linked", "-m", "--stash"])
+        .args(["--json", "checkout", "feature/linked", "-m"])
         .current_dir(&wt_path)
         .assert()
         .failure()

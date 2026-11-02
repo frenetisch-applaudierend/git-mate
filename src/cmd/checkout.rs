@@ -18,9 +18,39 @@ pub struct CheckoutArgs {
     pub linked_worktree: bool,
     #[arg(
         long,
-        help = "Stash changes in the source worktree before relocating, then reapply them in the destination"
+        conflicts_with = "start_fresh",
+        help = "Bring uncommitted changes along when relocating the branch, even when it is not checked out in the current worktree"
     )]
-    pub stash: bool,
+    pub take_changes: bool,
+    #[arg(
+        long,
+        conflicts_with = "take_changes",
+        help = "Leave uncommitted changes in the main worktree when relocating the branch out of it (local config files are still copied)"
+    )]
+    pub start_fresh: bool,
+}
+
+/// What to do with uncommitted changes in the worktree a branch is relocated
+/// out of.
+#[derive(Clone, Copy, PartialEq)]
+enum Changes {
+    /// Take them when relocating out of the current worktree; otherwise
+    /// require an explicit choice.
+    Default,
+    Take,
+    StartFresh,
+}
+
+impl Changes {
+    fn from_flags(take_changes: bool, start_fresh: bool) -> Self {
+        if take_changes {
+            Self::Take
+        } else if start_fresh {
+            Self::StartFresh
+        } else {
+            Self::Default
+        }
+    }
 }
 
 /// What `checkout` did, reported in `--json` mode.
@@ -63,14 +93,15 @@ pub fn run(args: CheckoutArgs) -> Result<(), String> {
     let branch = resolve_branch(&args)?;
     let fetched = fetch_if_unknown(&branch)?;
     prune_missing_worktree(&branch)?;
+    let changes = Changes::from_flags(args.take_changes, args.start_fresh);
     let mut data = if args.main_worktree || args.linked_worktree {
         let target = resolve_checkout_target(&args, &branch)?;
         match target {
             crate::git::OperationTarget::LinkedWorktree => {
-                ensure_checkout_in_linked_worktree(&branch, args.stash)
+                ensure_checkout_in_linked_worktree(&branch, changes)
             }
             crate::git::OperationTarget::MainWorktree => {
-                ensure_checkout_in_main_worktree(&branch, args.stash)
+                ensure_checkout_in_main_worktree(&branch, changes)
             }
         }
     } else {
@@ -186,7 +217,8 @@ fn default_checkout(branch: &str) -> Result<CheckoutData, String> {
             branch: Some(branch.to_string()),
             main_worktree: false,
             linked_worktree: false,
-            stash: false,
+            take_changes: false,
+            start_fresh: false,
         },
         branch,
     )?;
@@ -199,7 +231,7 @@ fn default_checkout(branch: &str) -> Result<CheckoutData, String> {
 
 fn ensure_checkout_in_main_worktree(
     branch: &str,
-    allow_stash: bool,
+    changes: Changes,
 ) -> Result<CheckoutData, String> {
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
@@ -208,14 +240,14 @@ fn ensure_checkout_in_main_worktree(
         Some(worktree) if worktree.path == main_wt.path => {
             navigate_to_worktree(branch, &main_wt.path, "main")
         }
-        Some(worktree) => move_branch_from_linked_to_main(main_wt, worktree, branch, allow_stash),
+        Some(worktree) => move_branch_from_linked_to_main(main_wt, worktree, branch, changes),
         None => checkout_main_worktree(branch),
     }
 }
 
 fn ensure_checkout_in_linked_worktree(
     branch: &str,
-    allow_stash: bool,
+    changes: Changes,
 ) -> Result<CheckoutData, String> {
     crate::git::ensure_branch_allowed_in_linked_worktree(branch)?;
 
@@ -226,7 +258,7 @@ fn ensure_checkout_in_linked_worktree(
         Some(worktree) if worktree.path != main_wt.path => {
             navigate_to_worktree(branch, &worktree.path, "linked")
         }
-        Some(_) => move_branch_from_main_to_linked(main_wt, branch, allow_stash),
+        Some(_) => move_branch_from_main_to_linked(main_wt, branch, changes),
         None => checkout_linked_worktree(branch),
     }
 }
@@ -300,7 +332,7 @@ fn checkout_linked_worktree(branch: &str) -> Result<CheckoutData, String> {
 fn move_branch_from_main_to_linked(
     main_wt: &crate::git::WorktreeEntry,
     branch: &str,
-    allow_stash: bool,
+    changes: Changes,
 ) -> Result<CheckoutData, String> {
     let main_wt_str = main_wt
         .path
@@ -309,12 +341,13 @@ fn move_branch_from_main_to_linked(
     let stash = stash_source_changes(
         &main_wt.path,
         branch,
-        allow_stash,
+        changes,
         "main worktree",
         &format!(
-            "cannot relocate '{branch}' out of the main worktree while it has uncommitted changes"
+            "cannot relocate '{branch}' out of the main worktree while it has uncommitted changes; retry with --take-changes to bring them along or --start-fresh to leave them in the main worktree"
         ),
     )?;
+    let left_changes = stash.is_none() && !crate::git::is_worktree_clean(main_wt_str)?;
 
     let default_branch = crate::git::detect_default_branch(false)?;
     let wt_path = crate::git::worktree_path(branch)?;
@@ -350,6 +383,12 @@ fn move_branch_from_main_to_linked(
     };
 
     crate::fs::copy_ignored_files(&main_wt.path, &canonical)?;
+    if left_changes {
+        crate::output::info(&format!(
+            "Left uncommitted changes in the main worktree, now on {}",
+            console::style(&default_branch).cyan()
+        ));
+    }
     let mut data = CheckoutData::new(branch, "linked", &canonical, "moved");
     if let Some(stash) = stash {
         crate::cmd::worktree_changes::finish_with_stash_reapply(
@@ -371,7 +410,7 @@ fn move_branch_from_linked_to_main(
     main_wt: &crate::git::WorktreeEntry,
     linked_wt: &crate::git::WorktreeEntry,
     branch: &str,
-    allow_stash: bool,
+    changes: Changes,
 ) -> Result<CheckoutData, String> {
     let main_wt_str = main_wt
         .path
@@ -383,16 +422,36 @@ fn move_branch_from_linked_to_main(
         ));
     }
 
+    let linked_wt_str = linked_wt
+        .path
+        .to_str()
+        .ok_or("linked worktree path is not valid UTF-8")?;
+    if changes == Changes::StartFresh && !crate::git::is_worktree_clean(linked_wt_str)? {
+        return Err(format!(
+            "cannot use --start-fresh when relocating '{branch}' out of {}: the linked worktree is removed, so its uncommitted changes cannot stay there; use --take-changes or commit them first",
+            linked_wt.path.display()
+        ));
+    }
+
     let stash = stash_source_changes(
         &linked_wt.path,
         branch,
-        allow_stash,
+        changes,
         "linked worktree",
         &format!(
-            "cannot relocate '{branch}' out of {} while it has uncommitted changes",
+            "cannot relocate '{branch}' out of {} while it has uncommitted changes; retry with --take-changes to bring them along",
             linked_wt.path.display()
         ),
     )?;
+
+    // Ignored local config files would be deleted with the linked worktree.
+    if let Err(e) = crate::fs::copy_ignored_files(&linked_wt.path, &main_wt.path) {
+        return Err(crate::cmd::worktree_changes::restore_source_stash(
+            stash.as_ref(),
+            &linked_wt.path,
+            e,
+        ));
+    }
 
     if let Err(e) = crate::git::remove_worktree(&linked_wt.path, false) {
         return Err(crate::cmd::worktree_changes::restore_source_stash(
@@ -462,10 +521,13 @@ fn ensure_worktree_path_available(wt_path: &std::path::Path) -> Result<(), Strin
     Ok(())
 }
 
+/// Stash the uncommitted changes of the worktree a branch is relocated out
+/// of, if they should come along: by default only when it is the current
+/// worktree. `failure_message` is the error when an explicit choice is needed.
 fn stash_source_changes(
     path: &std::path::Path,
     branch: &str,
-    allow_stash: bool,
+    changes: Changes,
     label: &str,
     failure_message: &str,
 ) -> Result<Option<crate::cmd::worktree_changes::PreparedStash>, String> {
@@ -473,8 +535,11 @@ fn stash_source_changes(
     if crate::git::is_worktree_clean(path_str)? {
         return Ok(None);
     }
-    if !allow_stash {
-        return Err(format!("{failure_message}; retry with --stash"));
+    match changes {
+        Changes::Take => {}
+        Changes::StartFresh => return Ok(None),
+        Changes::Default if is_current_worktree(path) => {}
+        Changes::Default => return Err(failure_message.to_string()),
     }
 
     crate::cmd::worktree_changes::stash_changes(
@@ -484,6 +549,12 @@ fn stash_source_changes(
         &format!("git-mate checkout {branch}"),
     )
     .map(Some)
+}
+
+fn is_current_worktree(path: &std::path::Path) -> bool {
+    let canonical =
+        |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    crate::git::current_worktree_root().is_ok_and(|root| canonical(&root) == canonical(path))
 }
 
 fn switched_message(branch: &str) -> String {
