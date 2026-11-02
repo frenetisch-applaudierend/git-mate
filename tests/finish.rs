@@ -151,6 +151,41 @@ fn finish_force_removes_dirty_worktree() {
 }
 
 #[test]
+fn finish_force_discards_changes_in_main_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-b", "feature/dirty"]);
+    std::fs::write(repo.path().join("work.txt"), "committed").unwrap();
+    repo.git(&["add", "work.txt"]);
+    repo.git(&["commit", "-m", "add work.txt"]);
+    // Modified, so switching to main (where it doesn't exist) would lose it
+    std::fs::write(repo.path().join("work.txt"), "modified").unwrap();
+
+    // Without --force the checkout refuses to overwrite the change
+    common::git_mate()
+        .args(["finish"])
+        .current_dir(repo.path())
+        .assert()
+        .failure();
+    assert_eq!(repo.current_branch(), "feature/dirty");
+
+    // With --force the change is discarded
+    common::git_mate()
+        .args(["finish", "--force"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert_eq!(repo.current_branch(), "main");
+    assert!(
+        !repo.path().join("work.txt").exists(),
+        "modified file should have been discarded"
+    );
+    assert!(
+        !repo.branch_exists("feature/dirty"),
+        "branch should have been deleted"
+    );
+}
+
+#[test]
 fn finish_linked_worktree_removes_it_and_prints_mate_cd() {
     let repo = common::RepoWithoutRemote::new();
     // Add a linked worktree for feature/x

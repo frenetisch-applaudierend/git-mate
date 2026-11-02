@@ -12,6 +12,11 @@ pub fn checkout_in(path: &str, branch: &str) -> Result<(), String> {
     run(&["-C", path, "checkout", branch])
 }
 
+/// Check out `branch`, discarding local changes that would block the switch.
+pub fn checkout_force_in(path: &str, branch: &str) -> Result<(), String> {
+    run(&["-C", path, "checkout", "--force", branch])
+}
+
 pub fn merge_ff_only_in(path: &str, refspec: &str) -> Result<(), String> {
     run(&["-C", path, "merge", "--ff-only", refspec])
 }

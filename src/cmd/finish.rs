@@ -3,7 +3,8 @@ pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::worktree_branch_completer))]
     pub branch: Option<String>,
-    /// Force removal even if the worktree has modified or untracked files
+    /// Discard local changes: force removal of a linked worktree with modified
+    /// or untracked files, or force the switch away in the main worktree
     #[arg(long, short = 'f')]
     pub force: bool,
 }
@@ -101,7 +102,11 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                     "nothing to finish: {target_branch:?} is the default branch"
                 ));
             }
-            crate::git::checkout_in(&main_wt_path, &default)?;
+            if args.force {
+                crate::git::checkout_force_in(&main_wt_path, &default)?;
+            } else {
+                crate::git::checkout_in(&main_wt_path, &default)?;
+            }
             crate::output::success(&format!(
                 "Finished {}, back on {}",
                 console::style(&target_branch).bold(),
