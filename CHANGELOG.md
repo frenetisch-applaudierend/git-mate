@@ -2,6 +2,116 @@
 
 All notable changes to `git-mate` are documented here.
 
+## [0.4.0] - 2026-11-02
+
+### Bug Fixes
+
+- **checkout**: Recreate a worktree whose directory was deleted
+
+- **finish**: Make --force discard local changes in the main worktree
+
+- Recover when the current worktree directory was removed
+
+- **checkout**: Report a branch missing locally and on every remote clearly
+
+- Report --json as unsupported for init instead of panicking
+
+- **sync**: Sync the current branch like other branches instead of failing on git pull
+
+- **sync**: Mark only actually deleted branches with ⌫
+
+- **sync**: Use ↠ for fast-forward and ⌫ for deleted branches
+
+- **init**: List branch completions before flags
+
+- **finish**: Color the output like new and checkout
+
+- **finish**: Complete linked worktree branches instead of all branches
+
+- **sync**: Use ↯ for reset-to-upstream so it renders at text size
+
+- **new,checkout**: Keep the worktree path on the message line
+
+- **checkout**: Color the output and show worktree paths with ~
+
+- **sync**: Compact reset-to-upstream line and fit long branch names
+
+- **new**: Show the starting point and the worktree path in the success message
+
+- **sync**: Final status message reflects all work done
+
+- **sync**: Prompt once before deleting any branch with pruned upstream
+
+- **sync**: Use merge --ff-only to update worktrees during fast-forward
+
+
+### Documentation
+
+- **sync**: Rewrite long_about with user-level prose
+
+
+### Features
+
+- **checkout**: Carry uncommitted changes by default when relocating a branch [**BREAKING**]
+
+- **sync**: Offer unmerged gone branches in the chooser with an "ask later" action
+
+- **checkout**: Fetch when the branch is not known locally
+
+- **checkout,finish**: Support --json output
+
+- **sync**: Add --apply-recommended to apply the preselected actions without prompting
+
+- **sync**: Report recommended action and decidedBy in --json; never prompt without a terminal
+
+- **sync**: Choose an action per remote-gone branch in an inline chooser
+
+- **new**: Add mate.new.* config keys and only fetch for remote starting points [**BREAKING**]
+
+- **new**: Carry changes from the current branch by default, add --json and --from . [**BREAKING**]
+
+- **sync**: Grouped, colored end-of-run report
+
+- **sync**: Detect gone branches merged before later changes to the default branch
+
+- **sync**: Offer branches with a gone upstream for deletion
+
+- **sync**: Resolve diverged branches instead of skipping them
+
+- **sync**: Add --delete-pruned flag
+
+- **sync**: Print an end-of-run summary
+
+- Add global --json flag and sync --dry-run
+
+- **complete**: Complete remote branches for co/finish/new
+
+
+### Miscellaneous
+
+- Apply cargo fmt
+
+- Remove beads issue tracker
+
+- Sync beads interactions log
+
+- Sync beads interactions log
+
+- Update beads hooks after reinitializing issue tracking
+
+- Record beads interaction log for sync branch-prompt fix
+
+- Update beads integration block
+
+
+### Testing
+
+- Isolate git-mate tests from ambient git config
+
+- **sync**: Add regression test for worktree fast-forward index update
+
+
+
 ## [0.3.0] - 2026-05-29
 
 ### Bug Fixes
