@@ -258,11 +258,7 @@ impl RepoWithRemote {
 }
 
 pub fn git(dir: &std::path::Path, args: &[&str]) {
-    let s = git_cmd()
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .unwrap();
+    let s = git_cmd().args(args).current_dir(dir).status().unwrap();
     assert!(s.success(), "git {:?} failed in {:?}", args, dir);
 }
 
@@ -279,11 +275,7 @@ fn git_silent(dir: &std::path::Path, args: &[&str]) {
 }
 
 fn rev_parse_output(dir: &std::path::Path, args: &[&str]) -> String {
-    let out = git_cmd()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
+    let out = git_cmd().args(args).current_dir(dir).output().unwrap();
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
