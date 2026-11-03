@@ -6,4 +6,6 @@ pub mod protocol;
 pub mod sync;
 mod sync_chooser;
 mod sync_report;
+pub mod update;
+mod update_report;
 mod worktree_changes;

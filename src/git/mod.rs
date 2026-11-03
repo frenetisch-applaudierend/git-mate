@@ -1,3 +1,4 @@
+mod base;
 mod branch;
 pub mod config;
 mod integrate;
@@ -7,6 +8,7 @@ mod remote;
 mod run;
 mod worktree;
 
+pub use base::{Base, BaseSource, Detection, detect_base};
 pub use branch::{
     checkout, checkout_force_in, checkout_in, checkout_new_in, current_branch,
     delete_branch_force_in, detect_default_branch, ensure_branch_allowed_in_linked_worktree,
@@ -22,8 +24,8 @@ pub use refs::{
 pub use remote::{fetch, fetch_all, list_remote_tracking_refs, list_remotes};
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
-    OperationTarget, WorktreeEntry, add_worktree, current_worktree_root, expand_tilde,
-    find_main_worktree, is_main_worktree, is_worktree_clean, list_worktrees, prune_worktrees,
-    read_worktree_root, remove_worktree, resolve_operation_target, worktree_for_branch,
-    worktree_path,
+    OperationTarget, WorktreeEntry, add_worktree, branch_being_rebased, current_worktree_root,
+    expand_tilde, find_main_worktree, is_main_worktree, is_worktree_clean, list_worktrees,
+    operation_in_progress, prune_worktrees, read_worktree_root, remove_worktree,
+    resolve_operation_target, worktree_for_branch, worktree_path,
 };

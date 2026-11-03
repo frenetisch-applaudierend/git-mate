@@ -35,6 +35,7 @@ enum Commands {
     /// Create and switch to a new branch
     New(cmd::new::NewArgs),
     Sync(cmd::sync::SyncArgs),
+    Update(cmd::update::UpdateArgs),
     /// Internal: interpret shell protocol messages
     #[command(name = "_protocol", hide = true)]
     Protocol(cmd::protocol::ProtocolArgs),
@@ -78,6 +79,7 @@ fn main() {
         Commands::Init(args) => cmd::init::run(args).map_err(Into::into),
         Commands::New(args) => cmd::new::run(args),
         Commands::Sync(args) => cmd::sync::run(args).map_err(Into::into),
+        Commands::Update(args) => cmd::update::run(args).map_err(Into::into),
         Commands::Protocol(args) => cmd::protocol::run(args).map_err(Into::into),
     };
 
@@ -94,6 +96,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Init(_) => "init",
         Commands::New(_) => "new",
         Commands::Sync(_) => "sync",
+        Commands::Update(_) => "update",
         Commands::Protocol(_) => "_protocol",
     }
 }

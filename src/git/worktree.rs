@@ -112,6 +112,36 @@ pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
     run_output(&["-C", path, "status", "--porcelain"]).map(|o| o.is_empty())
 }
 
+/// The git operation left unfinished in the worktree at `path`, if any
+/// (e.g. a rebase stopped at a conflict).
+pub fn operation_in_progress(path: &str) -> Option<&'static str> {
+    [
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+    ]
+    .into_iter()
+    .find(|(name, _)| git_path(path, name).is_some_and(|p| p.exists()))
+    .map(|(_, operation)| operation)
+}
+
+/// The branch being rebased in the worktree at `path`. Mid-rebase, git lists
+/// the worktree as detached, so `worktree_for_branch` won't find it.
+pub fn branch_being_rebased(path: &str) -> Option<String> {
+    ["rebase-merge/head-name", "rebase-apply/head-name"]
+        .into_iter()
+        .filter_map(|name| git_path(path, name))
+        .find_map(|file| std::fs::read_to_string(file).ok())
+        .and_then(|name| name.trim().strip_prefix("refs/heads/").map(str::to_string))
+}
+
+fn git_path(path: &str, name: &str) -> Option<std::path::PathBuf> {
+    let resolved = run_output(&["-C", path, "rev-parse", "--git-path", name]).ok()?;
+    Some(std::path::Path::new(path).join(resolved.trim()))
+}
+
 pub fn worktree_for_branch<'a>(
     branch: &str,
     worktrees: &'a [WorktreeEntry],

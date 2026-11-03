@@ -135,6 +135,48 @@ Sync never merges the default branch into your branches; `mate.autoMerge` and th
 `mate.divergedStrategy` setting was renamed to `mate.sync.diverged`; the old name is still
 read, with a warning, for now.
 
+### `git mate update [<branch>...]`
+
+Brings branches up to date with the branch they are based on: rebases them onto it (the
+default) or, with `--merge`, merges it in. Without arguments it updates the current
+branch; `--all` updates every local branch except the default branch.
+
+The base is read from the commit graph, so it works for any branch, however it was created:
+
+- A branch that contains commits of another local branch which the default branch doesn't
+  have is **stacked** on that branch. When both have moved on since, the branch's reflog
+  ("Created from …") decides which one is the parent.
+- Any other branch is based on the **default branch**.
+- If the branch it is stacked on was merged into the default branch since (also squash- or
+  rebase-merged), the branch is rebased onto the default branch and the parent's commits
+  are dropped.
+- If several branches could be the base, the branch is skipped; name it with `--onto`.
+
+All bases are detected before anything changes and stacked branches are updated after
+their parents, so a whole stack moves along in one run. A rebase or merge only goes
+through if it is conflict-free; otherwise the branch is left as it was and listed under
+"Needs attention". Uncommitted changes in a branch's worktree are stashed and reapplied.
+Branches that aren't checked out are updated without touching any worktree (rebasing them
+uses `git replay`, Git 2.44+).
+
+`update` works with the local base branches; run `git mate sync` first to bring those up
+to date with the remote.
+
+With `--json`, it prints a single JSON document with one entry per branch (`branch`,
+`action` — `rebased`, `merged`, `up-to-date`, `skipped` or `failed` — `base`, `baseSource`
+— `default`, `stacked`, `mergedParent` or `onto` — `strategy`, `behind`, and `reason` /
+`hint` when skipped).
+
+```bash
+git mate update                     # rebase the current branch onto its base
+git mate update --merge             # merge the base in instead
+git mate update feature/a feature/b # update these branches (parents first)
+git mate update --all               # update every branch, whole stacks included
+git mate update --onto main         # rebase onto main, whatever the detected base
+git mate update --all --dry-run     # preview
+git config mate.update.strategy merge  # merge by default
+```
+
 ## Installation
 
 ```bash
@@ -182,4 +224,5 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
 | `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
 | `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
+| `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when neither `--rebase` nor `--merge` is given (default: `rebase`) |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |
