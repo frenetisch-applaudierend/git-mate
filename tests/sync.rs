@@ -639,6 +639,17 @@ fn rebase_with_conflicts_is_aborted() {
 }
 
 #[test]
+fn rebase_dry_run_predicts_conflicts_in_worktree() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "remote");
+    let before = setup.local_head_commit();
+
+    let data = sync_json(setup.local_path(), &["--diverged=rebase", "--dry-run"]);
+    assert_action(&data, "feature/cur", "skipped");
+    assert_eq!(setup.local_head_commit(), before);
+}
+
+#[test]
 fn diverged_config_rebase_rebases_diverged_current_branch() {
     let setup = common::RepoWithRemote::new();
     diverged_current_branch(&setup, "feature/cur", "local");
