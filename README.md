@@ -119,18 +119,21 @@ git mate finish feature/login       # finish a specific branch from anywhere
 Fetches all remotes and prunes stale remote-tracking references, then:
 
 - Fast-forwards every local branch whose upstream is still present, including the current one
-- Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (or rebases the current branch with `--rebase` / `pull.rebase=true`); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
+- Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (`--diverged=rebase` rebases local commits onto the upstream instead, also for branches that aren't checked out; `--diverged=skip` leaves them alone); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
+- Leaves branches you rebased locally but haven't pushed yet alone, listing them as needing a force-push instead of merging the old commits back in
 - Offers to delete local branches whose remote was deleted (if they have no unpushed commits and a clean working tree): pick delete, keep or ask later per branch, with branches already merged into the default branch preselected for deletion and the rest for asking again next sync (`--apply-recommended` applies those preselections without asking)
-- Optionally merges the default branch into the current branch, when that is conflict-free
 
 ```bash
 git mate sync                       # fetch + prune, then bring every branch up to date
-git mate sync --rebase              # rebase the current branch instead of merging if it diverged
-git mate sync --ff-only             # only fast-forward; skip diverged branches
-git mate sync --diverged=skip       # leave diverged branches untouched (or: git config mate.divergedStrategy skip)
-git mate sync --merge               # also merge the default branch into the current branch
-git mate sync --no-merge            # skip auto-merge for this run
+git mate sync --diverged=rebase     # rebase diverged branches onto their upstream instead of merging
+git mate sync --diverged=skip       # only fast-forward; leave diverged branches untouched
+git config mate.sync.diverged rebase  # make rebase the default
 ```
+
+Sync never merges the default branch into your branches; `mate.autoMerge` and the
+`--merge`, `--no-merge`, `--rebase` and `--ff-only` flags were removed. The
+`mate.divergedStrategy` setting was renamed to `mate.sync.diverged`; the old name is still
+read, with a warning, for now.
 
 ## Installation
 
@@ -173,10 +176,10 @@ git config mate.worktreeRoot "../worktrees"
 | Key | Values | Effect |
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
-| `mate.autoMerge` | `true` / `yes` / `on` / `1`, `false` / `no` / `off` / `0` | Auto-merge the default branch during `git mate sync` |
 | `mate.defaultBranchMode` | `main` / `linked` | Default target for `git mate new` and `git mate checkout` |
 | `mate.new.from` | `default` / `current` / any ref | Starting point for `git mate new` when `--from` is omitted (default: `default`) |
 | `mate.new.changes` | `auto` / `take` / `startFresh` | What `git mate new` does with uncommitted changes when neither `--take-changes` nor `--start-fresh` is given (default: `auto`) |
 | `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
 | `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
+| `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |

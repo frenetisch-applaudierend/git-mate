@@ -209,17 +209,16 @@ impl BranchOutcome {
         .decided_by(DecidedBy::Auto)
     }
 
-    /// The default branch was merged into the current branch.
-    pub fn merged_default(branch: &str, default_branch: &str, dry_run: bool) -> Self {
-        let verb = if dry_run { "would merge" } else { "merged" };
+    /// Rebased locally but not pushed yet: the upstream only has older
+    /// versions of the local commits.
+    pub fn needs_force_push(branch: &str) -> Self {
         Self::new(
             branch,
-            "merged-default",
-            None,
-            Group::Updated,
-            format!("{verb} default branch '{default_branch}'"),
+            "needs-force-push",
+            Some("rebased locally; upstream has the commits before the rebase"),
+            Group::Attention,
+            "rebased locally, needs a force-push".to_string(),
         )
-        .decided_by(DecidedBy::Auto)
     }
 
     /// Skipped for a reason the user should look at. `reason` goes into
@@ -519,7 +518,7 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
     match outcome.action.as_str() {
         "fast-forwarded" => (style("↠").green(), dim),
         "reset-to-upstream" => (style("↯").blue(), dim),
-        "merged" | "merged-default" => (style("⇄").blue(), dim),
+        "merged" => (style("⇄").blue(), dim),
         "rebased" => (style("⤴").blue(), dim),
         "failed" => (style("✗").red().bold(), Style::new().red()),
         _ => match outcome.group {
@@ -660,9 +659,9 @@ pub fn print_summary(outcomes: &[BranchOutcome]) {
         ("merged", "merged", Style::new().blue()),
         ("rebased", "rebased", Style::new().blue()),
         (
-            "merged-default",
-            "merged default branch",
-            Style::new().blue(),
+            "needs-force-push",
+            "need a force-push",
+            Style::new().yellow(),
         ),
         ("failed", "failed", Style::new().red()),
         ("skipped", "need attention", Style::new().yellow()),

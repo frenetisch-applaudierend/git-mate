@@ -14,7 +14,7 @@ pub use branch::{
 };
 pub use merge::{
     MergedAt, commit_tree, content_merged_into, merge_no_edit_in, merge_tree, patches_already_in,
-    rebase_in, reset_hard_in,
+    rebase_in, replay_onto, reset_hard_in,
 };
 pub use refs::{
     commit_exists, commit_summary, count_commits, is_ancestor, resolve_ref, update_ref,
