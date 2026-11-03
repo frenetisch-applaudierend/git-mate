@@ -636,101 +636,59 @@ fn resolve_diverged_branch(
         ));
     }
 
-    if diverged_strategy == DivergedStrategy::Rebase {
-        return rebase_onto_upstream(
-            target,
-            local_sha,
-            remote_sha,
-            worktree_path.as_deref(),
+    let worktree = worktree_path.as_deref();
+    let rebase = diverged_strategy == DivergedStrategy::Rebase;
+    let integration = if rebase {
+        crate::git::rebase_branch(
+            &crate::git::Rebase {
+                branch,
+                onto: remote_sha,
+                boundary: remote_sha,
+                worktree,
+                autostash: false,
+                reflog: &format!("git-mate sync: rebase onto {upstream}"),
+            },
             dry_run,
-        );
-    }
-
-    let Some(tree) = crate::git::merge_tree(local_sha, remote_sha)? else {
-        return Ok(BranchOutcome::needs_attention(
-            branch,
-            "diverged with conflicts",
-            "diverged, merging upstream would conflict",
-        )
-        .with_hint(resolve_hint()));
+        )?
+    } else {
+        crate::git::merge_into_branch(
+            &crate::git::Merge {
+                branch,
+                theirs: upstream,
+                worktree,
+                autostash: false,
+                message: &format!("Merge remote-tracking branch '{upstream}' into {branch}"),
+                reflog: &format!("git-mate sync: merge {upstream}"),
+            },
+            dry_run,
+        )?
     };
 
-    if dry_run {
-        return Ok(BranchOutcome::merged(branch, true));
-    }
-
-    match &worktree_path {
-        // Merge inside the worktree so its index and files follow the ref.
-        Some(path) => crate::git::merge_no_edit_in(path, upstream)?,
-        None => {
-            let message = format!("Merge remote-tracking branch '{upstream}' into {branch}");
-            let merge_sha = crate::git::commit_tree(&tree, &[local_sha, remote_sha], &message)?;
-            crate::git::update_ref_from(
-                &format!("refs/heads/{branch}"),
-                &merge_sha,
-                local_sha,
-                &format!("git-mate sync: merge {upstream}"),
-            )?;
-        }
-    }
-    Ok(BranchOutcome::merged(branch, false))
-}
-
-/// Rebase a diverged branch's own commits onto its upstream: inside its
-/// worktree if it is checked out, otherwise with `git replay`, which never
-/// touches a working tree. A conflicting rebase changes nothing.
-fn rebase_onto_upstream(
-    target: &SyncTarget,
-    local_sha: &str,
-    remote_sha: &str,
-    worktree_path: Option<&str>,
-    dry_run: bool,
-) -> Result<BranchOutcome, String> {
-    let branch = target.branch;
-    let conflict = || {
-        BranchOutcome::needs_attention(
+    Ok(match integration {
+        crate::git::Integration::Clean if rebase => BranchOutcome::rebased(branch, dry_run),
+        crate::git::Integration::Clean => BranchOutcome::merged(branch, dry_run),
+        crate::git::Integration::Conflict if rebase => BranchOutcome::needs_attention(
             branch,
             "diverged with conflicts; rebase aborted",
             "diverged, rebasing onto upstream would conflict",
         )
-        .with_hint(Hint::new("resolve with", target.pull_command()))
-    };
-
-    match worktree_path {
-        Some(path) => {
-            if dry_run {
-                return Ok(BranchOutcome::rebased(branch, true));
-            }
-            if crate::git::rebase_in(path, target.upstream).is_err() {
-                return Ok(conflict());
-            }
+        .with_hint(resolve_hint()),
+        crate::git::Integration::Conflict => BranchOutcome::needs_attention(
+            branch,
+            "diverged with conflicts",
+            "diverged, merging upstream would conflict",
+        )
+        .with_hint(resolve_hint()),
+        crate::git::Integration::Unavailable(e) => {
+            let first_line = e.lines().next().unwrap_or(&e).to_string();
+            BranchOutcome::needs_attention(
+                branch,
+                &format!("could not rebase: {e}"),
+                &format!("could not rebase: {first_line}"),
+            )
+            .with_hint(resolve_hint())
         }
-        None => {
-            let replayed = match crate::git::replay_onto(remote_sha, branch) {
-                Ok(Some(sha)) => sha,
-                Ok(None) => return Ok(conflict()),
-                Err(e) => {
-                    let first_line = e.lines().next().unwrap_or(&e).to_string();
-                    return Ok(BranchOutcome::needs_attention(
-                        branch,
-                        &format!("could not rebase: {e}"),
-                        &format!("could not rebase: {first_line}"),
-                    )
-                    .with_hint(Hint::new("resolve with", target.pull_command())));
-                }
-            };
-            if dry_run {
-                return Ok(BranchOutcome::rebased(branch, true));
-            }
-            crate::git::update_ref_from(
-                &format!("refs/heads/{branch}"),
-                &replayed,
-                local_sha,
-                &format!("git-mate sync: rebase onto {}", target.upstream),
-            )?;
-        }
-    }
-    Ok(BranchOutcome::rebased(branch, false))
+    })
 }
 
 /// `git push --force-with-lease <remote> <branch>`, naming the remote only

@@ -45,68 +45,6 @@ pub fn patches_already_in(upstream: &str, branch: &str) -> Result<bool, String> 
     Ok(output.lines().all(|line| line.starts_with('-')))
 }
 
-/// Merge `refspec` into the branch checked out at `path`. On failure the
-/// merge is aborted so the worktree is left as it was.
-pub fn merge_no_edit_in(path: &str, refspec: &str) -> Result<(), String> {
-    run(&["-C", path, "merge", "--no-edit", refspec]).inspect_err(|_| {
-        let _ = run(&["-C", path, "merge", "--abort"]);
-    })
-}
-
-/// Rebase the branch checked out at `path` onto `upstream`. On failure the
-/// rebase is aborted so the worktree is left as it was.
-pub fn rebase_in(path: &str, upstream: &str) -> Result<(), String> {
-    run(&["-C", path, "rebase", upstream]).inspect_err(|_| {
-        let _ = run(&["-C", path, "rebase", "--abort"]);
-    })
-}
-
-/// Replay `branch`'s commits that `onto` doesn't have on top of `onto` with
-/// `git replay`, which needs no working tree and writes no refs. Returns the
-/// new tip, or `None` if replaying would conflict.
-pub fn replay_onto(onto: &str, branch: &str) -> Result<Option<String>, String> {
-    let range = format!("{onto}..refs/heads/{branch}");
-    let onto_arg = format!("--onto={onto}");
-    let mut output = replay(&["--ref-action=print", &onto_arg, &range])?;
-    // Before Git 2.52, printing the ref updates was the only behavior and
-    // `--ref-action` did not exist.
-    if output.status.code() == Some(129) {
-        output = replay(&[&onto_arg, &range])?;
-    }
-    match output.status.code() {
-        Some(0) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let target = format!("refs/heads/{branch}");
-            stdout
-                .lines()
-                .filter_map(|line| line.strip_prefix("update "))
-                .filter_map(|rest| rest.split_once(' '))
-                .find(|(name, _)| *name == target)
-                .and_then(|(_, shas)| shas.split_whitespace().next())
-                .map(|sha| Some(sha.to_string()))
-                .ok_or_else(|| "`git replay` reported no new tip".to_string())
-        }
-        Some(1) => Ok(None),
-        _ => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = stderr.trim();
-            if stderr.contains("is not a git command") {
-                Err("git replay is not available (requires Git 2.44 or newer)".to_string())
-            } else {
-                Err(format!("`git replay` failed: {stderr}"))
-            }
-        }
-    }
-}
-
-fn replay(args: &[&str]) -> Result<std::process::Output, String> {
-    std::process::Command::new("git")
-        .arg("replay")
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run git: {e}"))
-}
-
 pub fn reset_hard_in(path: &str, refspec: &str) -> Result<(), String> {
     run(&["-C", path, "reset", "--hard", refspec])
 }

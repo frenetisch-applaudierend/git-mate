@@ -1,5 +1,6 @@
 mod branch;
 pub mod config;
+mod integrate;
 mod merge;
 mod refs;
 mod remote;
@@ -12,10 +13,8 @@ pub use branch::{
     has_unpushed_commits, is_valid_branch_name, list_local_branches_with_upstream,
     local_branch_for_ref, merge_ff_only_in, stash_pop_in, stash_push_in, unset_upstream,
 };
-pub use merge::{
-    MergedAt, commit_tree, content_merged_into, merge_no_edit_in, merge_tree, patches_already_in,
-    rebase_in, replay_onto, reset_hard_in,
-};
+pub use integrate::{Integration, Merge, Rebase, merge_into_branch, rebase_branch};
+pub use merge::{MergedAt, content_merged_into, patches_already_in, reset_hard_in};
 pub use refs::{
     commit_exists, commit_summary, count_commits, is_ancestor, resolve_ref, update_ref,
     update_ref_from,
