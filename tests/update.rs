@@ -466,6 +466,51 @@ fn squash_merged_parent_is_dropped() {
     assert_eq!(git_output(dir, &["rev-list", "--count", "main..foo"]), "1");
 }
 
+#[test]
+fn merging_in_a_squash_merged_parent_happens_only_once() {
+    let repo = stack();
+    let dir = repo.path();
+    common::git(dir, &["merge", "-q", "--squash", "bar"]);
+    common::git(dir, &["commit", "-q", "-m", "squashed bar"]);
+
+    let data = update_json(dir, &["--merge", "foo"]);
+    assert_eq!(entry(&data, "foo")["action"], "merged");
+    let merged = tip(dir, "foo");
+
+    let data = update_json(dir, &["--merge", "foo"]);
+    assert_eq!(entry(&data, "foo")["action"], "up-to-date");
+    assert_eq!(tip(dir, "foo"), merged);
+}
+
+#[test]
+fn tag_named_like_the_base_branch_is_ignored() {
+    let repo = behind_main();
+    let dir = repo.path();
+    let old_main = git_output(dir, &["merge-base", "main", "feature"]);
+    common::git(dir, &["tag", "main", &old_main]);
+
+    let data = update_json(dir, &[]);
+    assert_eq!(entry(&data, "feature")["action"], "rebased");
+    assert!(is_ancestor(dir, "refs/heads/main", "feature"));
+}
+
+#[test]
+fn rebase_that_cannot_start_is_a_failure_not_a_conflict() {
+    let repo = behind_main();
+    let dir = repo.path();
+    // main added main.txt; an untracked copy in the worktree blocks the rebase.
+    std::fs::write(dir.join("main.txt"), "untracked").unwrap();
+    let before = tip(dir, "feature");
+
+    let data = update_json(dir, &[]);
+    assert_eq!(entry(&data, "feature")["action"], "failed");
+    assert_eq!(tip(dir, "feature"), before);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("main.txt")).unwrap(),
+        "untracked"
+    );
+}
+
 // --- --all and stacks ---
 
 #[test]
@@ -727,7 +772,10 @@ fn force_push_never_overwrites_commits_the_branch_never_had() {
 fn push_refuses_upstream_with_a_different_name() {
     let setup = common::RepoWithRemote::new();
     let dir = setup.local_path();
-    common::git(dir, &["checkout", "-q", "-b", "topic", "--track", "origin/main"]);
+    common::git(
+        dir,
+        &["checkout", "-q", "-b", "topic", "--track", "origin/main"],
+    );
     commit_file(dir, "topic.txt", "topic");
     let main_before = remote_tip(&setup, "main");
 

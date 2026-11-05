@@ -49,8 +49,8 @@ fn try_push(
         None => true,
         Some(remote) if !moves => crate::git::is_ancestor(remote, &tip)?,
         Some(remote) => {
-            let base = outcome.base.as_deref().unwrap_or("HEAD");
-            let base_tip = crate::git::resolve_ref(&format!("{base}^{{commit}}"))?;
+            let base = outcome.base.as_deref().ok_or("updated without a base")?;
+            let base_tip = crate::git::resolve_ref(&crate::git::branch_ref(base))?;
             // A rebase rewrites the branch's own commits: only what the base
             // already has survives. A merge keeps them.
             crate::git::is_ancestor(remote, &base_tip)?

@@ -175,7 +175,14 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
         })
         .collect::<Vec<_>>();
     if !args.all {
-        add_stacked_parents(&mut plans, stack, dry_run, &default_branch, &local_branches)?;
+        add_stacked_parents(
+            &mut plans,
+            stack,
+            strategy,
+            dry_run,
+            &default_branch,
+            &local_branches,
+        )?;
     }
 
     let worktrees = crate::git::list_worktrees()?;
@@ -248,6 +255,11 @@ fn strategy(args: &UpdateArgs) -> Result<Strategy, String> {
     if args.merge {
         return Ok(Strategy::Merge);
     }
+    configured_strategy()
+}
+
+/// `mate.update.strategy`, else rebase.
+pub(crate) fn configured_strategy() -> Result<Strategy, String> {
     match crate::git::config::read_string("mate.update.strategy").as_deref() {
         None => Ok(Strategy::Rebase),
         Some(value) => match value.to_ascii_lowercase().as_str() {
@@ -321,12 +333,14 @@ fn sync_enabled(args: &UpdateArgs) -> Result<bool, String> {
 fn add_stacked_parents(
     plans: &mut Vec<Plan>,
     stack: StackMode,
+    strategy: Strategy,
     dry_run: bool,
     default_branch: &str,
     local_branches: &[String],
 ) -> Result<(), String> {
     for i in 0..plans.len() {
-        let (chain, behind) = stack_below(&plans[i], plans, default_branch, local_branches)?;
+        let (chain, behind) =
+            stack_below(&plans[i], plans, strategy, default_branch, local_branches)?;
         let Some(behind) = behind else {
             continue;
         };
@@ -365,6 +379,7 @@ fn add_stacked_parents(
 fn stack_below(
     plan: &Plan,
     plans: &[Plan],
+    strategy: Strategy,
     default_branch: &str,
     local_branches: &[String],
 ) -> Result<(Vec<Plan>, Option<ParentBehind>), String> {
@@ -387,17 +402,15 @@ fn stack_below(
         else {
             break;
         };
-        let parent_tip = crate::git::resolve_ref(&format!("refs/heads/{parent}"))?;
-        let base_tip = crate::git::resolve_ref(&format!("{}^{{commit}}", parent_base.branch))?;
-        if parent_base.source == BaseSource::MergedParent
-            || !crate::git::is_ancestor(&base_tip, &parent_tip)?
+        if let Some(behind) =
+            crate::git::behind(&parent, &parent_base, strategy == Strategy::Rebase)?
         {
             deepest_behind = Some((
                 chain.len() + 1,
                 ParentBehind {
                     branch: parent.clone(),
                     base: parent_base.branch.clone(),
-                    behind: crate::git::count_commits(&parent_tip, &base_tip)?,
+                    behind,
                 },
             ));
         }
@@ -474,7 +487,7 @@ fn onto_base(onto: &str, targets: &[String]) -> Result<Base, String> {
     Ok(Base {
         branch: onto.to_string(),
         source: BaseSource::Onto,
-        boundary: crate::git::resolve_ref(&format!("{onto}^{{commit}}"))?,
+        boundary: crate::git::resolve_ref(&crate::git::branch_ref(onto))?,
         merged_parent: None,
     })
 }
@@ -512,7 +525,8 @@ fn update_branch(
         old_tip: Some(tip.clone()),
         ..UpdateOutcome::new(branch, strategy, dry_run).with_base(base)
     };
-    let base_tip = crate::git::resolve_ref(&format!("{}^{{commit}}", base.branch))?;
+    let base_ref = crate::git::branch_ref(&base.branch);
+    let base_tip = crate::git::resolve_ref(&base_ref)?;
 
     let worktree = worktree_of(branch, worktrees)?;
     if let Some(path) = &worktree
@@ -536,14 +550,12 @@ fn update_branch(
         return Ok(outcome);
     }
 
-    let behind = crate::git::count_commits(&tip, &base_tip)?;
-    let up_to_date =
-        base.source != BaseSource::MergedParent && crate::git::is_ancestor(&base_tip, &tip)?;
+    let behind = crate::git::behind(branch, base, strategy == Strategy::Rebase)?;
     let mut outcome = UpdateOutcome {
-        behind: Some(behind),
+        behind: Some(behind.unwrap_or(0)),
         ..outcome
     };
-    if up_to_date {
+    if behind.is_none() {
         outcome.action = "up-to-date";
         return Ok(outcome);
     }
@@ -564,7 +576,7 @@ fn update_branch(
         Strategy::Merge => crate::git::merge_into_branch(
             &crate::git::Merge {
                 branch,
-                theirs: &base.branch,
+                theirs: &base_ref,
                 worktree: worktree.as_deref(),
                 autostash: true,
                 message: &format!("Merge branch '{}' into {branch}", base.branch),
@@ -603,7 +615,7 @@ fn update_branch(
 
 /// The `git rebase` that does what update could not.
 fn rebase_command(branch: &str, base: &Base) -> String {
-    let boundary_is_base = crate::git::resolve_ref(&format!("{}^{{commit}}", base.branch))
+    let boundary_is_base = crate::git::resolve_ref(&crate::git::branch_ref(&base.branch))
         .is_ok_and(|tip| tip == base.boundary);
     if boundary_is_base {
         format!("git rebase {} {branch}", base.branch)
