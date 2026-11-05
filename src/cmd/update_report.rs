@@ -11,6 +11,15 @@ pub enum Strategy {
     Merge,
 }
 
+/// A branch's stacked parent that is behind its own base but wasn't updated.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParentBehind {
+    pub branch: String,
+    pub base: String,
+    pub behind: usize,
+}
+
 /// What happened to a branch. Serialized verbatim for `--json`.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,9 +42,17 @@ pub struct UpdateOutcome {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stash_kept: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_behind: Option<ParentBehind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// `pushed`, `forced`, `up-to-date`, `needs-force-push`, `declined`,
+    /// `no-remote` or `failed`, when pushing was asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push_reason: Option<String>,
     #[serde(skip)]
     pub dry_run: bool,
 }
@@ -51,8 +68,11 @@ impl UpdateOutcome {
             strategy,
             behind: None,
             stash_kept: false,
+            parent_behind: None,
             reason: None,
             hint: None,
+            push: None,
+            push_reason: None,
             dry_run,
         }
     }
@@ -78,7 +98,9 @@ impl UpdateOutcome {
     }
 
     fn needs_attention(&self) -> bool {
-        matches!(self.action, "skipped" | "failed") || self.stash_kept
+        matches!(self.action, "skipped" | "failed")
+            || self.stash_kept
+            || matches!(self.push, Some("needs-force-push" | "failed"))
     }
 
     fn updated(&self) -> bool {
@@ -99,17 +121,35 @@ impl UpdateOutcome {
             _ => String::new(),
         };
         let would = if self.dry_run { "would be " } else { "" };
-        match self.action {
+        let action = match self.action {
             "up-to-date" => format!("up to date with {base}{stacked}"),
             "rebased" => format!("{would}rebased onto {base}{stacked}{behind}"),
             "merged" => format!("{would}merged {base}{stacked}{behind}"),
-            _ => self
-                .reason
-                .as_deref()
-                .and_then(|r| r.lines().next())
-                .unwrap_or_default()
-                .to_string(),
-        }
+            _ => {
+                return self
+                    .reason
+                    .as_deref()
+                    .and_then(|r| r.lines().next())
+                    .unwrap_or_default()
+                    .to_string();
+            }
+        };
+        let push = match self.push {
+            Some("pushed") => format!(", {would}pushed"),
+            Some("forced") => format!(", {would}force-pushed"),
+            Some("needs-force-push") => ", needs a force-push".to_string(),
+            Some("declined") => ", force-push declined".to_string(),
+            Some("no-remote") => ", no remote to push to".to_string(),
+            Some("failed") => format!(
+                ", push failed: {}",
+                self.push_reason
+                    .as_deref()
+                    .and_then(|r| r.lines().next())
+                    .unwrap_or_default()
+            ),
+            _ => String::new(),
+        };
+        format!("{action}{push}")
     }
 }
 
@@ -177,11 +217,31 @@ fn print_section<'a>(
             style(&outcome.branch).bold(),
             detail_style.apply_to(outcome.detail())
         );
+        if let Some(parent) = &outcome.parent_behind {
+            eprintln!(
+                "     {}",
+                style(format!(
+                    "{} is {} behind {}; run: git mate update {} --stack",
+                    parent.branch,
+                    commits(parent.behind),
+                    parent.base,
+                    outcome.branch
+                ))
+                .dim()
+            );
+        }
         if outcome.stash_kept {
             eprintln!(
                 "     {} {}",
                 style("uncommitted changes could not be reapplied; restore with:").yellow(),
                 style("git stash pop").cyan()
+            );
+        }
+        if outcome.push == Some("needs-force-push") {
+            eprintln!(
+                "     {} {}",
+                style("force-push with:").dim(),
+                style(format!("git mate update {} --push=force", outcome.branch)).cyan()
             );
         }
         if let Some(hint) = &outcome.hint {
@@ -191,5 +251,13 @@ fn print_section<'a>(
                 style(hint).cyan()
             );
         }
+    }
+}
+
+pub fn commits(n: usize) -> String {
+    if n == 1 {
+        "1 commit".to_string()
+    } else {
+        format!("{n} commits")
     }
 }
