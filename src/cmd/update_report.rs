@@ -55,6 +55,9 @@ pub struct UpdateOutcome {
     pub push_reason: Option<String>,
     #[serde(skip)]
     pub dry_run: bool,
+    /// Where the branch was before updating.
+    #[serde(skip)]
+    pub old_tip: Option<String>,
 }
 
 impl UpdateOutcome {
@@ -74,6 +77,7 @@ impl UpdateOutcome {
             push: None,
             push_reason: None,
             dry_run,
+            old_tip: None,
         }
     }
 

@@ -34,7 +34,7 @@ fn try_push(
     dry_run: bool,
 ) -> Result<&'static str, String> {
     let branch = outcome.branch.as_str();
-    let Some(target) = crate::git::push_target(branch) else {
+    let Some(target) = crate::git::push_target(branch)? else {
         return Ok("no-remote");
     };
     let tip = crate::git::resolve_ref(&format!("refs/heads/{branch}"))?;
@@ -65,6 +65,17 @@ fn try_push(
         return Ok("pushed");
     }
 
+    // Only overwrite commits the branch had itself (as they were before a
+    // rebase rewrote them): anything else on the remote is someone else's.
+    if let Some(remote) = &remote
+        && !remote_has_only_own_commits(outcome, &tip, remote)?
+    {
+        return Err(format!(
+            "{}/{} has commits the local branch doesn't; pull them in first",
+            target.remote, target.remote_branch
+        ));
+    }
+
     let force = match mode {
         PushMode::Ff => false,
         PushMode::Force => true,
@@ -88,4 +99,20 @@ fn try_push(
         crate::git::push_branch(branch, &target, Some(remote.as_deref()))?;
     }
     Ok("forced")
+}
+
+/// Whether every commit on `remote` is (a rewritten copy of) a commit the
+/// branch had, either now or before this update.
+fn remote_has_only_own_commits(
+    outcome: &UpdateOutcome,
+    tip: &str,
+    remote: &str,
+) -> Result<bool, String> {
+    if crate::git::patches_already_in(tip, remote)? {
+        return Ok(true);
+    }
+    match outcome.old_tip.as_deref() {
+        Some(old_tip) if old_tip != tip => crate::git::patches_already_in(old_tip, remote),
+        _ => Ok(false),
+    }
 }
