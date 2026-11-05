@@ -50,7 +50,13 @@ pub fn rebase_branch(rebase: &Rebase, dry_run: bool) -> Result<Integration, Stri
                 args.push("--autostash");
             }
             args.extend(["--onto", rebase.onto, rebase.boundary]);
-            if run(&args).is_err() {
+            if let Err(e) = run(&args) {
+                // Stopped partway (at a conflict): undo it. Refused to start
+                // at all (untracked files in the way, a hook, a lock): that
+                // is an error of its own, not a conflict.
+                if super::worktree::operation_in_progress(path) != Some("rebase") {
+                    return Err(e);
+                }
                 let _ = run(&["-C", path, "rebase", "--abort"]);
                 return Ok(Integration::Conflict);
             }
@@ -139,6 +145,12 @@ fn replay_onto(onto: &str, boundary: &str, branch: &str) -> Result<Option<String
     if output.status.code() == Some(129) {
         output = replay(&[&onto_arg, &range])?;
     }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    // Without `git replay`, git exits with 1 too, as for a conflict.
+    if stderr.contains("is not a git command") {
+        return Err("git replay is not available (requires Git 2.44 or newer)".to_string());
+    }
     match output.status.code() {
         Some(0) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -153,15 +165,7 @@ fn replay_onto(onto: &str, boundary: &str, branch: &str) -> Result<Option<String
                 .ok_or_else(|| "`git replay` reported no new tip".to_string())
         }
         Some(1) => Ok(None),
-        _ => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr = stderr.trim();
-            if stderr.contains("is not a git command") {
-                Err("git replay is not available (requires Git 2.44 or newer)".to_string())
-            } else {
-                Err(format!("`git replay` failed: {stderr}"))
-            }
-        }
+        _ => Err(format!("`git replay` failed: {stderr}")),
     }
 }
 
