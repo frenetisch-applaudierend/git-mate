@@ -89,117 +89,31 @@ fn fetch_and_pull() {
 }
 
 #[test]
-fn rebase_flag() {
+fn removed_flags_are_rejected() {
     let setup = common::RepoWithRemote::new();
-    let before = setup.local_head_commit();
-    setup.push_commit_to_remote("second commit");
-    common::git_mate()
-        .args(["sync", "--rebase"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success();
-    assert_ne!(
-        setup.local_head_commit(),
-        before,
-        "HEAD should have advanced"
-    );
+    for flag in ["--rebase", "--merge", "--no-merge", "--ff-only"] {
+        common::git_mate()
+            .args(["sync", flag])
+            .current_dir(setup.local_path())
+            .assert()
+            .failure();
+    }
 }
 
 #[test]
-fn merge_flag_merges_default_branch_into_current_branch() {
+fn auto_merge_config_is_ignored() {
     let setup = common::RepoWithRemote::new();
-    let before = prepare_feature_branch(&setup, "feature/merge");
-    setup.push_commit_to_remote("advance main");
-
-    let data = sync_json(setup.local_path(), &["--merge"]);
-    assert_action(&data, "feature/merge", "merged-default");
-    assert_eq!(data["currentBranch"]["mergedDefault"], true);
-
-    let main_tip = setup.branch_tip("main");
-    assert_ne!(setup.local_head_commit(), before);
-    assert!(
-        is_ancestor(setup.local_path(), &main_tip, "HEAD"),
-        "current branch should contain the updated default branch"
-    );
-}
-
-#[test]
-fn auto_merge_config_merges_default_branch_into_current_branch() {
-    let setup = common::RepoWithRemote::new();
-    prepare_feature_branch(&setup, "feature/config-merge");
+    let before = prepare_feature_branch(&setup, "feature/config-merge");
     setup.local_git(&["config", "mate.autoMerge", "true"]);
     setup.push_commit_to_remote("advance main");
 
     let data = sync_json(setup.local_path(), &[]);
-    assert_action(&data, "feature/config-merge", "merged-default");
-    assert_eq!(data["currentBranch"]["mergedDefault"], true);
-
-    let main_tip = setup.branch_tip("main");
-    assert!(
-        is_ancestor(setup.local_path(), &main_tip, "HEAD"),
-        "config-enabled sync should merge the default branch"
-    );
-}
-
-#[test]
-fn merge_flag_overrides_disabled_config() {
-    let setup = common::RepoWithRemote::new();
-    prepare_feature_branch(&setup, "feature/override-merge");
-    setup.local_git(&["config", "mate.autoMerge", "false"]);
-    setup.push_commit_to_remote("advance main");
-
-    let data = sync_json(setup.local_path(), &["--merge"]);
-    assert_action(&data, "feature/override-merge", "merged-default");
-    assert_eq!(data["currentBranch"]["mergedDefault"], true);
-
-    let main_tip = setup.branch_tip("main");
-    assert!(
-        is_ancestor(setup.local_path(), &main_tip, "HEAD"),
-        "--merge should override mate.autoMerge=false"
-    );
-}
-
-#[test]
-fn no_merge_flag_overrides_enabled_config() {
-    let setup = common::RepoWithRemote::new();
-    let before = prepare_feature_branch(&setup, "feature/no-merge");
-    setup.local_git(&["config", "mate.autoMerge", "true"]);
-    setup.push_commit_to_remote("advance main");
-
-    common::git_mate()
-        .args(["sync", "--no-merge"])
-        .current_dir(setup.local_path())
-        .assert()
-        .success();
-
+    assert_action(&data, "feature/config-merge", "up-to-date");
+    assert!(data["currentBranch"].get("mergedDefault").is_none());
     assert_eq!(
         setup.local_head_commit(),
         before,
-        "--no-merge should suppress auto-merge from config"
-    );
-}
-
-#[test]
-fn merge_runs_without_upstream_when_enabled() {
-    let repo = common::RepoWithoutRemote::new();
-    repo.git(&["checkout", "-b", "feature/local"]);
-    repo.git(&["checkout", "main"]);
-    repo.git(&["commit", "--allow-empty", "-m", "advance main"]);
-    let main_tip = repo.head_commit();
-    repo.git(&["checkout", "feature/local"]);
-
-    let data = sync_json(repo.path(), &["--merge"]);
-    assert_eq!(data["currentBranch"]["pulled"], false);
-    assert_eq!(
-        data["currentBranch"]["pullSkippedReason"],
-        "no upstream configured for current branch"
-    );
-    assert_action(&data, "feature/local", "merged-default");
-    assert_eq!(data["currentBranch"]["mergedDefault"], true);
-
-    assert!(
-        is_ancestor(repo.path(), &main_tip, "HEAD"),
-        "auto-merge should still run without an upstream"
+        "sync must not merge the default branch into the current branch"
     );
 }
 
@@ -546,11 +460,11 @@ fn diverged_dry_run_changes_nothing() {
 }
 
 #[test]
-fn ff_only_skips_diverged_branches() {
+fn diverged_skip_leaves_diverged_branches() {
     let setup = common::RepoWithRemote::new();
     let before = diverged_with_local_work(&setup, "feature/ffonly");
 
-    let data = sync_json(setup.local_path(), &["--ff-only"]);
+    let data = sync_json(setup.local_path(), &["--diverged=skip"]);
     let entry = assert_action(&data, "feature/ffonly", "skipped");
     assert_eq!(entry["reason"], "cannot fast-forward (diverged)");
     assert_eq!(setup.branch_tip("feature/ffonly"), before);
@@ -560,7 +474,7 @@ fn ff_only_skips_diverged_branches() {
 fn diverged_strategy_config_skip_is_respected() {
     let setup = common::RepoWithRemote::new();
     let before = diverged_with_local_work(&setup, "feature/cfg");
-    setup.local_git(&["config", "mate.divergedStrategy", "skip"]);
+    setup.local_git(&["config", "mate.sync.diverged", "skip"]);
 
     let data = sync_json(setup.local_path(), &[]);
     let entry = assert_action(&data, "feature/cfg", "skipped");
@@ -569,9 +483,31 @@ fn diverged_strategy_config_skip_is_respected() {
 }
 
 #[test]
+fn deprecated_diverged_strategy_config_is_still_read() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/cfg");
+    setup.local_git(&["config", "mate.divergedStrategy", "skip"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/cfg", "skipped");
+    assert_eq!(setup.branch_tip("feature/cfg"), before);
+}
+
+#[test]
+fn diverged_config_wins_over_deprecated_key() {
+    let setup = common::RepoWithRemote::new();
+    diverged_with_local_work(&setup, "feature/cfg");
+    setup.local_git(&["config", "mate.divergedStrategy", "skip"]);
+    setup.local_git(&["config", "mate.sync.diverged", "merge"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/cfg", "merged");
+}
+
+#[test]
 fn invalid_diverged_strategy_config_is_an_error() {
     let setup = common::RepoWithRemote::new();
-    setup.local_git(&["config", "mate.divergedStrategy", "bogus"]);
+    setup.local_git(&["config", "mate.sync.diverged", "bogus"]);
 
     let output = common::git_mate()
         .args(["--json", "sync"])
@@ -587,7 +523,7 @@ fn invalid_diverged_strategy_config_is_an_error() {
         json["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("invalid value for mate.divergedStrategy"),
+            .contains("invalid value for mate.sync.diverged"),
         "unexpected JSON: {json}"
     );
 }
@@ -660,11 +596,11 @@ fn merges_upstream_into_diverged_current_branch() {
 }
 
 #[test]
-fn rebase_flag_rebases_diverged_current_branch() {
+fn diverged_rebase_rebases_diverged_current_branch() {
     let setup = common::RepoWithRemote::new();
     diverged_current_branch(&setup, "feature/cur", "local");
 
-    let data = sync_json(setup.local_path(), &["--rebase"]);
+    let data = sync_json(setup.local_path(), &["--diverged=rebase"]);
     assert_action(&data, "feature/cur", "rebased");
 
     let head = setup.local_head_commit();
@@ -692,7 +628,7 @@ fn rebase_with_conflicts_is_aborted() {
     diverged_current_branch(&setup, "feature/cur", "remote");
     let before = setup.local_head_commit();
 
-    let data = sync_json(setup.local_path(), &["--rebase"]);
+    let data = sync_json(setup.local_path(), &["--diverged=rebase"]);
     let entry = assert_action(&data, "feature/cur", "skipped");
     assert_eq!(entry["reason"], "diverged with conflicts; rebase aborted");
 
@@ -703,13 +639,126 @@ fn rebase_with_conflicts_is_aborted() {
 }
 
 #[test]
-fn pull_rebase_config_rebases_diverged_current_branch() {
+fn rebase_dry_run_predicts_conflicts_in_worktree() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "remote");
+    let before = setup.local_head_commit();
+
+    let data = sync_json(setup.local_path(), &["--diverged=rebase", "--dry-run"]);
+    assert_action(&data, "feature/cur", "skipped");
+    assert_eq!(setup.local_head_commit(), before);
+}
+
+#[test]
+fn diverged_config_rebase_rebases_diverged_current_branch() {
+    let setup = common::RepoWithRemote::new();
+    diverged_current_branch(&setup, "feature/cur", "local");
+    setup.local_git(&["config", "mate.sync.diverged", "rebase"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/cur", "rebased");
+}
+
+#[test]
+fn pull_rebase_config_no_longer_rebases() {
     let setup = common::RepoWithRemote::new();
     diverged_current_branch(&setup, "feature/cur", "local");
     setup.local_git(&["config", "pull.rebase", "true"]);
 
     let data = sync_json(setup.local_path(), &[]);
-    assert_action(&data, "feature/cur", "rebased");
+    assert_action(&data, "feature/cur", "merged");
+}
+
+#[test]
+fn diverged_rebase_replays_branch_that_is_not_checked_out() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/div");
+    let main_before = setup.local_head_commit();
+
+    let data = sync_json(setup.local_path(), &["--diverged=rebase"]);
+    assert_action(&data, "feature/div", "rebased");
+
+    let tip = setup.branch_tip("feature/div");
+    assert_eq!(parent_count(setup.local_path(), &tip), 1);
+    assert!(is_ancestor(setup.local_path(), "origin/feature/div", &tip));
+    assert!(!is_ancestor(setup.local_path(), &before, &tip));
+    assert_eq!(setup.local_head_commit(), main_before);
+    assert_eq!(setup.local_current_branch(), "main");
+}
+
+#[test]
+fn diverged_rebase_with_conflicts_leaves_branch_that_is_not_checked_out() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/div");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/div");
+    commit_file_on(&setup, "feature/div", "shared.txt", "local");
+    let scratch = remote_scratch(&setup, "feature/div");
+    commit_file(scratch.path(), "shared.txt", "remote", "remote change");
+    common::git(scratch.path(), &["push", "-q"]);
+    let before = setup.branch_tip("feature/div");
+
+    let data = sync_json(setup.local_path(), &["--diverged=rebase"]);
+    let entry = assert_action(&data, "feature/div", "skipped");
+    assert_eq!(entry["reason"], "diverged with conflicts; rebase aborted");
+    assert_eq!(setup.branch_tip("feature/div"), before);
+}
+
+#[test]
+fn diverged_rebase_dry_run_changes_nothing() {
+    let setup = common::RepoWithRemote::new();
+    let before = diverged_with_local_work(&setup, "feature/div");
+
+    let data = sync_json(setup.local_path(), &["--diverged=rebase", "--dry-run"]);
+    assert_action(&data, "feature/div", "rebased");
+    assert_eq!(setup.branch_tip("feature/div"), before);
+}
+
+/// `branch` was pushed, then rebased locally onto a main that moved on, but
+/// not pushed again.
+fn rebased_locally(setup: &common::RepoWithRemote, branch: &str) -> String {
+    setup.local_git(&["checkout", "-q", "-b", branch]);
+    commit_file(
+        setup.local_path(),
+        "feature.txt",
+        "feature",
+        "feature change",
+    );
+    setup.local_git(&["push", "-q", "-u", "origin", branch]);
+    setup.local_git(&["checkout", "-q", "main"]);
+    commit_file(setup.local_path(), "main.txt", "main", "main change");
+    setup.local_git(&["push", "-q", "origin", "main"]);
+    setup.local_git(&["rebase", "-q", "main", branch]);
+    setup.local_git(&["checkout", "-q", "main"]);
+    setup.branch_tip(branch)
+}
+
+#[test]
+fn branch_rebased_locally_needs_force_push() {
+    for strategy in ["merge", "rebase", "skip"] {
+        let setup = common::RepoWithRemote::new();
+        let before = rebased_locally(&setup, "feature/rebased");
+
+        let data = sync_json(setup.local_path(), &[&format!("--diverged={strategy}")]);
+        assert_action(&data, "feature/rebased", "needs-force-push");
+        assert_eq!(
+            setup.branch_tip("feature/rebased"),
+            before,
+            "--diverged={strategy} must leave a locally rebased branch alone"
+        );
+    }
+}
+
+#[test]
+fn current_branch_rebased_locally_needs_force_push() {
+    let setup = common::RepoWithRemote::new();
+    let before = rebased_locally(&setup, "feature/rebased");
+    setup.local_git(&["checkout", "-q", "feature/rebased"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/rebased", "needs-force-push");
+    assert_eq!(data["currentBranch"]["pulled"], false);
+    assert_eq!(setup.local_head_commit(), before);
 }
 
 #[test]
@@ -800,32 +849,6 @@ fn current_branch_ahead_of_upstream_is_left_alone() {
     assert_action(&data, "main", "up-to-date");
 
     assert_eq!(setup.local_head_commit(), before);
-}
-
-#[test]
-fn conflicting_auto_merge_needs_attention_and_leaves_branch_untouched() {
-    let setup = common::RepoWithRemote::new();
-    prepare_feature_branch(&setup, "feature/clash");
-    commit_file(
-        setup.local_path(),
-        "shared.txt",
-        "feature",
-        "feature change",
-    );
-    setup.local_git(&["push", "-q"]);
-    let before = setup.local_head_commit();
-    setup.push_file_commit_to_remote("shared.txt", "main", "main change");
-
-    let data = sync_json(setup.local_path(), &["--merge"]);
-    let entry = assert_action(&data, "feature/clash", "skipped");
-    assert_eq!(
-        entry["reason"],
-        "merging default branch 'main' would conflict"
-    );
-    assert_eq!(data["currentBranch"]["mergedDefault"], false);
-
-    assert_eq!(setup.local_head_commit(), before);
-    assert!(!git_path_exists(&setup, "MERGE_HEAD"));
 }
 
 // --- a single branch's error must not abort the rest of the run ---
@@ -1406,4 +1429,102 @@ fn dry_run_json_reports_plan_without_acting() {
         main_before,
         "dry run must not pull the current branch"
     );
+}
+
+// --- behind-base hint ---
+
+#[test]
+fn reports_current_branch_behind_its_base() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature", "feature");
+    repo.git(&["checkout", "-q", "main"]);
+    commit_file(dir, "main.txt", "main", "main");
+    commit_file(dir, "main2.txt", "main", "main 2");
+    repo.git(&["checkout", "-q", "feature"]);
+    let before = repo.head_commit();
+
+    let data = sync_json(dir, &[]);
+    let behind = &data["currentBranch"]["behindBase"];
+    assert_eq!(behind["base"], "main");
+    assert_eq!(behind["count"], 2);
+    assert!(behind.get("mergedParent").is_none());
+    assert_eq!(repo.head_commit(), before, "the hint changes nothing");
+}
+
+#[test]
+fn reports_stacked_branch_behind_its_parent() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "bar"]);
+    commit_file(dir, "bar.txt", "bar", "bar");
+    repo.git(&["checkout", "-q", "-b", "foo"]);
+    commit_file(dir, "foo.txt", "foo", "foo");
+    repo.git(&["checkout", "-q", "bar"]);
+    commit_file(dir, "bar2.txt", "bar", "bar 2");
+    repo.git(&["checkout", "-q", "foo"]);
+
+    let data = sync_json(dir, &[]);
+    assert_eq!(data["currentBranch"]["behindBase"]["base"], "bar");
+    assert_eq!(data["currentBranch"]["behindBase"]["count"], 1);
+}
+
+#[test]
+fn reports_stacked_branch_whose_parent_was_merged() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "bar"]);
+    commit_file(dir, "bar.txt", "bar", "bar");
+    repo.git(&["checkout", "-q", "-b", "foo"]);
+    commit_file(dir, "foo.txt", "foo", "foo");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.git(&["merge", "-q", "--squash", "bar"]);
+    repo.git(&["commit", "-q", "-m", "squashed bar"]);
+    repo.git(&["checkout", "-q", "foo"]);
+
+    let data = sync_json(dir, &[]);
+    let behind = &data["currentBranch"]["behindBase"];
+    assert_eq!(behind["base"], "main");
+    assert_eq!(behind["mergedParent"], "bar");
+}
+
+#[test]
+fn no_behind_base_hint_when_up_to_date_or_on_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    let data = sync_json(dir, &[]);
+    assert!(data["currentBranch"].get("behindBase").is_none());
+
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature", "feature");
+    let data = sync_json(dir, &[]);
+    assert!(data["currentBranch"].get("behindBase").is_none());
+}
+
+#[test]
+fn update_sync_leaves_out_the_behind_base_hint() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature", "feature");
+    repo.git(&["checkout", "-q", "main"]);
+    commit_file(dir, "main.txt", "main", "main");
+    repo.git(&["checkout", "-q", "feature"]);
+
+    let output = common::git_mate()
+        .args(["--json", "update", "--sync"])
+        .current_dir(dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json = common::parse_single_json(&output);
+    assert!(
+        json["data"]["sync"]["currentBranch"]
+            .get("behindBase")
+            .is_none()
+    );
+    assert_eq!(json["data"]["branches"][0]["action"], "rebased");
 }

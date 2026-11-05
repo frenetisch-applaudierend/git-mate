@@ -57,6 +57,14 @@ Non-conventional commits are silently ignored by the release tooling.
 `mod.rs` files must never contain logic — only `pub mod`/`mod` declarations and `pub use` re-exports.
 Put all implementation in named submodule files.
 
+## Configuration keys
+
+Settings that apply to a single command are named `mate.<command>.<key>`, where `<key>` matches
+the flag whose default they set (e.g. `--diverged` ↔ `mate.sync.diverged`, `--no-fetch` ↔
+`mate.new.fetch`). Only settings shared by several commands (e.g. `mate.defaultBranchMode`,
+`mate.worktreeRoot`) live directly under `mate.`. When renaming a key, keep reading the old one
+for a release with a deprecation warning.
+
 ## Build and test hygiene
 
 Before committing, pushing, or creating a PR, always ensure:

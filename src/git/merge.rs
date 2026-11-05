@@ -45,22 +45,6 @@ pub fn patches_already_in(upstream: &str, branch: &str) -> Result<bool, String> 
     Ok(output.lines().all(|line| line.starts_with('-')))
 }
 
-/// Merge `refspec` into the branch checked out at `path`. On failure the
-/// merge is aborted so the worktree is left as it was.
-pub fn merge_no_edit_in(path: &str, refspec: &str) -> Result<(), String> {
-    run(&["-C", path, "merge", "--no-edit", refspec]).inspect_err(|_| {
-        let _ = run(&["-C", path, "merge", "--abort"]);
-    })
-}
-
-/// Rebase the branch checked out at `path` onto `upstream`. On failure the
-/// rebase is aborted so the worktree is left as it was.
-pub fn rebase_in(path: &str, upstream: &str) -> Result<(), String> {
-    run(&["-C", path, "rebase", upstream]).inspect_err(|_| {
-        let _ = run(&["-C", path, "rebase", "--abort"]);
-    })
-}
-
 pub fn reset_hard_in(path: &str, refspec: &str) -> Result<(), String> {
     run(&["-C", path, "reset", "--hard", refspec])
 }

@@ -119,17 +119,80 @@ git mate finish feature/login       # finish a specific branch from anywhere
 Fetches all remotes and prunes stale remote-tracking references, then:
 
 - Fast-forwards every local branch whose upstream is still present, including the current one
-- Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (or rebases the current branch with `--rebase` / `pull.rebase=true`); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
+- Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (`--diverged=rebase` rebases local commits onto the upstream instead, also for branches that aren't checked out; `--diverged=skip` leaves them alone); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
+- Leaves branches you rebased locally but haven't pushed yet alone, listing them as needing a force-push instead of merging the old commits back in
+- Points out when the current branch is behind the branch it is based on (e.g. `main` moved on since you branched), suggesting `git mate update`; with `--json` this is `currentBranch.behindBase` (`base`, `count`, and `mergedParent` if the branch it was stacked on has been merged)
 - Offers to delete local branches whose remote was deleted (if they have no unpushed commits and a clean working tree): pick delete, keep or ask later per branch, with branches already merged into the default branch preselected for deletion and the rest for asking again next sync (`--apply-recommended` applies those preselections without asking)
-- Optionally merges the default branch into the current branch, when that is conflict-free
 
 ```bash
 git mate sync                       # fetch + prune, then bring every branch up to date
-git mate sync --rebase              # rebase the current branch instead of merging if it diverged
-git mate sync --ff-only             # only fast-forward; skip diverged branches
-git mate sync --diverged=skip       # leave diverged branches untouched (or: git config mate.divergedStrategy skip)
-git mate sync --merge               # also merge the default branch into the current branch
-git mate sync --no-merge            # skip auto-merge for this run
+git mate sync --diverged=rebase     # rebase diverged branches onto their upstream instead of merging
+git mate sync --diverged=skip       # only fast-forward; leave diverged branches untouched
+git config mate.sync.diverged rebase  # make rebase the default
+```
+
+Sync never merges the default branch into your branches; `mate.autoMerge` and the
+`--merge`, `--no-merge`, `--rebase` and `--ff-only` flags were removed. The
+`mate.divergedStrategy` setting was renamed to `mate.sync.diverged`; the old name is still
+read, with a warning, for now.
+
+### `git mate update [<branch>...]`
+
+Brings branches up to date with the branch they are based on: rebases them onto it (the
+default) or, with `--merge`, merges it in. Without arguments it updates the current
+branch; `--all` updates every local branch except the default branch.
+
+The base is read from the commit graph, so it works for any branch, however it was created:
+
+- A branch that contains commits of another local branch which the default branch doesn't
+  have is **stacked** on that branch. When both have moved on since, the branch's reflog
+  ("Created from …") decides which one is the parent.
+- Any other branch is based on the **default branch**.
+- If the branch it is stacked on was merged into the default branch since (also squash- or
+  rebase-merged), the branch is rebased onto the default branch and the parent's commits
+  are dropped.
+- If several branches could be the base, the branch is skipped; name it with `--onto`.
+
+All bases are detected before anything changes and stacked branches are updated after
+their parents, so a whole stack moves along in one run. A rebase or merge only goes
+through if it is conflict-free; otherwise the branch is left as it was and listed under
+"Needs attention". Uncommitted changes in a branch's worktree are stashed and reapplied.
+Branches that aren't checked out are updated without touching any worktree (rebasing them
+uses `git replay`, Git 2.44+).
+
+**Stacks.** When a branch you name is stacked on branches of which one is behind its own
+base (say `foo` on `bar`, and `main` moved on), `update` asks whether to update those
+first. `--stack` does so without asking, `--no-stack` never does; without a terminal the
+stack is left alone and reported (`parentBehind` in `--json`).
+
+**Pushing.** `--push` pushes each updated (or already up-to-date) branch afterwards when
+that is a fast-forward or creates the remote branch (setting it as upstream). A rebased
+branch that was pushed before needs a force-push: `--push` only reports it, `--push=ask`
+asks first, `--push=force` just does it. A force-push uses `--force-with-lease` against
+what the last fetch saw, so it fails rather than overwrite commits someone else pushed
+meanwhile.
+
+**Syncing first.** `update` works with the local base branches. `--sync` runs
+`git mate sync` first, so they match the remote (with `--json`, sync's result is included
+as `sync`).
+
+With `--json`, it prints a single JSON document with one entry per branch (`branch`,
+`action` — `rebased`, `merged`, `up-to-date`, `skipped` or `failed` — `base`, `baseSource`
+— `default`, `stacked`, `mergedParent` or `onto` — `strategy`, `behind`, and `reason` /
+`hint` when skipped).
+
+```bash
+git mate update                     # rebase the current branch onto its base
+git mate update --merge             # merge the base in instead
+git mate update feature/a feature/b # update these branches (parents first)
+git mate update --all               # update every branch, whole stacks included
+git mate update --onto main         # rebase onto main, whatever the detected base
+git mate update --all --dry-run     # preview
+git mate update --stack             # also update the branches it is stacked on
+git mate update --sync --push       # sync first, push afterwards (no force-push)
+git mate update --push=ask          # ask before force-pushing a rebased branch
+git config mate.update.strategy merge  # merge by default
+git config mate.update.sync true       # always sync first
 ```
 
 ## Installation
@@ -173,10 +236,14 @@ git config mate.worktreeRoot "../worktrees"
 | Key | Values | Effect |
 |-----|--------|--------|
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
-| `mate.autoMerge` | `true` / `yes` / `on` / `1`, `false` / `no` / `off` / `0` | Auto-merge the default branch during `git mate sync` |
 | `mate.defaultBranchMode` | `main` / `linked` | Default target for `git mate new` and `git mate checkout` |
 | `mate.new.from` | `default` / `current` / any ref | Starting point for `git mate new` when `--from` is omitted (default: `default`) |
 | `mate.new.changes` | `auto` / `take` / `startFresh` | What `git mate new` does with uncommitted changes when neither `--take-changes` nor `--start-fresh` is given (default: `auto`) |
 | `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
 | `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
+| `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
+| `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when neither `--rebase` nor `--merge` is given (default: `rebase`) |
+| `mate.update.stack` | `ask` / `true` / `false` | Whether `git mate update` also updates the branches a branch is stacked on when they are behind (default: `ask`) |
+| `mate.update.push` | `false` / `ff` / `ask` / `force` | Whether and how `git mate update` pushes afterwards (default: `false`) |
+| `mate.update.sync` | boolean | Run `git mate sync` before `git mate update` (default: `false`) |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |
