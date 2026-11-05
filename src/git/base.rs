@@ -53,11 +53,36 @@ pub fn default_base_branch() -> Result<String, String> {
     super::branch::detect_default_branch(true)
 }
 
-/// `branch`'s detected base, and how many commits it is behind it, if
-/// `git mate update` would change it: the base has commits it lacks, or the
-/// branch it was stacked on has been merged. `None` for the default branch,
-/// an up-to-date branch, or one whose base is ambiguous.
-pub fn behind_base(branch: &str) -> Result<Option<(Base, usize)>, String> {
+/// The full ref of a base branch: the local branch, or else the
+/// remote-tracking branch of that name (the default branch can be one).
+/// Never a tag or other ref that happens to share the name.
+pub fn branch_ref(name: &str) -> String {
+    let local = format!("refs/heads/{name}");
+    if super::refs::commit_exists(&local) {
+        local
+    } else {
+        format!("refs/remotes/{name}")
+    }
+}
+
+/// How many commits `branch` is behind `base`, if bringing it up to date
+/// would change it: the base has commits it lacks, or, when rebasing, it
+/// still carries the commits of a parent that has since been merged (a merge
+/// keeps them, so they don't count). `None` if it is up to date.
+pub fn behind(branch: &str, base: &Base, rebase: bool) -> Result<Option<usize>, String> {
+    let tip = rev_parse(&format!("refs/heads/{branch}"))?;
+    let base_tip = rev_parse(&branch_ref(&base.branch))?;
+    let drops_merged_parent = rebase && base.source == BaseSource::MergedParent;
+    if !drops_merged_parent && super::refs::is_ancestor(&base_tip, &tip)? {
+        return Ok(None);
+    }
+    super::refs::count_commits(&tip, &base_tip).map(Some)
+}
+
+/// `branch`'s detected base, and how many commits it is behind it (see
+/// [`behind`]). `None` for the default branch, an up-to-date branch, or one
+/// whose base is ambiguous.
+pub fn behind_base(branch: &str, rebase: bool) -> Result<Option<(Base, usize)>, String> {
     let default_branch = default_base_branch()?;
     if branch == default_branch || Some(branch) == default_branch.split_once('/').map(|(_, b)| b) {
         return Ok(None);
@@ -70,13 +95,7 @@ pub fn behind_base(branch: &str) -> Result<Option<(Base, usize)>, String> {
     let Detection::Found(base) = detect_base(branch, &default_branch, &candidates)? else {
         return Ok(None);
     };
-    let tip = rev_parse(&format!("refs/heads/{branch}"))?;
-    let base_tip = rev_parse(&base.branch)?;
-    if base.source != BaseSource::MergedParent && super::refs::is_ancestor(&base_tip, &tip)? {
-        return Ok(None);
-    }
-    let behind = super::refs::count_commits(&tip, &base_tip)?;
-    Ok(Some((base, behind)))
+    Ok(behind(branch, &base, rebase)?.map(|count| (base, count)))
 }
 
 /// Detect `branch`'s base among `candidates` (the local branches), with
@@ -87,7 +106,7 @@ pub fn detect_base(
     candidates: &[String],
 ) -> Result<Detection, String> {
     let tip = rev_parse(&format!("refs/heads/{branch}"))?;
-    let default_tip = rev_parse(default_branch)?;
+    let default_tip = rev_parse(&branch_ref(default_branch))?;
     let created_from = created_from(branch, candidates);
 
     struct Parent {
@@ -124,7 +143,10 @@ pub fn detect_base(
             }
         };
         parents.push(Parent {
-            distance: super::refs::count_commits(&merge_base(&tip, candidate)?, &tip)?,
+            distance: super::refs::count_commits(
+                &merge_base(&tip, &format!("refs/heads/{candidate}"))?,
+                &tip,
+            )?,
             name: candidate.clone(),
             uncertain,
         });
@@ -157,7 +179,7 @@ pub fn detect_base(
     };
 
     let parent_tip = rev_parse(&format!("refs/heads/{}", chosen.name))?;
-    if super::merge::content_merged_into(default_branch, &chosen.name)?.is_some() {
+    if super::merge::content_merged_into(&branch_ref(default_branch), &parent_tip)?.is_some() {
         return Ok(Detection::Found(Base {
             branch: default_branch.to_string(),
             source: BaseSource::MergedParent,

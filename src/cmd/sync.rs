@@ -350,7 +350,13 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
                 && crate::git::commit_exists(&format!("refs/heads/{branch}")) =>
         {
             // Only a hint: a branch whose base can't be told is just not hinted at.
-            crate::git::behind_base(branch)
+            super::update::configured_strategy()
+                .and_then(|strategy| {
+                    crate::git::behind_base(
+                        branch,
+                        strategy == super::update_report::Strategy::Rebase,
+                    )
+                })
                 .ok()
                 .flatten()
                 .map(|(base, count)| BehindBase {
