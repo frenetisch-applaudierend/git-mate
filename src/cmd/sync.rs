@@ -39,6 +39,9 @@ Pass --apply-recommended to skip the chooser and apply the preselected actions, 
 also makes --json act instead of just reporting candidates). Branches you keep stop
 tracking their deleted upstream, so they aren't offered again.
 
+Sync never merges or rebases a branch onto the branch it is based on; if the current
+branch is behind its base, it suggests `git mate update`, which does.
+
 Pass --dry-run to preview what sync would do (fast-forwards, merges, rebases, deletion
 candidates) without changing anything or prompting."
 )]
@@ -66,6 +69,10 @@ pub struct SyncArgs {
         help = "How to handle branches that diverged from their upstream [default: mate.sync.diverged, else merge]"
     )]
     pub diverged: Option<DivergedStrategy>,
+    /// Don't check whether the current branch is behind its base (when
+    /// `git mate update --sync` is about to update it anyway).
+    #[arg(skip)]
+    pub skip_behind_base: bool,
 }
 
 /// How to bring a diverged branch back in line with its upstream.
@@ -90,6 +97,20 @@ struct CurrentBranchOutcome {
     pulled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pull_skipped_reason: Option<String>,
+    /// The current branch's base has commits it doesn't, so
+    /// `git mate update` would update it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    behind_base: Option<BehindBase>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BehindBase {
+    base: String,
+    count: usize,
+    /// The branch it was stacked on, since merged into `base`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merged_parent: Option<String>,
 }
 
 /// What sync did, as reported by `--json`.
@@ -321,6 +342,26 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
         }
     };
 
+    let behind_base = match current_branch.as_deref() {
+        Some(branch)
+            if !args.skip_behind_base
+                && !current_branch_pruned
+                && branch != "HEAD"
+                && crate::git::commit_exists(&format!("refs/heads/{branch}")) =>
+        {
+            // Only a hint: a branch whose base can't be told is just not hinted at.
+            crate::git::behind_base(branch)
+                .ok()
+                .flatten()
+                .map(|(base, count)| BehindBase {
+                    base: base.branch,
+                    count,
+                    merged_parent: base.merged_parent,
+                })
+        }
+        _ => None,
+    };
+
     if !json {
         if !current_branch_pruned && current_outcome.is_none_or(|o| o.action == "no-upstream") {
             crate::output::info("No upstream configured for current branch, skipping sync.");
@@ -333,6 +374,9 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
         if any_work || !needs_attention {
             crate::output::success(final_status_message(any_work, dry_run));
         }
+        if let (Some(branch), Some(behind)) = (current_branch.as_deref(), &behind_base) {
+            print_behind_base(branch, behind);
+        }
     }
 
     Ok(SyncData {
@@ -342,8 +386,32 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
             name: current_branch,
             pulled,
             pull_skipped_reason,
+            behind_base,
         },
     })
+}
+
+/// Point out that `git mate update` would bring the current branch up to
+/// date with its base.
+fn print_behind_base(branch: &str, behind: &BehindBase) {
+    let state = match &behind.merged_parent {
+        Some(parent) => format!(
+            "{parent}, which {branch} is stacked on, was merged into {}",
+            behind.base
+        ),
+        None => {
+            let plural = if behind.count == 1 { "" } else { "s" };
+            format!(
+                "{branch} is {} commit{plural} behind {}",
+                behind.count, behind.base
+            )
+        }
+    };
+    crate::output::info(&format!(
+        "{state} {} {}",
+        console::style("→").dim(),
+        console::style("git mate update").cyan()
+    ));
 }
 
 /// Whether a branch is in line with its upstream after this run (or, under

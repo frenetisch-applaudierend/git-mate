@@ -43,6 +43,42 @@ pub enum Detection {
     Ambiguous(Vec<String>),
 }
 
+/// The default branch to fall back to as a base: the local branch, or its
+/// remote-tracking branch if there is no local one.
+pub fn default_base_branch() -> Result<String, String> {
+    let local = super::branch::detect_default_branch(false)?;
+    if super::refs::commit_exists(&format!("refs/heads/{local}")) {
+        return Ok(local);
+    }
+    super::branch::detect_default_branch(true)
+}
+
+/// `branch`'s detected base, and how many commits it is behind it, if
+/// `git mate update` would change it: the base has commits it lacks, or the
+/// branch it was stacked on has been merged. `None` for the default branch,
+/// an up-to-date branch, or one whose base is ambiguous.
+pub fn behind_base(branch: &str) -> Result<Option<(Base, usize)>, String> {
+    let default_branch = default_base_branch()?;
+    if branch == default_branch || Some(branch) == default_branch.split_once('/').map(|(_, b)| b) {
+        return Ok(None);
+    }
+    let candidates: Vec<String> =
+        run_output(&["for-each-ref", "--format=%(refname:short)", "refs/heads/"])?
+            .lines()
+            .map(str::to_string)
+            .collect();
+    let Detection::Found(base) = detect_base(branch, &default_branch, &candidates)? else {
+        return Ok(None);
+    };
+    let tip = rev_parse(&format!("refs/heads/{branch}"))?;
+    let base_tip = rev_parse(&base.branch)?;
+    if base.source != BaseSource::MergedParent && super::refs::is_ancestor(&base_tip, &tip)? {
+        return Ok(None);
+    }
+    let behind = super::refs::count_commits(&tip, &base_tip)?;
+    Ok(Some((base, behind)))
+}
+
 /// Detect `branch`'s base among `candidates` (the local branches), with
 /// `default_branch` as the fallback.
 pub fn detect_base(

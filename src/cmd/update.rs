@@ -141,13 +141,15 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
     let sync = if sync_enabled(&args)? {
         Some(super::sync::sync(super::sync::SyncArgs {
             dry_run,
+            // Update is about to bring the branch up to date with its base.
+            skip_behind_base: true,
             ..Default::default()
         })?)
     } else {
         None
     };
 
-    let default_branch = default_branch()?;
+    let default_branch = crate::git::default_base_branch()?;
     let local_branches = crate::git::list_local_branches_with_upstream()?
         .into_iter()
         .map(|(branch, _)| branch)
@@ -413,16 +415,6 @@ fn stack_below(
         }
         None => (Vec::new(), None),
     })
-}
-
-/// The default branch to fall back to as a base: the local branch, or its
-/// remote-tracking branch if there is no local one.
-fn default_branch() -> Result<String, String> {
-    let local = crate::git::detect_default_branch(false)?;
-    if crate::git::commit_exists(&format!("refs/heads/{local}")) {
-        return Ok(local);
-    }
-    crate::git::detect_default_branch(true)
 }
 
 /// The branches to update, validated.
