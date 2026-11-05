@@ -30,13 +30,15 @@ Branches already merged into the default branch — whether merged, rebase-merge
 squash-merged, even if those files were moved or edited since — start out as delete,
 the others as ask later; use the arrow keys to change them and Enter to apply, or Esc
 to leave them all as they are. Without a terminal there is nobody to ask, so they are
-listed and left as they are. Branches with unpushed commits or a dirty working tree
-are never offered for deletion. Branches whose remote was already gone before this
-sync (e.g. pruned by an earlier fetch) are offered too; since sync cannot tell whether
-they had unpushed commits, an unmerged one is only deleted when you pick it.
-Pass --apply-recommended to skip the chooser and apply the preselected actions, or
---delete-pruned to delete all of them except those unmerged, already-gone ones (either
-also makes --json act instead of just reporting candidates). Branches you keep stop
+listed and left as they are. Branches with unpushed commits start out as ask later
+and are only deleted when you pick it; keep one to push it again later. Branches
+whose worktree has uncommitted changes are never offered for deletion. Branches whose
+remote was already gone before this sync (e.g. pruned by an earlier fetch) are offered
+too; since sync cannot tell whether they had unpushed commits, an unmerged one is only
+deleted when you pick it. Pass --apply-recommended to skip the chooser and apply the
+preselected actions, or --delete-pruned to delete all of them except those with
+unpushed commits or unmerged, already-gone ones (either also makes --json act instead
+of just reporting candidates). Branches you keep stop
 tracking their deleted upstream, so they aren't offered again.
 
 Sync never merges or rebases a branch onto the branch it is based on; if the current
@@ -208,28 +210,9 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
                 current_branch_pruned = true;
             }
 
-            let had_unique = branches_before
-                .iter()
-                .find(|(b, _, _)| b == branch)
-                .map(|(_, local_sha, upstream_sha)| {
-                    // The branch had unique commits if its tip was NOT an ancestor of
-                    // (i.e., was ahead of) the upstream tip at snapshot time.
-                    match (local_sha, upstream_sha) {
-                        (Some(l), Some(u)) => !crate::git::is_ancestor(l, u).unwrap_or(false),
-                        // No upstream SHA recorded means we couldn't check → be safe.
-                        _ => true,
-                    }
-                })
-                .unwrap_or(true);
-
-            let status = if had_unique {
-                Ok(PrunedStatus::Skip(BranchOutcome::needs_attention(
-                    branch,
-                    "remote deleted but has unpushed commits, skipping",
-                    "remote gone, but has unpushed commits",
-                )))
-            } else {
-                pruned_branch_status(branch, &worktrees, &default_branch)
+            let status = match unpushed_before_prune(&branches_before, branch) {
+                Unpushed::None => pruned_branch_status(branch, &worktrees, &default_branch),
+                unpushed => unpushed_branch_status(branch, unpushed, &worktrees),
             };
             record_pruned_status(
                 branch,
@@ -851,6 +834,59 @@ fn gone_branch_status(
     deletable_unless_dirty(branch, worktrees, candidate)
 }
 
+/// Whether a branch whose upstream was pruned during this sync had commits
+/// its upstream did not, as of the snapshot taken before fetching.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Unpushed {
+    None,
+    Commits(usize),
+    /// No usable snapshot, so unpushed commits can't be ruled out.
+    Unknown,
+}
+
+fn unpushed_before_prune(
+    branches_before: &[(String, Option<String>, Option<String>)],
+    branch: &str,
+) -> Unpushed {
+    let Some((_, Some(local), Some(upstream))) =
+        branches_before.iter().find(|(b, _, _)| b == branch)
+    else {
+        return Unpushed::Unknown;
+    };
+    match crate::git::count_commits(upstream, local) {
+        Ok(0) => Unpushed::None,
+        Ok(n) => Unpushed::Commits(n),
+        Err(_) => Unpushed::Unknown,
+    }
+}
+
+/// A branch whose upstream was pruned during this sync while it still had
+/// unpushed commits. It is offered like any other remote-gone branch, so
+/// the user can keep it (and push it again later), delete it or decide
+/// later — but never preselected for deletion, and never deleted by
+/// `--delete-pruned`.
+fn unpushed_branch_status(
+    branch: &str,
+    unpushed: Unpushed,
+    worktrees: &[crate::git::WorktreeEntry],
+) -> Result<PrunedStatus, String> {
+    let detail = match unpushed {
+        Unpushed::Commits(n) => {
+            let plural = if n == 1 { "" } else { "s" };
+            format!("{n} unpushed commit{plural}")
+        }
+        _ => "may have unpushed commits".to_string(),
+    };
+    let candidate = Candidate {
+        branch: branch.to_string(),
+        detail,
+        warn: true,
+        recommended: Choice::Later,
+        bulk_delete_blocker: Some("remote deleted but has unpushed commits, skipping".to_string()),
+    };
+    deletable_unless_dirty(branch, worktrees, candidate)
+}
+
 /// Decide whether a branch whose upstream was pruned during this sync (and
 /// that has no unpushed commits) is safe to delete. Whether it was merged is
 /// only shown, so the user can tell a merged PR from an abandoned one.
@@ -1009,7 +1045,7 @@ fn resolve_pruned_deletions(
         }
         if !blocked.is_empty() {
             if !mode.json {
-                report::print_title("Remote gone, not merged");
+                report::print_title("Remote gone, not deleted");
                 let detail_column = report::detail_column(candidates);
                 for candidate in &blocked {
                     for line in report::decision_lines(
@@ -1023,7 +1059,7 @@ fn resolve_pruned_deletions(
                     }
                 }
                 report::print_note(
-                    "remote was already gone, so unpushed commits can't be ruled out; run sync without --delete-pruned to choose",
+                    "these may hold work that exists nowhere else; run sync without --delete-pruned to choose",
                 );
             }
             outcomes.extend(blocked.into_iter().map(|c| {

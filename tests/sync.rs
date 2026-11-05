@@ -972,16 +972,50 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
     setup.delete_remote_branch("feature/keep");
 
     let data = sync_json(setup.local_path(), &[]);
-    let entry = assert_action(&data, "feature/keep", "skipped");
-    assert_eq!(
-        entry["reason"],
-        "remote deleted but has unpushed commits, skipping"
-    );
+    let entry = assert_action(&data, "feature/keep", "deletion-candidate");
+    assert_eq!(entry["detail"], "1 unpushed commit");
+    assert_eq!(entry["recommended"], "later");
 
     assert!(
         setup.local_branch_exists("feature/keep"),
         "local branch with unpushed commits should be kept"
     );
+}
+
+fn pruned_branch_with_unpushed_commits(setup: &common::RepoWithRemote, branch: &str) {
+    setup.push_branch_to_remote(branch);
+    setup.local_fetch();
+    setup.create_local_tracking_branch(branch);
+    setup.make_local_commit_on(branch, "unpushed work");
+    setup.delete_remote_branch(branch);
+}
+
+#[test]
+fn apply_recommended_leaves_pruned_branch_with_unpushed_commits() {
+    let setup = common::RepoWithRemote::new();
+    pruned_branch_with_unpushed_commits(&setup, "feature/keep");
+
+    let data = sync_json(setup.local_path(), &["--apply-recommended"]);
+    let entry = assert_action(&data, "feature/keep", "left-as-is");
+    assert_eq!(entry["decidedBy"], "flag");
+
+    assert!(setup.local_branch_exists("feature/keep"));
+    assert!(tracks_upstream(&setup, "feature/keep"));
+}
+
+#[test]
+fn delete_pruned_leaves_pruned_branch_with_unpushed_commits() {
+    let setup = common::RepoWithRemote::new();
+    pruned_branch_with_unpushed_commits(&setup, "feature/keep");
+
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    let entry = assert_action(&data, "feature/keep", "left-as-is");
+    assert_eq!(
+        entry["reason"],
+        "remote deleted but has unpushed commits, skipping"
+    );
+
+    assert!(setup.local_branch_exists("feature/keep"));
 }
 
 // --- --delete-pruned ---
