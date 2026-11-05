@@ -1430,3 +1430,101 @@ fn dry_run_json_reports_plan_without_acting() {
         "dry run must not pull the current branch"
     );
 }
+
+// --- behind-base hint ---
+
+#[test]
+fn reports_current_branch_behind_its_base() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature", "feature");
+    repo.git(&["checkout", "-q", "main"]);
+    commit_file(dir, "main.txt", "main", "main");
+    commit_file(dir, "main2.txt", "main", "main 2");
+    repo.git(&["checkout", "-q", "feature"]);
+    let before = repo.head_commit();
+
+    let data = sync_json(dir, &[]);
+    let behind = &data["currentBranch"]["behindBase"];
+    assert_eq!(behind["base"], "main");
+    assert_eq!(behind["count"], 2);
+    assert!(behind.get("mergedParent").is_none());
+    assert_eq!(repo.head_commit(), before, "the hint changes nothing");
+}
+
+#[test]
+fn reports_stacked_branch_behind_its_parent() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "bar"]);
+    commit_file(dir, "bar.txt", "bar", "bar");
+    repo.git(&["checkout", "-q", "-b", "foo"]);
+    commit_file(dir, "foo.txt", "foo", "foo");
+    repo.git(&["checkout", "-q", "bar"]);
+    commit_file(dir, "bar2.txt", "bar", "bar 2");
+    repo.git(&["checkout", "-q", "foo"]);
+
+    let data = sync_json(dir, &[]);
+    assert_eq!(data["currentBranch"]["behindBase"]["base"], "bar");
+    assert_eq!(data["currentBranch"]["behindBase"]["count"], 1);
+}
+
+#[test]
+fn reports_stacked_branch_whose_parent_was_merged() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "bar"]);
+    commit_file(dir, "bar.txt", "bar", "bar");
+    repo.git(&["checkout", "-q", "-b", "foo"]);
+    commit_file(dir, "foo.txt", "foo", "foo");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.git(&["merge", "-q", "--squash", "bar"]);
+    repo.git(&["commit", "-q", "-m", "squashed bar"]);
+    repo.git(&["checkout", "-q", "foo"]);
+
+    let data = sync_json(dir, &[]);
+    let behind = &data["currentBranch"]["behindBase"];
+    assert_eq!(behind["base"], "main");
+    assert_eq!(behind["mergedParent"], "bar");
+}
+
+#[test]
+fn no_behind_base_hint_when_up_to_date_or_on_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    let data = sync_json(dir, &[]);
+    assert!(data["currentBranch"].get("behindBase").is_none());
+
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature", "feature");
+    let data = sync_json(dir, &[]);
+    assert!(data["currentBranch"].get("behindBase").is_none());
+}
+
+#[test]
+fn update_sync_leaves_out_the_behind_base_hint() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature", "feature");
+    repo.git(&["checkout", "-q", "main"]);
+    commit_file(dir, "main.txt", "main", "main");
+    repo.git(&["checkout", "-q", "feature"]);
+
+    let output = common::git_mate()
+        .args(["--json", "update", "--sync"])
+        .current_dir(dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json = common::parse_single_json(&output);
+    assert!(
+        json["data"]["sync"]["currentBranch"]
+            .get("behindBase")
+            .is_none()
+    );
+    assert_eq!(json["data"]["branches"][0]["action"], "rebased");
+}
