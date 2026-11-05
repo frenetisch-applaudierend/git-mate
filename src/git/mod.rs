@@ -3,6 +3,7 @@ mod branch;
 pub mod config;
 mod integrate;
 mod merge;
+mod push;
 mod refs;
 mod remote;
 mod run;
@@ -17,6 +18,7 @@ pub use branch::{
 };
 pub use integrate::{Integration, Merge, Rebase, merge_into_branch, rebase_branch};
 pub use merge::{MergedAt, content_merged_into, patches_already_in, reset_hard_in};
+pub use push::{push_branch, push_target};
 pub use refs::{
     commit_exists, commit_summary, count_commits, is_ancestor, resolve_ref, update_ref,
     update_ref_from,

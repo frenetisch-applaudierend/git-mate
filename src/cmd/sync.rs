@@ -3,7 +3,7 @@ use super::sync_report::{
     self as report, BranchOutcome, Candidate, Choice, DecidedBy, DecisionRow, Hint,
 };
 
-#[derive(clap::Args)]
+#[derive(clap::Args, Default)]
 #[command(
     about = "Fetch and bring local branches up to date with their remotes",
     long_about = "Fetch the latest changes from all remotes and bring your local repository up to date.
@@ -92,15 +92,26 @@ struct CurrentBranchOutcome {
     pull_skipped_reason: Option<String>,
 }
 
+/// What sync did, as reported by `--json`.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SyncData {
+pub struct SyncData {
     dry_run: bool,
     branches: Vec<BranchOutcome>,
     current_branch: CurrentBranchOutcome,
 }
 
 pub fn run(args: SyncArgs) -> Result<(), String> {
+    let data = sync(args)?;
+    if crate::output::json_mode() {
+        crate::output::emit_json_success("sync", data);
+    }
+    Ok(())
+}
+
+/// Sync, printing the human-readable report (unless in JSON mode) and
+/// returning what was done.
+pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
     let json = crate::output::json_mode();
     let dry_run = args.dry_run;
     let mut branch_outcomes: Vec<BranchOutcome> = Vec::new();
@@ -324,22 +335,15 @@ pub fn run(args: SyncArgs) -> Result<(), String> {
         }
     }
 
-    if json {
-        crate::output::emit_json_success(
-            "sync",
-            SyncData {
-                dry_run,
-                branches: branch_outcomes,
-                current_branch: CurrentBranchOutcome {
-                    name: current_branch,
-                    pulled,
-                    pull_skipped_reason,
-                },
-            },
-        );
-    }
-
-    Ok(())
+    Ok(SyncData {
+        dry_run,
+        branches: branch_outcomes,
+        current_branch: CurrentBranchOutcome {
+            name: current_branch,
+            pulled,
+            pull_skipped_reason,
+        },
+    })
 }
 
 /// Whether a branch is in line with its upstream after this run (or, under

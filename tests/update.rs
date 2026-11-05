@@ -516,3 +516,299 @@ fn dry_run_reports_children_of_branches_that_would_move() {
     assert_eq!(entry(&data, "foo")["action"], "rebased");
     assert_eq!(tip(dir, "foo"), before);
 }
+
+// --- --stack ---
+
+/// `stack()` with `main` moved on, so `bar` is behind its base.
+fn stack_behind_main() -> common::RepoWithoutRemote {
+    let repo = stack();
+    commit_file(repo.path(), "main.txt", "main");
+    repo
+}
+
+#[test]
+fn without_terminal_parent_behind_is_reported_not_updated() {
+    let repo = stack_behind_main();
+    let dir = repo.path();
+    let bar_before = tip(dir, "bar");
+
+    let data = update_json(dir, &["foo"]);
+    assert_eq!(data["branches"].as_array().unwrap().len(), 1);
+    let foo = entry(&data, "foo");
+    assert_eq!(foo["action"], "up-to-date");
+    assert_eq!(foo["parentBehind"]["branch"], "bar");
+    assert_eq!(foo["parentBehind"]["base"], "main");
+    assert_eq!(foo["parentBehind"]["behind"], 1);
+    assert_eq!(tip(dir, "bar"), bar_before);
+}
+
+#[test]
+fn stack_flag_updates_parent_first() {
+    let repo = stack_behind_main();
+    let dir = repo.path();
+
+    let data = update_json(dir, &["foo", "--stack"]);
+    assert_eq!(entry(&data, "bar")["action"], "rebased");
+    assert_eq!(entry(&data, "foo")["action"], "rebased");
+    assert!(entry(&data, "foo").get("parentBehind").is_none());
+    assert!(is_ancestor(dir, "main", "bar"));
+    assert!(is_ancestor(dir, "bar", "foo"));
+}
+
+#[test]
+fn stack_reaches_down_a_deeper_stack() {
+    let repo = stack_behind_main();
+    let dir = repo.path();
+    common::git(dir, &["branch", "baz", "foo"]);
+    commit_on(dir, "baz", "baz.txt", "baz");
+
+    update_json(dir, &["baz", "--stack"]);
+    assert!(is_ancestor(dir, "main", "bar"));
+    assert!(is_ancestor(dir, "bar", "foo"));
+    assert!(is_ancestor(dir, "foo", "baz"));
+}
+
+#[test]
+fn stack_config_true_updates_parent() {
+    let repo = stack_behind_main();
+    repo.git(&["config", "mate.update.stack", "true"]);
+
+    let data = update_json(repo.path(), &["foo"]);
+    assert_eq!(entry(&data, "bar")["action"], "rebased");
+}
+
+#[test]
+fn no_stack_overrides_config() {
+    let repo = stack_behind_main();
+    repo.git(&["config", "mate.update.stack", "true"]);
+    let bar_before = tip(repo.path(), "bar");
+
+    let data = update_json(repo.path(), &["foo", "--no-stack"]);
+    assert_eq!(entry(&data, "foo")["parentBehind"]["branch"], "bar");
+    assert_eq!(tip(repo.path(), "bar"), bar_before);
+}
+
+#[test]
+fn invalid_stack_config_is_an_error() {
+    let repo = stack_behind_main();
+    repo.git(&["config", "mate.update.stack", "bogus"]);
+    update_error(
+        repo.path(),
+        &["foo"],
+        &["invalid value for mate.update.stack"],
+    );
+}
+
+// --- --push ---
+
+fn remote_tip(setup: &common::RepoWithRemote, branch: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
+        .current_dir(setup.bare_path())
+        .output()
+        .unwrap();
+    out.status
+        .success()
+        .then(|| String::from_utf8(out.stdout).unwrap().trim().to_string())
+}
+
+/// `feature` branched off `main` with one commit and checked out; `main`
+/// moved on, locally and on the remote. Pushed first if `pushed`.
+fn remote_feature_behind_main(pushed: bool) -> common::RepoWithRemote {
+    let setup = common::RepoWithRemote::new();
+    let dir = setup.local_path();
+    common::git(dir, &["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature");
+    if pushed {
+        common::git(dir, &["push", "-q", "-u", "origin", "feature"]);
+    }
+    common::git(dir, &["checkout", "-q", "main"]);
+    commit_file(dir, "main.txt", "main");
+    common::git(dir, &["push", "-q", "origin", "main"]);
+    common::git(dir, &["checkout", "-q", "feature"]);
+    setup
+}
+
+#[test]
+fn push_creates_remote_branch_and_sets_upstream() {
+    let setup = remote_feature_behind_main(false);
+    let dir = setup.local_path();
+
+    let data = update_json(dir, &["--push"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "pushed");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
+    assert_eq!(
+        git_output(dir, &["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
+        "origin/feature"
+    );
+}
+
+#[test]
+fn push_does_not_force_by_default() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    let remote_before = remote_tip(&setup, "feature");
+
+    let data = update_json(dir, &["--push"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "needs-force-push");
+    assert_eq!(remote_tip(&setup, "feature"), remote_before);
+}
+
+#[test]
+fn push_ask_without_terminal_does_not_force() {
+    let setup = remote_feature_behind_main(true);
+    let remote_before = remote_tip(&setup, "feature");
+
+    let data = update_json(setup.local_path(), &["--push=ask"]);
+    assert_eq!(entry(&data, "feature")["push"], "needs-force-push");
+    assert_eq!(remote_tip(&setup, "feature"), remote_before);
+}
+
+#[test]
+fn push_force_rewrites_remote_branch() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+
+    let data = update_json(dir, &["--push=force"]);
+    assert_eq!(entry(&data, "feature")["push"], "forced");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
+}
+
+#[test]
+fn push_config_force_is_respected_and_no_push_overrides_it() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    setup.local_git(&["config", "mate.update.push", "force"]);
+    let remote_before = remote_tip(&setup, "feature");
+
+    let data = update_json(dir, &["--no-push"]);
+    assert!(entry(&data, "feature").get("push").is_none());
+    assert_eq!(remote_tip(&setup, "feature"), remote_before);
+
+    let data = update_json(dir, &[]);
+    assert_eq!(entry(&data, "feature")["push"], "forced");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
+}
+
+#[test]
+fn force_push_fails_if_remote_moved_since_last_fetch() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    setup.push_commit_to_remote_branch("feature", "someone else's work");
+    let remote_before = remote_tip(&setup, "feature");
+
+    let data = update_json(dir, &["--push=force"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "failed");
+    assert_eq!(remote_tip(&setup, "feature"), remote_before);
+}
+
+#[test]
+fn merged_branch_is_pushed_without_force() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+
+    let data = update_json(dir, &["--merge", "--push"]);
+    assert_eq!(entry(&data, "feature")["push"], "pushed");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
+}
+
+#[test]
+fn up_to_date_branch_rebased_earlier_is_force_pushed() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    common::git(dir, &["rebase", "-q", "main"]);
+
+    let data = update_json(dir, &["--push=force"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "up-to-date");
+    assert_eq!(feature["push"], "forced");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
+}
+
+#[test]
+fn push_dry_run_reports_without_pushing() {
+    let setup = remote_feature_behind_main(true);
+    let remote_before = remote_tip(&setup, "feature");
+
+    let data = update_json(setup.local_path(), &["--push", "--dry-run"]);
+    assert_eq!(entry(&data, "feature")["push"], "needs-force-push");
+    let data = update_json(setup.local_path(), &["--push=force", "--dry-run"]);
+    assert_eq!(entry(&data, "feature")["push"], "forced");
+    assert_eq!(remote_tip(&setup, "feature"), remote_before);
+}
+
+#[test]
+fn push_without_remote_is_reported() {
+    let repo = behind_main();
+    let data = update_json(repo.path(), &["--push"]);
+    assert_eq!(entry(&data, "feature")["push"], "no-remote");
+}
+
+#[test]
+fn push_flag_does_not_swallow_branch_names() {
+    let setup = remote_feature_behind_main(false);
+    let dir = setup.local_path();
+    common::git(dir, &["checkout", "-q", "main"]);
+
+    let data = update_json(dir, &["--push", "feature"]);
+    assert_eq!(entry(&data, "feature")["push"], "pushed");
+}
+
+// --- --sync ---
+
+/// `feature` checked out; `main` moved on only on the remote.
+fn main_moved_on_remote() -> common::RepoWithRemote {
+    let setup = common::RepoWithRemote::new();
+    let dir = setup.local_path();
+    common::git(dir, &["checkout", "-q", "-b", "feature"]);
+    commit_file(dir, "feature.txt", "feature");
+    setup.push_file_commit_to_remote("main.txt", "main", "remote main");
+    setup
+}
+
+#[test]
+fn without_sync_the_local_base_is_used() {
+    let setup = main_moved_on_remote();
+    let data = update_json(setup.local_path(), &[]);
+    assert_eq!(entry(&data, "feature")["action"], "up-to-date");
+    assert!(data.get("sync").is_none());
+}
+
+#[test]
+fn sync_flag_syncs_first() {
+    let setup = main_moved_on_remote();
+    let dir = setup.local_path();
+
+    let data = update_json(dir, &["--sync"]);
+    assert_eq!(data["sync"]["dryRun"], false);
+    let main = data["sync"]["branches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["branch"] == "main")
+        .unwrap();
+    assert_eq!(main["action"], "fast-forwarded");
+    assert_eq!(entry(&data, "feature")["action"], "rebased");
+    assert!(is_ancestor(dir, "origin/main", "feature"));
+}
+
+#[test]
+fn sync_config_syncs_first_and_no_sync_overrides_it() {
+    let setup = main_moved_on_remote();
+    let dir = setup.local_path();
+    setup.local_git(&["config", "mate.update.sync", "true"]);
+
+    let data = update_json(dir, &["--no-sync"]);
+    assert!(data.get("sync").is_none());
+    assert_eq!(entry(&data, "feature")["action"], "up-to-date");
+
+    let data = update_json(dir, &[]);
+    assert!(data.get("sync").is_some());
+    assert_eq!(entry(&data, "feature")["action"], "rebased");
+}
