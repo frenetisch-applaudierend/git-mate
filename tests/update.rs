@@ -709,6 +709,35 @@ fn force_push_fails_if_remote_moved_since_last_fetch() {
 }
 
 #[test]
+fn force_push_never_overwrites_commits_the_branch_never_had() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    setup.push_commit_to_remote_branch("feature", "someone else's work");
+    common::git(dir, &["fetch", "-q"]);
+    let remote_before = remote_tip(&setup, "feature");
+
+    let data = update_json(dir, &["--push=force"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "failed");
+    assert_eq!(remote_tip(&setup, "feature"), remote_before);
+}
+
+#[test]
+fn push_refuses_upstream_with_a_different_name() {
+    let setup = common::RepoWithRemote::new();
+    let dir = setup.local_path();
+    common::git(dir, &["checkout", "-q", "-b", "topic", "--track", "origin/main"]);
+    commit_file(dir, "topic.txt", "topic");
+    let main_before = remote_tip(&setup, "main");
+
+    let data = update_json(dir, &["--push", "topic"]);
+    assert_eq!(entry(&data, "topic")["push"], "failed");
+    assert_eq!(remote_tip(&setup, "main"), main_before);
+    assert_eq!(remote_tip(&setup, "topic"), None);
+}
+
+#[test]
 fn merged_branch_is_pushed_without_force() {
     let setup = remote_feature_behind_main(true);
     let dir = setup.local_path();

@@ -507,8 +507,11 @@ fn update_branch(
     dry_run: bool,
     base_moved: bool,
 ) -> Result<UpdateOutcome, String> {
-    let outcome = UpdateOutcome::new(branch, strategy, dry_run).with_base(base);
     let tip = crate::git::resolve_ref(&format!("refs/heads/{branch}"))?;
+    let outcome = UpdateOutcome {
+        old_tip: Some(tip.clone()),
+        ..UpdateOutcome::new(branch, strategy, dry_run).with_base(base)
+    };
     let base_tip = crate::git::resolve_ref(&format!("{}^{{commit}}", base.branch))?;
 
     let worktree = worktree_of(branch, worktrees)?;

@@ -16,30 +16,38 @@ impl PushTarget {
     }
 }
 
-/// The branch's configured upstream, or `origin/<branch>` (to be set as the
-/// upstream) if it has none. `None` without a remote to push to.
-pub fn push_target(branch: &str) -> Option<PushTarget> {
+/// Where `branch` is pushed: the same-named branch on its upstream's remote,
+/// or `origin/<branch>` (to be set as the upstream) if it has no upstream.
+/// `Ok(None)` without a remote to push to.
+///
+/// Like git's `push.default=simple`, this refuses an upstream with a
+/// different name: a branch created from `origin/main` tracks `main`, and
+/// pushing it there would publish its commits onto `main`.
+pub fn push_target(branch: &str) -> Result<Option<PushTarget>, String> {
     let remote = super::config::read_string(&format!("branch.{branch}.remote"));
     let merge = super::config::read_string(&format!("branch.{branch}.merge"));
     if let (Some(remote), Some(merge)) = (remote, merge)
         && remote != "."
         && let Some(remote_branch) = merge.strip_prefix("refs/heads/")
     {
-        return Some(PushTarget {
+        if remote_branch != branch {
+            return Err(format!(
+                "its upstream {remote}/{remote_branch} has a different name; \
+                 push it yourself with git push {remote} {branch}"
+            ));
+        }
+        return Ok(Some(PushTarget {
             remote,
             remote_branch: remote_branch.to_string(),
             set_upstream: false,
-        });
+        }));
     }
-    let has_origin = super::remote::list_remotes()
-        .ok()?
-        .iter()
-        .any(|r| r == "origin");
-    has_origin.then(|| PushTarget {
+    let has_origin = super::remote::list_remotes()?.iter().any(|r| r == "origin");
+    Ok(has_origin.then(|| PushTarget {
         remote: "origin".to_string(),
         remote_branch: branch.to_string(),
         set_upstream: true,
-    })
+    }))
 }
 
 /// Push `branch` to `target`. With `lease`, force the push, but only if the
