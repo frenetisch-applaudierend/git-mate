@@ -6,7 +6,7 @@ use crate::git::{Base, BaseSource, Detection, Integration};
 #[command(
     about = "Bring branches up to date with the branch they are based on",
     long_about = "Bring branches up to date with the branch they are based on, by rebasing them onto it
-(the default) or merging it in.
+(the default) or merging it in (--strategy=merge, or --merge for short).
 
 Without arguments, updates the current branch. Name branches to update those instead, or
 pass --all to update every local branch except the default branch.
@@ -64,11 +64,15 @@ pub struct UpdateArgs {
     pub onto: Option<String>,
     #[arg(
         long,
-        conflicts_with = "merge",
-        help = "Rebase onto the base [default: mate.update.strategy, else rebase]"
+        value_enum,
+        value_name = "STRATEGY",
+        conflicts_with_all = ["rebase", "merge"],
+        help = "How to bring in the base [default: mate.update.strategy, else rebase]"
     )]
+    pub strategy: Option<Strategy>,
+    #[arg(long, conflicts_with = "merge", help = "Short for --strategy=rebase")]
     pub rebase: bool,
-    #[arg(long, help = "Merge the base in instead of rebasing")]
+    #[arg(long, help = "Short for --strategy=merge")]
     pub merge: bool,
     #[arg(
         long,
@@ -247,8 +251,12 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
     Ok(())
 }
 
-/// `--rebase` and `--merge` win, then `mate.update.strategy`, then rebase.
+/// `--strategy`, `--rebase` and `--merge` win, then `mate.update.strategy`,
+/// then rebase.
 fn strategy(args: &UpdateArgs) -> Result<Strategy, String> {
+    if let Some(strategy) = args.strategy {
+        return Ok(strategy);
+    }
     if args.rebase {
         return Ok(Strategy::Rebase);
     }

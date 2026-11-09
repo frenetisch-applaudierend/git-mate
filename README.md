@@ -183,7 +183,7 @@ With `--json`, it prints a single JSON document with one entry per branch (`bran
 
 ```bash
 git mate update                     # rebase the current branch onto its base
-git mate update --merge             # merge the base in instead
+git mate update --merge             # merge the base in instead (--strategy=merge)
 git mate update feature/a feature/b # update these branches (parents first)
 git mate update --all               # update every branch, whole stacks included
 git mate update --onto main         # rebase onto main, whatever the detected base
@@ -242,7 +242,7 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
 | `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
 | `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
-| `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when neither `--rebase` nor `--merge` is given (default: `rebase`) |
+| `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when `--strategy` (or `--rebase` / `--merge`) is omitted (default: `rebase`) |
 | `mate.update.stack` | `ask` / `true` / `false` | Whether `git mate update` also updates the branches a branch is stacked on when they are behind (default: `ask`) |
 | `mate.update.push` | `false` / `ff` / `ask` / `force` | Whether and how `git mate update` pushes afterwards (default: `false`) |
 | `mate.update.sync` | boolean | Run `git mate sync` before `git mate update` (default: `false`) |
