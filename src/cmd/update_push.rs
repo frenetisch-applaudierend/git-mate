@@ -58,11 +58,13 @@ fn try_push(
     };
     let tip = crate::git::resolve_ref(&format!("refs/heads/{branch}"))?;
     let remote = crate::git::resolve_ref(&target.tracking_ref()).ok();
-    // Its upstream was deleted (e.g. after it was merged) and pruned:
-    // pushing would bring it back.
-    if remote.is_none() && target.is_upstream {
+    // No tracking ref for a configured upstream: either it was never pushed
+    // (`git mate new` sets the upstream up front) or it was deleted and
+    // pruned. Git can't tell these apart, so only leave it alone when it is
+    // already merged — pushing it would just bring a merged branch back.
+    if remote.is_none() && target.is_upstream && merged_into_default(branch)? {
         return Err(NotPushed::Skipped(format!(
-            "its upstream {}/{} is gone",
+            "its upstream {}/{} is gone and it is already merged",
             target.remote, target.remote_branch
         )));
     }
@@ -143,4 +145,12 @@ fn remote_has_only_own_commits(
         Some(old_tip) if old_tip != tip => crate::git::patches_already_in(old_tip, remote),
         _ => Ok(false),
     }
+}
+
+/// Whether everything on `branch` is already in the default branch.
+fn merged_into_default(branch: &str) -> Result<bool, String> {
+    let Ok(default) = crate::git::detect_default_branch(true) else {
+        return Ok(false);
+    };
+    Ok(crate::git::content_merged_into(&default, branch)?.is_some())
 }

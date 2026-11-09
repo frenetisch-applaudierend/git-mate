@@ -933,14 +933,40 @@ fn push_flag_does_not_swallow_branch_names() {
 fn push_does_not_recreate_a_remote_branch_deleted_after_merge() {
     let setup = remote_feature_behind_main(true);
     let dir = setup.local_path();
+    common::git(dir, &["checkout", "-q", "main"]);
+    common::git(dir, &["merge", "-q", "--no-ff", "--no-edit", "feature"]);
+    common::git(dir, &["push", "-q", "origin", "main"]);
+    commit_file(dir, "later.txt", "later");
+    common::git(dir, &["push", "-q", "origin", "main"]);
     setup.delete_remote_branch("feature");
     setup.local_fetch();
 
     let data = update_json(dir, &["--all", "--push"]);
     let feature = entry(&data, "feature");
-    assert_eq!(feature["action"], "rebased");
     assert_eq!(feature["push"], "skipped");
     assert_eq!(remote_tip(&setup, "feature"), None);
+}
+
+#[test]
+fn push_creates_remote_branch_for_branch_made_with_new() {
+    let setup = common::RepoWithRemote::new();
+    let dir = setup.local_path();
+    common::git_mate()
+        .args(["new", "feature", "--no-fetch"])
+        .current_dir(dir)
+        .assert()
+        .success();
+    common::git(dir, &["checkout", "-q", "feature"]);
+    commit_file(dir, "feature.txt", "feature");
+    common::git(dir, &["checkout", "-q", "main"]);
+    commit_file(dir, "main.txt", "main");
+    common::git(dir, &["push", "-q", "origin", "main"]);
+
+    let data = update_json(dir, &["feature", "--push"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "pushed");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
 }
 
 /// A second bare repository, added to the clone at `dir` as remote `fork`.
