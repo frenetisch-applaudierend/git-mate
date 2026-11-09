@@ -62,9 +62,12 @@ fn try_push(
     // (`git mate new` sets the upstream up front) or it was deleted and
     // pruned. Git can't tell these apart, so only leave it alone when it is
     // already merged — pushing it would just bring a merged branch back.
-    if remote.is_none() && target.is_upstream && merged_into_default(branch)? {
+    if remote.is_none()
+        && target.is_upstream
+        && let Some(default) = merged_into_default(branch)?
+    {
         return Err(NotPushed::Skipped(format!(
-            "its upstream {}/{} is gone and it is already merged",
+            "its upstream {}/{} is gone and everything on it is already in {default}",
             target.remote, target.remote_branch
         )));
     }
@@ -147,10 +150,25 @@ fn remote_has_only_own_commits(
     }
 }
 
-/// Whether everything on `branch` is already in the default branch.
-fn merged_into_default(branch: &str) -> Result<bool, String> {
+/// The default branch everything on `branch` is already in, if any. Without
+/// `origin/HEAD` the default is only known by its local name, which may lag
+/// behind the remote, so the remote-tracking branch of that name is checked
+/// too.
+fn merged_into_default(branch: &str) -> Result<Option<String>, String> {
     let Ok(default) = crate::git::detect_default_branch(true) else {
-        return Ok(false);
+        return Ok(None);
     };
-    Ok(crate::git::content_merged_into(&default, branch)?.is_some())
+    let mut defaults = vec![default.clone()];
+    if !default.starts_with("origin/") {
+        let tracking = format!("origin/{default}");
+        if crate::git::resolve_ref(&format!("refs/remotes/{tracking}")).is_ok() {
+            defaults.push(tracking);
+        }
+    }
+    for default in defaults {
+        if crate::git::content_merged_into(&default, branch)?.is_some() {
+            return Ok(Some(default));
+        }
+    }
+    Ok(None)
 }

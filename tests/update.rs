@@ -948,6 +948,30 @@ fn push_does_not_recreate_a_remote_branch_deleted_after_merge() {
 }
 
 #[test]
+fn push_does_not_recreate_a_merged_branch_when_local_main_lags_and_origin_head_is_unset() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    // Merge on the server only: local main never sees it.
+    let scratch = tempfile::TempDir::new().unwrap();
+    let bare = setup.bare_path().to_str().unwrap().to_string();
+    common::git(scratch.path(), &["clone", "-q", &bare, "."]);
+    common::git(scratch.path(), &["config", "user.email", "test@test.com"]);
+    common::git(scratch.path(), &["config", "user.name", "Test"]);
+    common::git(
+        scratch.path(),
+        &["merge", "-q", "--no-ff", "--no-edit", "origin/feature"],
+    );
+    common::git(scratch.path(), &["push", "-q", "origin", "main"]);
+    setup.delete_remote_branch("feature");
+    setup.local_fetch();
+    common::git(dir, &["remote", "set-head", "origin", "-d"]);
+
+    let data = update_json(dir, &["feature", "--push"]);
+    assert_eq!(entry(&data, "feature")["push"], "skipped");
+    assert_eq!(remote_tip(&setup, "feature"), None);
+}
+
+#[test]
 fn push_creates_remote_branch_for_branch_made_with_new() {
     let setup = common::RepoWithRemote::new();
     let dir = setup.local_path();
