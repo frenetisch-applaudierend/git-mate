@@ -33,8 +33,8 @@ to ask on, the stack is left alone and the report says the base is behind.
 
 Pass --push to push every updated (or already up-to-date) branch afterwards, if that is
 a fast-forward or creates the remote branch. Branches go where `git push` would push them
-(branch.<name>.pushRemote, else remote.pushDefault, else the upstream); a branch whose
-upstream was deleted is not pushed. A branch whose rebase rewrote commits that were
+(branch.<name>.pushRemote, else remote.pushDefault, else the upstream); an already
+merged branch whose upstream was deleted is not pushed. A branch whose rebase rewrote commits that were
 already pushed is listed as needing a force-push. --push=ask asks before each force-push,
 and --push=force force-pushes without asking. A force-push only goes through if the
 remote branch is still where the last fetch saw it (--force-with-lease).
@@ -552,18 +552,22 @@ fn stack_order(mut plans: Vec<Plan>, default_branch: &str) -> Vec<Plan> {
             Some(ready) => ordered.push(plans.remove(ready)),
             None => {
                 // Every pending branch waits for another: follow the bases
-                // from the first one until they come round, and break the
-                // cycle there.
+                // from the first one until they come round. None of the
+                // branches in that cycle has a trustworthy base, so each is
+                // reported as ambiguous between the others and the default.
                 let mut seen = vec![plans[0].branch.clone()];
                 let mut at = 0;
                 loop {
                     let base = base_of(&plans[at]).expect("pending plans have a base");
                     if let Some(start) = seen.iter().position(|b| *b == base) {
-                        let mut cycle = seen.split_off(start);
-                        cycle.retain(|b| *b != base);
-                        cycle.push(default_branch.to_string());
-                        let index = plans.iter().position(|p| p.branch == base).unwrap();
-                        plans[index].detection = Ok(Detection::Ambiguous(cycle));
+                        let cycle = seen.split_off(start);
+                        for member in &cycle {
+                            let mut others: Vec<String> =
+                                cycle.iter().filter(|b| *b != member).cloned().collect();
+                            others.push(default_branch.to_string());
+                            let index = plans.iter().position(|p| p.branch == *member).unwrap();
+                            plans[index].detection = Ok(Detection::Ambiguous(others));
+                        }
                         break;
                     }
                     at = plans.iter().position(|p| p.branch == base).unwrap();
@@ -803,7 +807,7 @@ mod tests {
         let ordered = stack_order(vec![plan("x", "a"), plan("a", "b"), plan("b", "a")], "main");
         assert_eq!(
             summary(&ordered),
-            pairs(&[("a", "?b,main"), ("x", "a"), ("b", "a")])
+            pairs(&[("a", "?b,main"), ("x", "a"), ("b", "?a,main")])
         );
     }
 }

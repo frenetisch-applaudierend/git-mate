@@ -166,10 +166,11 @@ first. `--stack` does so without asking, `--no-stack` never does; without a term
 stack is left alone and reported (`parentBehind` in `--json`).
 
 **Pushing.** `--push` pushes each updated (or already up-to-date) branch afterwards when
-that is a fast-forward or creates the remote branch (setting it as upstream). It pushes
-where `git push` would: to `branch.<name>.pushRemote` or `remote.pushDefault` if set, else
-to the upstream. A branch whose upstream was deleted (say, after it was merged) is not
-pushed, so the remote branch isn't brought back (`push: "skipped"`). A rebased
+that is a fast-forward or creates the remote branch. It pushes where `git push` would: to
+`branch.<name>.pushRemote` or `remote.pushDefault` if set, else to the upstream (setting
+`origin` as upstream when there is none yet). A branch that is already merged and whose
+upstream was deleted is not pushed, so the remote branch isn't brought back
+(`push: "skipped"`). A rebased
 branch that was pushed before needs a force-push: `--push` only reports it, `--push=ask`
 asks first, `--push=force` just does it. A force-push uses `--force-with-lease` against
 what the last fetch saw, so it fails rather than overwrite commits someone else pushed
