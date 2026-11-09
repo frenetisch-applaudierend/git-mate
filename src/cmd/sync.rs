@@ -272,7 +272,11 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
                 rebase: diverged_strategy == DivergedStrategy::Rebase,
             };
             // A local upstream may have moved earlier in this loop.
-            let remote_sha = tip.current_upstream_sha().unwrap_or_default();
+            let Some(remote_sha) = tip.current_upstream_sha() else {
+                let reason = format!("upstream {upstream} could not be resolved");
+                branch_outcomes.push(BranchOutcome::needs_attention(branch, &reason, &reason));
+                continue;
+            };
             match fast_forward_branch(
                 &target,
                 &tip.sha,
