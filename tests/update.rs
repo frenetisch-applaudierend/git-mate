@@ -416,6 +416,23 @@ fn stacked_branch_is_based_on_its_parent() {
 }
 
 #[test]
+fn branch_that_merged_another_branch_is_stacked_on_it() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    common::git(dir, &["branch", "bar", "main"]);
+    commit_on(dir, "bar", "bar.txt", "bar");
+    common::git(dir, &["branch", "foo", "main"]);
+    commit_on(dir, "foo", "foo.txt", "foo");
+    common::git(dir, &["checkout", "-q", "foo"]);
+    common::git(dir, &["merge", "-q", "--no-ff", "--no-edit", "bar"]);
+    common::git(dir, &["checkout", "-q", "main"]);
+
+    let data = update_json(dir, &["foo", "--dry-run"]);
+    assert_eq!(entry(&data, "foo")["base"], "bar");
+    assert_eq!(entry(&data, "foo")["baseSource"], "stacked");
+}
+
+#[test]
 fn parent_is_not_based_on_its_child() {
     let repo = stack();
     let dir = repo.path();
