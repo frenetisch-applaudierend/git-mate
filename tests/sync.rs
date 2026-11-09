@@ -967,7 +967,7 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
     setup.push_branch_to_remote("feature/keep");
     setup.local_fetch();
     setup.create_local_tracking_branch("feature/keep");
-    setup.make_local_commit_on("feature/keep", "unpushed work");
+    commit_file_on(&setup, "feature/keep", "unpushed.txt", "unpushed work");
 
     setup.delete_remote_branch("feature/keep");
 
@@ -986,8 +986,53 @@ fn pruned_branch_with_unpushed_commits(setup: &common::RepoWithRemote, branch: &
     setup.push_branch_to_remote(branch);
     setup.local_fetch();
     setup.create_local_tracking_branch(branch);
-    setup.make_local_commit_on(branch, "unpushed work");
+    commit_file_on(setup, branch, "unpushed.txt", "unpushed work");
     setup.delete_remote_branch(branch);
+}
+
+/// The PR was squash-merged and its remote branch deleted, while the only
+/// local commit not pushed merged main into the branch: everything on it is
+/// in main, so deleting it loses nothing.
+fn squash_merged_branch_with_unpushed_merge(setup: &common::RepoWithRemote, branch: &str) {
+    setup.local_git(&["checkout", "-q", "-b", branch]);
+    commit_file(setup.local_path(), "feature.txt", "feature", "add feature");
+    setup.local_git(&["push", "-q", "-u", "origin", branch]);
+    setup.local_git(&["checkout", "-q", "main"]);
+    commit_file(setup.local_path(), "main.txt", "main", "main moves on");
+    setup.local_git(&["push", "-q", "origin", "main"]);
+    setup.local_git(&["checkout", "-q", branch]);
+    setup.local_git(&["merge", "-q", "--no-ff", "-m", "merge main", "main"]);
+    setup.local_git(&["checkout", "-q", "main"]);
+
+    let scratch = remote_scratch(setup, "main");
+    common::git(
+        scratch.path(),
+        &["merge", "-q", "--squash", &format!("origin/{branch}")],
+    );
+    common::git(scratch.path(), &["commit", "-q", "-m", "Add feature (#42)"]);
+    common::git(scratch.path(), &["push", "-q", "origin", "main"]);
+    setup.delete_remote_branch(branch);
+}
+
+#[test]
+fn offers_pruned_branch_with_unpushed_commits_already_squash_merged_for_deletion() {
+    let setup = common::RepoWithRemote::new();
+    squash_merged_branch_with_unpushed_merge(&setup, "feature/done");
+
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/done", "deletion-candidate");
+    assert_eq!(entry["detail"], "merged in #42, incl. 1 unpushed commit");
+    assert_eq!(entry["recommended"], "delete");
+}
+
+#[test]
+fn delete_pruned_deletes_pruned_branch_whose_unpushed_commits_are_merged() {
+    let setup = common::RepoWithRemote::new();
+    squash_merged_branch_with_unpushed_merge(&setup, "feature/done");
+
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    assert_action(&data, "feature/done", "deleted");
+    assert!(!setup.local_branch_exists("feature/done"));
 }
 
 #[test]
