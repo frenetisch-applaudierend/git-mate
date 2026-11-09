@@ -41,6 +41,7 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
 
 | The user wants to… | Command |
 |---|---|
+| know which branches exist, where they are checked out and their state | `git mate overview --json` |
 | start work on a new branch | `git mate new <branch> --json` |
 | switch to an existing (local or remote) branch | `git mate checkout <branch> --json` |
 | move a branch into / out of a linked worktree | `git mate checkout [<branch>] -w` / `-m` |
@@ -49,6 +50,14 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
 | drop a branch they are done with | `git mate finish [<branch>] --json` |
 
 ## Commands
+
+### `overview`
+
+Read-only, no fetch. Run it first to orient yourself: it tells you where a branch is
+checked out (`path`), whether that worktree is `dirty` or mid-`operation` (rebase, merge),
+and its `upstream.state` (`up-to-date`, `ahead`, `behind`, `diverged`, `gone`). Use it to
+check before acting: a dirty worktree or a branch ahead of its upstream is exactly what
+makes `finish` or `checkout -w` refuse. Counts are as of the last fetch.
 
 ### `new <branch>`
 

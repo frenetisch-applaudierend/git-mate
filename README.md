@@ -117,6 +117,26 @@ git mate finish                     # finish current branch/worktree
 git mate finish feature/login       # finish a specific branch from anywhere
 ```
 
+### `git mate overview`
+
+Shows every local branch: where it is checked out (main worktree, a linked worktree, or
+nowhere), whether that worktree has uncommitted changes or an unfinished rebase or merge, and
+how the branch compares to its upstream (up to date, ahead, behind, diverged, remote gone, or
+no upstream). The branch you are on is marked with `●`.
+
+It only reads local state and never fetches, so ahead/behind counts are as of the last fetch;
+run `git mate sync` to refresh them.
+
+With `--json`, it prints `branches` (`branch`, `current`, `default`, `worktree`, `path`,
+`dirty`, `operation` when checked out, and `upstream` with `name`, `state`, `ahead`,
+`behind`, or `null` without an upstream) and `detached` (worktrees with a detached HEAD).
+
+To run it as `git overview`, add a git alias:
+
+```bash
+git config --global alias.overview "mate overview"
+```
+
 ### `git mate sync`
 
 Fetches all remotes and prunes stale remote-tracking references, then:

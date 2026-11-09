@@ -34,6 +34,8 @@ enum Commands {
     Init(cmd::init::InitArgs),
     /// Create and switch to a new branch
     New(cmd::new::NewArgs),
+    /// Show every local branch, where it is checked out and how it compares to its upstream
+    Overview(cmd::overview::OverviewArgs),
     /// Print instructions for AI coding agents, or install them as a skill
     Skill(cmd::skill::SkillArgs),
     Sync(cmd::sync::SyncArgs),
@@ -80,6 +82,7 @@ fn main() {
         Commands::Finish(args) => cmd::finish::run(args),
         Commands::Init(args) => cmd::init::run(args).map_err(Into::into),
         Commands::New(args) => cmd::new::run(args),
+        Commands::Overview(args) => cmd::overview::run(args).map_err(Into::into),
         Commands::Skill(args) => cmd::skill::run(args),
         Commands::Sync(args) => cmd::sync::run(args),
         Commands::Update(args) => cmd::update::run(args).map_err(Into::into),
@@ -98,6 +101,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Finish(_) => "finish",
         Commands::Init(_) => "init",
         Commands::New(_) => "new",
+        Commands::Overview(_) => "overview",
         Commands::Skill(_) => "skill",
         Commands::Sync(_) => "sync",
         Commands::Update(_) => "update",

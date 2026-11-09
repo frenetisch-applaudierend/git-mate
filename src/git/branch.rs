@@ -25,6 +25,58 @@ pub fn current_branch() -> Result<String, String> {
     run_output(&["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string())
 }
 
+/// How a local branch compares to its upstream, as of the last fetch.
+#[derive(Debug, Eq, PartialEq)]
+pub enum Tracking {
+    /// No upstream configured.
+    None,
+    /// An upstream is configured, but its ref no longer exists.
+    Gone,
+    Counts {
+        ahead: usize,
+        behind: usize,
+    },
+}
+
+/// Every local branch with its upstream (short name) and how it compares to
+/// it, in one `for-each-ref`.
+pub fn list_branch_tracking() -> Result<Vec<(String, Option<String>, Tracking)>, String> {
+    let output = run_output(&[
+        "for-each-ref",
+        "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track,nobracket)",
+        "refs/heads/",
+    ])?;
+    Ok(output
+        .lines()
+        .map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let branch = parts.next().unwrap_or_default().to_string();
+            let upstream = parts.next().filter(|u| !u.is_empty()).map(str::to_string);
+            let track = parts.next().unwrap_or_default().trim();
+            let tracking = match (&upstream, track) {
+                (None, _) => Tracking::None,
+                (Some(_), "gone") => Tracking::Gone,
+                (Some(_), track) => parse_track_counts(track),
+            };
+            (branch, upstream, tracking)
+        })
+        .collect())
+}
+
+/// Parse `%(upstream:track,nobracket)` counts: "", "ahead 2", "behind 3" or
+/// "ahead 2, behind 3".
+fn parse_track_counts(track: &str) -> Tracking {
+    let (mut ahead, mut behind) = (0, 0);
+    for part in track.split(", ") {
+        match part.split_once(' ') {
+            Some(("ahead", n)) => ahead = n.parse().unwrap_or(0),
+            Some(("behind", n)) => behind = n.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    Tracking::Counts { ahead, behind }
+}
+
 pub fn list_local_branches_with_upstream() -> Result<Vec<(String, Option<String>)>, String> {
     let output = run_output(&[
         "for-each-ref",
@@ -205,4 +257,41 @@ pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String>
 
 pub fn unset_upstream(branch: &str) -> Result<(), String> {
     run(&["branch", "--unset-upstream", branch])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Tracking, parse_track_counts};
+
+    #[test]
+    fn parses_track_counts() {
+        assert_eq!(
+            parse_track_counts(""),
+            Tracking::Counts {
+                ahead: 0,
+                behind: 0
+            }
+        );
+        assert_eq!(
+            parse_track_counts("ahead 2"),
+            Tracking::Counts {
+                ahead: 2,
+                behind: 0
+            }
+        );
+        assert_eq!(
+            parse_track_counts("behind 3"),
+            Tracking::Counts {
+                ahead: 0,
+                behind: 3
+            }
+        );
+        assert_eq!(
+            parse_track_counts("ahead 2, behind 3"),
+            Tracking::Counts {
+                ahead: 2,
+                behind: 3
+            }
+        );
+    }
 }

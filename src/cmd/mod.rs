@@ -3,6 +3,7 @@ mod confirm;
 pub mod finish;
 pub mod init;
 pub mod new;
+pub mod overview;
 pub mod protocol;
 pub mod skill;
 pub mod sync;
