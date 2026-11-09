@@ -177,6 +177,25 @@ fn fast_forwards_non_current_branch() {
 }
 
 #[test]
+fn fast_forwards_branch_tracking_a_local_branch_that_just_moved() {
+    let setup = common::RepoWithRemote::new();
+    let default = setup.local_current_branch();
+    // `topic` tracks the local default branch and sorts after it, so the
+    // default branch is fast-forwarded first in the same run.
+    setup.local_git(&["branch", "--track", "topic", &default]);
+    setup.push_commit_to_remote("advance default");
+
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, &default, "fast-forwarded");
+    assert_action(&data, "topic", "fast-forwarded");
+    assert_eq!(
+        setup.branch_tip("topic"),
+        setup.branch_tip(&format!("origin/{default}")),
+        "topic should follow the default branch it tracks"
+    );
+}
+
+#[test]
 fn fast_forward_in_worktree_context_updates_main_worktree_index() {
     let setup = common::RepoWithRemote::new();
     let wt_dir = TempDir::new().unwrap();
