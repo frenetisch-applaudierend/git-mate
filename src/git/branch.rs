@@ -51,7 +51,24 @@ pub struct BranchTip {
     pub sha: String,
     /// Short name, e.g. `origin/feature`.
     pub upstream: Option<String>,
+    /// Full name, e.g. `refs/remotes/origin/feature`.
+    pub upstream_ref: Option<String>,
+    /// The upstream's tip when the list was read. For an upstream that is a
+    /// local branch this goes stale as soon as that branch moves; see
+    /// [`BranchTip::current_upstream_sha`].
     pub upstream_sha: Option<String>,
+}
+
+impl BranchTip {
+    /// The upstream's tip now. Remote-tracking refs do not move while branches
+    /// are synced, so the listed SHA is still right; a local upstream may have
+    /// just been fast-forwarded, so it is read again.
+    pub fn current_upstream_sha(&self) -> Option<String> {
+        match self.upstream_ref.as_deref() {
+            Some(u) if u.starts_with("refs/heads/") => super::refs::resolve_ref(u).ok(),
+            _ => self.upstream_sha.clone(),
+        }
+    }
 }
 
 /// Every local branch with its tip and its upstream's, read with a single
@@ -77,6 +94,7 @@ pub fn list_branch_tips() -> Result<Vec<BranchTip>, String> {
                 branch: branch.to_string(),
                 sha: r.get(1)?.to_string(),
                 upstream: r.get(3).filter(|u| !u.is_empty()).map(|u| u.to_string()),
+                upstream_ref: upstream_ref.map(str::to_string),
                 // An upstream tracked outside refs/remotes/ (a custom refspec)
                 // is rare enough to resolve on its own.
                 upstream_sha: upstream_ref.and_then(|u| match tips.get(u) {
