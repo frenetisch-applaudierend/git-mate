@@ -347,6 +347,7 @@ fn worktree_mode_invalid_branch_name_fails() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["invalid branch name"]);
+    common::assert_json_error_code(&output, "invalid_branch_name");
 }
 
 #[test]
@@ -460,6 +461,10 @@ fn worktree_mode_rejects_default_branch() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["default branch", "main worktree"]);
+    assert_eq!(
+        common::assert_json_error_code(&output, "default_branch")["branch"],
+        "main"
+    );
 
     let repo_name = setup.local_path().file_name().unwrap().to_str().unwrap();
     let wt_path = wt_root.path().join(repo_name).join("main");
@@ -536,6 +541,11 @@ fn worktree_mode_requires_decision_for_dirty_starting_branch_in_other_worktree()
         .stdout
         .clone();
     common::assert_json_error(&output, &["--take-changes", "--start-fresh"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(
+        data["retryWith"],
+        serde_json::json!(["--take-changes", "--start-fresh"])
+    );
     assert_eq!(
         std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
         "changed\n"
@@ -675,6 +685,7 @@ fn main_worktree_mode_rejects_start_fresh_when_destination_is_dirty() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["cannot use --start-fresh"]);
+    common::assert_json_error_code(&output, "uncommitted_changes");
 }
 
 #[test]
@@ -818,6 +829,8 @@ fn main_worktree_mode_requires_take_changes_for_dirty_unrelated_branch() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["--take-changes"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!(["--take-changes"]));
     assert_eq!(repo.current_branch(), "feat/old");
 }
 
@@ -844,6 +857,8 @@ fn main_worktree_mode_rejects_start_fresh_in_place() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["--start-fresh"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!([]));
     assert_eq!(repo.current_branch(), "main");
 }
 
@@ -1023,8 +1038,8 @@ fn json_error_envelope() {
     assert!(!output.status.success());
     let json = common::parse_single_json(&output.stdout);
     assert_eq!(json["ok"], false);
-    assert_eq!(json["error"]["code"], "error");
-    assert!(json.get("data").is_none());
+    assert_eq!(json["error"]["code"], "invalid_branch_name");
+    assert_eq!(json["data"]["branch"], "bad..name");
 }
 
 #[test]
@@ -1395,4 +1410,24 @@ fn reports_worktree_path() {
     let wt_path = std::fs::canonicalize(expected_worktree_path(&repo, &wt_root, "feat/x")).unwrap();
     assert_eq!(json["data"]["from"], "main");
     assert_eq!(json["data"]["path"], wt_path.to_str().unwrap());
+}
+
+#[test]
+fn json_existing_branch_is_branch_exists() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["branch", "feat/taken"]);
+    let head = repo.head_commit();
+
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/taken", "-m"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::assert_json_error_code(&output, "branch_exists");
+    assert_eq!(data["branch"], "feat/taken");
+    assert_eq!(repo.current_branch(), "main");
+    assert_eq!(repo.head_commit(), head);
 }

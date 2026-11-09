@@ -28,6 +28,7 @@ fn finish_on_default_branch_fails() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["default branch"]);
+    common::assert_json_error_code(&output, "default_branch");
 }
 
 #[test]
@@ -80,6 +81,8 @@ fn finish_unpushed_commits_requires_force() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["unpushed commits"]);
+    let data = common::assert_json_error_code(&output, "unpushed_commits");
+    assert_eq!(data["retryWith"], serde_json::json!(["--force"]));
 
     // With --force: should succeed
     common::git_mate()
@@ -128,11 +131,17 @@ fn finish_force_removes_dirty_worktree() {
     std::fs::write(wt_canonical.join("untracked.txt"), "dirty").unwrap();
 
     // Without --force it should fail
-    common::git_mate()
-        .args(["finish", "feature/dirty"])
+    let output = common::git_mate()
+        .args(["--json", "finish", "feature/dirty"])
         .current_dir(repo.path())
         .assert()
-        .failure();
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!(["--force"]));
+    assert!(wt_canonical.exists(), "worktree must be kept");
 
     // With --force it should succeed
     common::git_mate()
@@ -392,6 +401,7 @@ fn json_reports_where_the_branch_was_finished() {
     let data = finish(repo.path(), &["feature/linked"]);
     assert_eq!(data["worktree"], "linked");
     assert_eq!(data["path"], wt_path.to_str().unwrap());
+    assert_eq!(data["mainWorktree"], repo.path().to_str().unwrap());
     assert!(data.get("switchedTo").is_none());
 
     // Not checked out anywhere: only the branch is deleted.
@@ -510,4 +520,22 @@ fn deleted_directory_outside_any_repository_is_an_error() {
     let output = git_mate_in_deleted_dir(&dir, &prepare, &["--json", "finish"], &proto);
     assert!(!output.status.success());
     common::assert_json_error(&output.stdout, &["no longer exists"]);
+}
+
+#[test]
+fn json_unknown_branch_is_branch_not_found() {
+    let repo = common::RepoWithoutRemote::new();
+
+    let output = common::git_mate()
+        .args(["--json", "finish", "no-such-branch"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        common::assert_json_error_code(&output, "branch_not_found")["branch"],
+        "no-such-branch"
+    );
 }

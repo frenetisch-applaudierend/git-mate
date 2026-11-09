@@ -102,7 +102,10 @@ git mate checkout feature/login -w --start-fresh   # leave uncommitted changes i
 You're done with a branch. Removes the worktree (if linked) or switches to the default branch (if in main worktree), then deletes the local branch ref.
 
 With `--json`, it prints a single JSON document on stdout (`branch`, plus `worktree` and `path` if the
-branch was checked out, and `switchedTo` if the main worktree switched branches).
+branch was checked out, `switchedTo` if the main worktree switched branches, and `mainWorktree`).
+
+Without `--force`, `finish` refuses to delete a branch with unpushed commits or to remove a linked
+worktree with uncommitted changes. `--force` discards both.
 
 If the worktree you are in was already removed (say, finished from another shell), `git mate finish`
 recognizes the vanished directory, finishes whatever is left of its branch and takes you to the main
@@ -201,6 +204,29 @@ git mate update --push=ask          # ask before force-pushing a rebased branch
 git config mate.update.strategy merge  # merge by default
 git config mate.update.sync true       # always sync first
 ```
+
+## JSON output
+
+With `--json`, every command except `init` and `skill` prints exactly one JSON document on stdout:
+
+```json
+{"ok": true, "command": "new", "schemaVersion": 1, "data": {...}}
+{"ok": false, "command": "new", "schemaVersion": 1, "error": {"message": "...", "code": "..."}, "data": {...}}
+```
+
+On failure, `error.code` tells what went wrong, and `data` (when present) gives details:
+
+| Code | Meaning | `data` |
+|------|---------|--------|
+| `uncommitted_changes` | Uncommitted changes are in the way | `path` (the worktree), `retryWith` (flags that resolve it, in place of `--take-changes`/`--start-fresh` if given; empty: commit or stash first) |
+| `unpushed_commits` | `finish` would lose unpushed commits | `branch`, `retryWith` |
+| `branch_not_found` | The branch doesn't exist (`checkout` also looked on the remotes) | `branch` |
+| `branch_exists` | `new` was given a branch that already exists | `branch` |
+| `invalid_branch_name` | Not a valid branch name | `branch` |
+| `default_branch` | Not possible with the default branch (`finish` it, or put it in a linked worktree) | `branch` |
+| `stash_reapply_failed` | `new` succeeded, but carried-over changes could not be reapplied; they are kept in the stash | the command's usual result |
+| `unsupported` | `--json` isn't supported by this command | |
+| `error` | Anything else | |
 
 ## Installation
 

@@ -23,12 +23,14 @@ struct FinishData {
     /// The branch the main worktree switched to in its place.
     #[serde(skip_serializing_if = "Option::is_none")]
     switched_to: Option<String>,
+    /// Where to continue: the removed worktree no longer exists.
+    main_worktree: std::path::PathBuf,
     /// The branch and its worktree were already gone; nothing was left to do.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     already_finished: bool,
 }
 
-pub fn run(args: FinishArgs) -> Result<(), String> {
+pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
     let main_wt_path = main_wt
@@ -58,7 +60,11 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
 
     if target_wt.is_none() && !crate::git::commit_exists(&format!("refs/heads/{target_branch}")) {
         let Some(gone) = crate::cwd::vanished() else {
-            return Err(format!("branch {target_branch} not found"));
+            return Err(crate::output::CommandError::branch(
+                format!("branch {target_branch} not found"),
+                "branch_not_found",
+                &target_branch,
+            ));
         };
         // Finished from another shell, which removed the worktree this one
         // was in.
@@ -74,6 +80,7 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
                     worktree: Some("linked"),
                     path: Some(gone.to_path_buf()),
                     switched_to: None,
+                    main_worktree: main_wt.path.clone(),
                     already_finished: true,
                 },
             );
@@ -82,8 +89,10 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
     }
 
     if !args.force && crate::git::has_unpushed_commits(&main_wt_path, &target_branch)? {
-        return Err(format!(
-            "branch '{target_branch}' has unpushed commits; use --force to delete anyway"
+        return Err(crate::output::CommandError::with_data(
+            format!("branch '{target_branch}' has unpushed commits; use --force to delete anyway"),
+            "unpushed_commits",
+            serde_json::json!({ "branch": target_branch, "retryWith": ["--force"] }),
         ));
     }
 
@@ -92,14 +101,17 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         worktree: None,
         path: None,
         switched_to: None,
+        main_worktree: main_wt.path.clone(),
         already_finished: false,
     };
     match target_wt {
         Some(wt) if wt.path == main_wt.path => {
             let default = crate::git::detect_default_branch(false)?;
             if target_branch == default {
-                return Err(format!(
-                    "nothing to finish: {target_branch:?} is the default branch"
+                return Err(crate::output::CommandError::branch(
+                    format!("nothing to finish: {target_branch:?} is the default branch"),
+                    "default_branch",
+                    &target_branch,
                 ));
             }
             if args.force {
@@ -119,6 +131,17 @@ pub fn run(args: FinishArgs) -> Result<(), String> {
         Some(wt) => {
             let in_this_wt = cwd.starts_with(&wt.path);
             if wt.path.exists() {
+                let path = wt.path.to_str().ok_or("worktree path is not valid UTF-8")?;
+                if !args.force && !crate::git::is_worktree_clean(path)? {
+                    return Err(crate::output::CommandError::uncommitted_changes(
+                        format!(
+                            "worktree for '{target_branch}' at {} has uncommitted changes; use --force to discard them",
+                            crate::output::display_path(&wt.path)
+                        ),
+                        &wt.path,
+                        &["--force"],
+                    ));
+                }
                 crate::git::remove_worktree(&wt.path, args.force)?;
             } else {
                 // Its directory was deleted without git; drop the stale entry.

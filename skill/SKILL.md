@@ -10,6 +10,18 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
   `{"ok": true, "command": "...", "schemaVersion": 1, "data": {...}}`, or on failure
   `{"ok": false, ..., "error": {"message": "...", "code": "..."}}` (sometimes with `data`
   describing what did happen). Human-readable text goes to stderr; don't parse it.
+- **Decide from `error.code`, not the message.** The ones that need a decision:
+  - `uncommitted_changes`: `data.retryWith` lists the flags that resolve it (e.g.
+    `--take-changes` brings the changes along, `--start-fresh` leaves them in
+    `data.path`). Ask the user which one, then retry with it. Empty `retryWith`: the user
+    has to commit or stash in `data.path` first. `--force` (from `finish`) discards them:
+    only with the user's explicit consent.
+  - `unpushed_commits`: `finish` would delete commits that exist nowhere else. Ask before
+    retrying with `--force`.
+  - `branch_exists`, `branch_not_found`, `invalid_branch_name`, `default_branch`: report
+    and ask; don't guess another name.
+  - `stash_reapply_failed`: the command succeeded, but the carried-over changes are still
+    in the stash. Tell the user.
 - **git-mate never prompts you.** With `--json` (or without a terminal) every question is
   answered by flags or left undecided and reported. Choose flags deliberately.
 - **Directory changes don't reach your shell.** The user's shell integration moves *them*
@@ -106,7 +118,8 @@ they are stacked on; detected from the commit graph). Conflict-free or not at al
 Deletes a branch the user is done with: removes its linked worktree, or switches the main
 worktree to the default branch, then deletes the local branch.
 
-- Refuses when the branch has unpushed commits or its worktree has uncommitted changes.
-  `--force` discards both. Never pass `--force` without the user's explicit consent.
-- If you were inside the finished worktree, it no longer exists: `cd` to `data.path` of
-  the result if present, otherwise to the main worktree.
+- Refuses when the branch has unpushed commits (`unpushed_commits`) or its linked
+  worktree has uncommitted changes (`uncommitted_changes`). `--force` discards both.
+  Never pass `--force` without the user's explicit consent.
+- `data.path` is the worktree the branch was in. If it was linked, it no longer exists:
+  if you were inside it, `cd` to `data.mainWorktree`.

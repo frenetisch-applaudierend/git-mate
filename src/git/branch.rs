@@ -146,11 +146,17 @@ pub fn is_valid_branch_name(name: &str) -> bool {
     run_output(&["check-ref-format", "--branch", name]).is_ok()
 }
 
-pub fn ensure_branch_allowed_in_linked_worktree(branch: &str) -> Result<(), String> {
+pub fn ensure_branch_allowed_in_linked_worktree(
+    branch: &str,
+) -> Result<(), crate::output::CommandError> {
     let default_branch = detect_default_branch(false)?;
     if branch == default_branch {
-        return Err(format!(
-            "cannot use a linked worktree for the default branch '{default_branch}'; keep it in the main worktree"
+        return Err(crate::output::CommandError::branch(
+            format!(
+                "cannot use a linked worktree for the default branch '{default_branch}'; keep it in the main worktree"
+            ),
+            "default_branch",
+            branch,
         ));
     }
     Ok(())

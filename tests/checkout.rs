@@ -747,6 +747,11 @@ fn checkout_linked_flag_requires_a_choice_for_dirty_main_from_another_worktree()
 
     let output = checkout_json_err(&other_wt, &["feature/dirty", "-w"]);
     common::assert_json_error(&output, &["--take-changes", "--start-fresh"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(
+        data["retryWith"],
+        serde_json::json!(["--take-changes", "--start-fresh"])
+    );
 
     assert_eq!(repo.current_branch(), "feature/dirty");
     assert_eq!(
@@ -841,6 +846,8 @@ fn checkout_main_flag_requires_take_changes_for_dirty_linked_worktree_from_main(
 
     let output = checkout_json_err(repo.path(), &["feature/linked", "-m"]);
     common::assert_json_error(&output, &["--take-changes"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!(["--take-changes"]));
     assert_eq!(repo.current_branch(), "main");
     assert!(wt_path.exists(), "linked worktree should be kept");
 
@@ -861,6 +868,8 @@ fn checkout_main_flag_start_fresh_fails_for_dirty_linked_worktree() {
 
     let output = checkout_json_err(&wt_path, &["feature/linked", "-m", "--start-fresh"]);
     common::assert_json_error(&output, &["--start-fresh", "--take-changes"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!(["--take-changes"]));
 
     assert_eq!(repo.current_branch(), "main");
     assert_eq!(
@@ -944,6 +953,8 @@ fn checkout_main_flag_still_fails_if_main_worktree_is_dirty() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["main worktree has uncommitted changes"]);
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!([]));
 }
 
 #[test]
@@ -1116,6 +1127,10 @@ fn checkout_fails_clearly_when_the_branch_is_not_on_any_remote() {
         .stdout
         .clone();
     common::assert_json_error(&output, &["no-such-branch", "not found", "origin"]);
+    assert_eq!(
+        common::assert_json_error_code(&output, "branch_not_found")["branch"],
+        "no-such-branch"
+    );
 }
 
 #[test]
@@ -1156,4 +1171,24 @@ fn checkout_main_flag_switches_branch_whose_worktree_directory_was_deleted() {
     assert_eq!(data["worktree"], "main");
     assert_eq!(data["action"], "switched");
     assert_eq!(repo.current_branch(), "feature/deleted");
+}
+
+#[test]
+fn json_default_branch_in_linked_worktree_is_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-q", "-b", "feature/x"]);
+
+    let output = common::git_mate()
+        .args(["--json", "checkout", "main", "-w"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        common::assert_json_error_code(&output, "default_branch")["branch"],
+        "main"
+    );
+    assert_eq!(repo.current_branch(), "feature/x");
 }

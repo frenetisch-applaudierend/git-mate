@@ -81,6 +81,32 @@ impl CommandError {
             data: Some(serde_json::to_value(data).expect("command data is always serializable")),
         }
     }
+
+    /// Uncommitted changes in the worktree at `path` are in the way.
+    /// `retry_with` lists the flags that resolve it; when empty, the changes
+    /// must be committed or stashed first.
+    pub fn uncommitted_changes(
+        message: String,
+        path: &std::path::Path,
+        retry_with: &[&str],
+    ) -> Self {
+        Self::with_data(
+            message,
+            "uncommitted_changes",
+            serde_json::json!({ "path": path, "retryWith": retry_with }),
+        )
+    }
+
+    /// An error about `branch`, e.g. `branch_not_found`.
+    pub fn branch(message: String, code: &'static str, branch: &str) -> Self {
+        Self::with_data(message, code, serde_json::json!({ "branch": branch }))
+    }
+}
+
+impl From<&str> for CommandError {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
 }
 
 impl From<String> for CommandError {

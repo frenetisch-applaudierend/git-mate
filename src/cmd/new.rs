@@ -116,6 +116,20 @@ struct Created {
 }
 
 pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
+    if !crate::git::is_valid_branch_name(&args.branch) {
+        return Err(crate::output::CommandError::branch(
+            format!("invalid branch name: {:?}", args.branch),
+            "invalid_branch_name",
+            &args.branch,
+        ));
+    }
+    if crate::git::commit_exists(&format!("refs/heads/{}", args.branch)) {
+        return Err(crate::output::CommandError::branch(
+            format!("a branch named '{}' already exists", args.branch),
+            "branch_exists",
+            &args.branch,
+        ));
+    }
     let changes = Changes::resolve(args.take_changes, args.start_fresh)?;
     let copy_config = copy_config_enabled(args.copy_config, args.no_copy_config)?;
     let from = args.from.or_else(configured_from);
@@ -322,10 +336,7 @@ fn create_worktree(
     changes: Changes,
     copy_config: bool,
     source_is_current: bool,
-) -> Result<Created, String> {
-    if !crate::git::is_valid_branch_name(branch) {
-        return Err(format!("invalid branch name: {branch:?}"));
-    }
+) -> Result<Created, crate::output::CommandError> {
     crate::git::ensure_branch_allowed_in_linked_worktree(branch)?;
     let source_transfer = prepare_source_transfer(
         source_worktree,
@@ -342,7 +353,8 @@ fn create_worktree(
             return Err(restore_source_transfer(
                 source_transfer.as_ref(),
                 format!("failed to create worktree for '{branch}': {e}"),
-            ));
+            )
+            .into());
         }
     };
     let upstream = set_push_tracking(branch);
@@ -373,7 +385,7 @@ fn create_main_worktree_branch(
     changes: Changes,
     copy_config: bool,
     source_is_current: bool,
-) -> Result<Created, String> {
+) -> Result<Created, crate::output::CommandError> {
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
     let main_wt_str = main_wt
         .path
@@ -390,28 +402,42 @@ fn create_main_worktree_branch(
     };
 
     if main_dirty && source_dirty {
-        return Err(format!(
-            "cannot create '{branch}' in the main worktree because both the destination and starting point '{from_ref}' have uncommitted changes; clean one worktree first"
+        return Err(crate::output::CommandError::uncommitted_changes(
+            format!(
+                "cannot create '{branch}' in the main worktree because both the destination and starting point '{from_ref}' have uncommitted changes; clean one worktree first"
+            ),
+            &main_wt.path,
+            &[],
         ));
     }
 
     if main_dirty && source_is_destination && changes == Changes::StartFresh {
-        return Err(format!(
-            "cannot use --start-fresh when creating '{branch}' in place: the main worktree's uncommitted changes would come along; commit or stash them first"
+        return Err(crate::output::CommandError::uncommitted_changes(
+            format!(
+                "cannot use --start-fresh when creating '{branch}' in place: the main worktree's uncommitted changes would come along; commit or stash them first"
+            ),
+            &main_wt.path,
+            &[],
         ));
     }
 
     let destination_stash = if main_dirty && !source_is_destination {
         match changes {
             Changes::StartFresh => {
-                return Err(
+                return Err(crate::output::CommandError::uncommitted_changes(
                     "cannot use --start-fresh when the main worktree has uncommitted changes; use --take-changes or clean the worktree first"
                         .to_string(),
-                );
+                    &main_wt.path,
+                    &["--take-changes"],
+                ));
             }
             Changes::Default => {
-                return Err(format!(
-                    "cannot create '{branch}' in the main worktree because it has uncommitted changes; retry with --take-changes to bring them into the new branch"
+                return Err(crate::output::CommandError::uncommitted_changes(
+                    format!(
+                        "cannot create '{branch}' in the main worktree because it has uncommitted changes; retry with --take-changes to bring them into the new branch"
+                    ),
+                    &main_wt.path,
+                    &["--take-changes"],
                 ));
             }
             Changes::Take => Some(crate::cmd::worktree_changes::stash_changes(
@@ -445,7 +471,8 @@ fn create_main_worktree_branch(
             destination_stash.as_ref(),
             &main_wt.path,
             failure,
-        ));
+        )
+        .into());
     }
 
     let upstream = set_push_tracking(branch);
@@ -484,7 +511,7 @@ fn prepare_source_transfer<'a>(
     changes: Changes,
     copy_config: bool,
     source_is_current: bool,
-) -> Result<Option<SourceTransfer<'a>>, String> {
+) -> Result<Option<SourceTransfer<'a>>, crate::output::CommandError> {
     let Some(source_worktree) = source_worktree else {
         return Ok(None);
     };
@@ -496,9 +523,13 @@ fn prepare_source_transfer<'a>(
         Changes::Take => true,
         Changes::StartFresh => false,
         Changes::Default if has_git_changes && !source_is_current => {
-            return Err(format!(
-                "starting point '{from_ref}' is checked out at {} with uncommitted changes; retry with --take-changes to bring them into the new branch or --start-fresh to leave them there",
-                source_path.display()
+            return Err(crate::output::CommandError::uncommitted_changes(
+                format!(
+                    "starting point '{from_ref}' is checked out at {} with uncommitted changes; retry with --take-changes to bring them into the new branch or --start-fresh to leave them there",
+                    source_path.display()
+                ),
+                source_path,
+                &["--take-changes", "--start-fresh"],
             ));
         }
         Changes::Default => true,

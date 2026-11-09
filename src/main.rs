@@ -76,8 +76,8 @@ fn main() {
                 "unsupported",
             ))
         }
-        Commands::Checkout(args) => cmd::checkout::run(args).map_err(Into::into),
-        Commands::Finish(args) => cmd::finish::run(args).map_err(Into::into),
+        Commands::Checkout(args) => cmd::checkout::run(args),
+        Commands::Finish(args) => cmd::finish::run(args),
         Commands::Init(args) => cmd::init::run(args).map_err(Into::into),
         Commands::New(args) => cmd::new::run(args),
         Commands::Skill(args) => cmd::skill::run(args),
