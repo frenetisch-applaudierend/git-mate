@@ -415,21 +415,40 @@ fn stacked_branch_is_based_on_its_parent() {
     assert!(is_ancestor(dir, "bar", "foo"));
 }
 
-#[test]
-fn branch_that_merged_another_branch_is_stacked_on_it() {
+/// `foo` merged `bar`, so it shares commits beyond main with `bar` through a
+/// commit of `bar`'s, not one of its own. Commit times decide which of the
+/// two roots `rev-list` lists first, so both orders are tested.
+fn assert_stacked_on_merged_branch(bar_time: u64, foo_time: u64) {
     let repo = common::RepoWithoutRemote::new();
     let dir = repo.path();
-    common::git(dir, &["branch", "bar", "main"]);
-    commit_on(dir, "bar", "bar.txt", "bar");
-    common::git(dir, &["branch", "foo", "main"]);
-    commit_on(dir, "foo", "foo.txt", "foo");
+    for (branch, time) in [("bar", bar_time), ("foo", foo_time)] {
+        common::git(dir, &["checkout", "-q", "-b", branch, "main"]);
+        std::fs::write(dir.join(format!("{branch}.txt")), branch).unwrap();
+        common::git(dir, &["add", "."]);
+        common::git_at(dir, time, &["commit", "-q", "-m", branch]);
+    }
     common::git(dir, &["checkout", "-q", "foo"]);
-    common::git(dir, &["merge", "-q", "--no-ff", "--no-edit", "bar"]);
+    let merge_time = bar_time.max(foo_time) + 60;
+    common::git_at(
+        dir,
+        merge_time,
+        &["merge", "-q", "--no-ff", "--no-edit", "bar"],
+    );
     common::git(dir, &["checkout", "-q", "main"]);
 
     let data = update_json(dir, &["foo", "--dry-run"]);
     assert_eq!(entry(&data, "foo")["base"], "bar");
     assert_eq!(entry(&data, "foo")["baseSource"], "stacked");
+}
+
+#[test]
+fn branch_that_merged_an_older_branch_is_stacked_on_it() {
+    assert_stacked_on_merged_branch(2_000_000_000, 2_000_000_100);
+}
+
+#[test]
+fn branch_that_merged_a_newer_branch_is_stacked_on_it() {
+    assert_stacked_on_merged_branch(2_000_000_100, 2_000_000_000);
 }
 
 #[test]
