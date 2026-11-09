@@ -50,6 +50,17 @@ pub fn count_commits(from: &str, to: &str) -> Result<usize, String> {
         .map_err(|e| format!("unexpected `git rev-list --count` output: {e}"))
 }
 
+/// Number of commits reachable from `to` but from none of `from`.
+pub fn count_commits_not_in(from: &[&str], to: &str) -> Result<usize, String> {
+    let mut args = vec!["rev-list", "--count", to, "--not"];
+    args.extend_from_slice(from);
+    let output = run_output(&args)?;
+    output
+        .trim()
+        .parse()
+        .map_err(|e| format!("unexpected `git rev-list --count` output: {e}"))
+}
+
 /// The abbreviated hash and subject line of `rev`.
 pub fn commit_summary(rev: &str) -> Result<(String, String), String> {
     let output = run_output(&["log", "-1", "--format=%h%x00%s", rev])?;

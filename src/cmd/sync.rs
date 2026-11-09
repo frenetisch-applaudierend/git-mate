@@ -30,15 +30,17 @@ Branches already merged into the default branch — whether merged, rebase-merge
 squash-merged, even if those files were moved or edited since — start out as delete,
 the others as ask later; use the arrow keys to change them and Enter to apply, or Esc
 to leave them all as they are. Without a terminal there is nobody to ask, so they are
-listed and left as they are. Branches with unpushed commits start out as ask later
-and are only deleted when you pick it; keep one to push it again later. Branches
-whose worktree has uncommitted changes are never offered for deletion. Branches whose
-remote was already gone before this sync (e.g. pruned by an earlier fetch) are offered
-too; since sync cannot tell whether they had unpushed commits, an unmerged one is only
-deleted when you pick it. Pass --apply-recommended to skip the chooser and apply the
-preselected actions, or --delete-pruned to delete all of them except those with
-unpushed commits or unmerged, already-gone ones (either also makes --json act instead
-of just reporting candidates). Branches you keep stop
+listed and left as they are. A branch with unpushed commits is treated like a merged
+one if everything on it is already in the default branch (e.g. the PR was squash-merged
+and the unpushed commit only merged the default branch in); otherwise it starts out as
+ask later and is only deleted when you pick it; keep it to push it again later.
+Branches whose worktree has uncommitted changes are never offered for deletion.
+Branches whose remote was already gone before this sync (e.g. pruned by an earlier
+fetch) are offered too; since sync cannot tell whether they had unpushed commits, an
+unmerged one is only deleted when you pick it. Pass --apply-recommended to skip the
+chooser and apply the preselected actions, or --delete-pruned to delete all of them
+except unmerged ones with unpushed commits or whose remote was already gone (either
+also makes --json act instead of just reporting candidates). Branches you keep stop
 tracking their deleted upstream, so they aren't offered again.
 
 Sync never merges or rebases a branch onto the branch it is based on; if the current
@@ -210,9 +212,11 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
                 current_branch_pruned = true;
             }
 
-            let status = match unpushed_before_prune(&branches_before, branch) {
+            let unpushed =
+                unpushed_before_prune(&branches_before, branch, default_branch.remote.as_deref());
+            let status = match unpushed {
                 Unpushed::None => pruned_branch_status(branch, &worktrees, &default_branch),
-                unpushed => unpushed_branch_status(branch, unpushed, &worktrees),
+                unpushed => unpushed_branch_status(branch, unpushed, &worktrees, &default_branch),
             };
             record_pruned_status(
                 branch,
@@ -844,16 +848,21 @@ enum Unpushed {
     Unknown,
 }
 
+/// Commits that only came in from the default branch (e.g. by merging it
+/// into the branch) exist there too, so they don't count.
 fn unpushed_before_prune(
     branches_before: &[(String, Option<String>, Option<String>)],
     branch: &str,
+    default_remote: Option<&str>,
 ) -> Unpushed {
     let Some((_, Some(local), Some(upstream))) =
         branches_before.iter().find(|(b, _, _)| b == branch)
     else {
         return Unpushed::Unknown;
     };
-    match crate::git::count_commits(upstream, local) {
+    let mut pushed = vec![upstream.as_str()];
+    pushed.extend(default_remote);
+    match crate::git::count_commits_not_in(&pushed, local) {
         Ok(0) => Unpushed::None,
         Ok(n) => Unpushed::Commits(n),
         Err(_) => Unpushed::Unknown,
@@ -861,28 +870,52 @@ fn unpushed_before_prune(
 }
 
 /// A branch whose upstream was pruned during this sync while it still had
-/// unpushed commits. It is offered like any other remote-gone branch, so
-/// the user can keep it (and push it again later), delete it or decide
+/// unpushed commits. If everything on it — the unpushed commits included —
+/// is already in the default branch (e.g. the PR was squash-merged and the
+/// local commit only merged the default branch in), deleting it loses
+/// nothing, so it is treated like any merged branch. Otherwise it is offered
+/// so the user can keep it (and push it again later), delete it or decide
 /// later — but never preselected for deletion, and never deleted by
 /// `--delete-pruned`.
 fn unpushed_branch_status(
     branch: &str,
     unpushed: Unpushed,
     worktrees: &[crate::git::WorktreeEntry],
+    default_branch: &DefaultBranch,
 ) -> Result<PrunedStatus, String> {
-    let detail = match unpushed {
+    let unpushed_detail = match unpushed {
         Unpushed::Commits(n) => {
             let plural = if n == 1 { "" } else { "s" };
             format!("{n} unpushed commit{plural}")
         }
         _ => "may have unpushed commits".to_string(),
     };
-    let candidate = Candidate {
-        branch: branch.to_string(),
-        detail,
-        warn: true,
-        recommended: Choice::Later,
-        bulk_delete_blocker: Some("remote deleted but has unpushed commits, skipping".to_string()),
+    let merged = default_branch.remote.as_deref().and_then(|remote| {
+        crate::git::content_merged_into(remote, branch)
+            .ok()
+            .flatten()
+            .map(|merged_at| merged_detail(&merged_at, remote))
+    });
+    let candidate = match merged {
+        Some(merged) => Candidate {
+            branch: branch.to_string(),
+            detail: match unpushed {
+                Unpushed::Commits(_) => format!("{merged}, incl. {unpushed_detail}"),
+                _ => merged,
+            },
+            warn: false,
+            recommended: Choice::Delete,
+            bulk_delete_blocker: None,
+        },
+        None => Candidate {
+            branch: branch.to_string(),
+            detail: unpushed_detail,
+            warn: true,
+            recommended: Choice::Later,
+            bulk_delete_blocker: Some(
+                "remote deleted but has unpushed commits, skipping".to_string(),
+            ),
+        },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
 }

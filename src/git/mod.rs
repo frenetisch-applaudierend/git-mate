@@ -24,8 +24,8 @@ pub use integrate::{Integration, Merge, Rebase, merge_into_branch, rebase_branch
 pub use merge::{MergedAt, content_merged_into, patches_already_in, reset_hard_in};
 pub use push::{push_branch, push_target};
 pub use refs::{
-    commit_exists, commit_summary, count_commits, is_ancestor, resolve_ref, update_ref,
-    update_ref_from,
+    commit_exists, commit_summary, count_commits, count_commits_not_in, is_ancestor, resolve_ref,
+    update_ref, update_ref_from,
 };
 pub use remote::{fetch, fetch_all, list_remote_tracking_refs, list_remotes};
 pub use run::{is_verbose, set_verbose};
