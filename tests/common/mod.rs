@@ -262,6 +262,19 @@ pub fn git(dir: &std::path::Path, args: &[&str]) {
     assert!(s.success(), "git {:?} failed in {:?}", args, dir);
 }
 
+/// Run git as if at `unix_time`, which is what its reflog entries record.
+pub fn git_at(dir: &std::path::Path, unix_time: u64, args: &[&str]) {
+    let date = format!("{unix_time} +0000");
+    let s = git_cmd()
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_COMMITTER_DATE", &date)
+        .env("GIT_AUTHOR_DATE", &date)
+        .status()
+        .unwrap();
+    assert!(s.success(), "git {:?} failed in {:?}", args, dir);
+}
+
 fn git_silent(dir: &std::path::Path, args: &[&str]) {
     let s = git_cmd()
         .args(args)

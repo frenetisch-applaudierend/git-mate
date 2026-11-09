@@ -420,6 +420,28 @@ fn checkout_b_from_parent_is_recognized() {
 }
 
 #[test]
+fn reflog_of_an_earlier_branch_with_the_same_name_is_ignored() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    // Long ago, a `foo` was created from `zed`, and later deleted.
+    common::git(dir, &["branch", "zed", "main"]);
+    commit_on(dir, "zed", "zed.txt", "zed");
+    common::git_at(dir, 1_600_000_000, &["checkout", "-q", "zed"]);
+    common::git_at(dir, 1_600_000_000, &["checkout", "-q", "-b", "foo"]);
+    common::git_at(dir, 1_600_000_000, &["checkout", "-q", "main"]);
+    common::git(dir, &["branch", "-q", "-D", "foo"]);
+    // Now `foo` is created from `bar`, and both advance.
+    common::git_at(dir, 1_700_000_000, &["checkout", "-q", "-b", "bar"]);
+    commit_file(dir, "bar.txt", "bar");
+    common::git_at(dir, 1_700_000_100, &["checkout", "-q", "-b", "foo"]);
+    commit_file(dir, "foo.txt", "foo");
+    commit_on(dir, "bar", "bar2.txt", "bar");
+
+    let data = update_json(dir, &["foo", "--dry-run"]);
+    assert_eq!(entry(&data, "foo")["base"], "bar");
+}
+
+#[test]
 fn ambiguous_base_is_skipped_and_onto_resolves_it() {
     let repo = stack();
     let dir = repo.path();

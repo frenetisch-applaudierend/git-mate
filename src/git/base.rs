@@ -228,12 +228,16 @@ fn stack_link(tip: &str, candidate: &str, default_tip: &str) -> Result<Option<Li
 /// Created from `HEAD` (`git checkout -b`), it is the branch HEAD's reflog
 /// says was checked out before first switching to `branch`.
 fn created_from(branch: &str, candidates: &[String]) -> Option<String> {
-    let start = oldest_reflog_subject(&format!("refs/heads/{branch}"))?
+    let created = reflog(&format!("refs/heads/{branch}"))?
+        .into_iter()
+        .last()?;
+    let start = created
+        .subject
         .strip_prefix("branch: Created from ")?
         .trim()
         .to_string();
     let start = if start == "HEAD" {
-        switched_from(branch)?
+        switched_from(branch, created.time)?
     } else {
         start
     };
@@ -241,22 +245,64 @@ fn created_from(branch: &str, candidates: &[String]) -> Option<String> {
     candidates.iter().find(|c| c.as_str() == start).cloned()
 }
 
-/// The branch checked out right before HEAD first moved to `branch`.
-fn switched_from(branch: &str) -> Option<String> {
-    let log = run_output(&["reflog", "show", "--format=%gs", "HEAD"]).ok()?;
+/// How long after creating a branch HEAD may move to it for that to count
+/// as `git checkout -b` / `git switch -c`, which do both at once.
+const CREATE_AND_SWITCH_SECONDS: u64 = 2;
+
+/// The branch HEAD moved away from when it moved to `branch` as it was
+/// created at `created` (unix time). HEAD moving to an earlier branch of the
+/// same name, or to this one later on, says nothing about where it started;
+/// neither does a branch created in another worktree, whose HEAD this isn't.
+fn switched_from(branch: &str, created: u64) -> Option<String> {
     let suffix = format!(" to {branch}");
-    log.lines().rev().find_map(|subject| {
-        subject
-            .strip_prefix("checkout: moving from ")
-            .or_else(|| subject.strip_prefix("switch: moving from "))?
-            .strip_suffix(&suffix)
-            .map(str::to_string)
-    })
+    reflog("HEAD")?
+        .into_iter()
+        .rev()
+        .filter(|entry| (created..=created + CREATE_AND_SWITCH_SECONDS).contains(&entry.time))
+        .find_map(|entry| {
+            entry
+                .subject
+                .strip_prefix("checkout: moving from ")
+                .or_else(|| entry.subject.strip_prefix("switch: moving from "))?
+                .strip_suffix(&suffix)
+                .map(str::to_string)
+        })
 }
 
-fn oldest_reflog_subject(refname: &str) -> Option<String> {
-    let log = run_output(&["reflog", "show", "--format=%gs", refname]).ok()?;
-    log.lines().last().map(str::to_string)
+struct ReflogEntry {
+    /// Unix time.
+    time: u64,
+    subject: String,
+}
+
+/// `refname`'s reflog, newest first.
+fn reflog(refname: &str) -> Option<Vec<ReflogEntry>> {
+    let log = run_output(&[
+        "reflog",
+        "show",
+        "--date=unix",
+        "--format=%gd%x09%gs",
+        refname,
+    ])
+    .ok()?;
+    Some(
+        log.lines()
+            .filter_map(|line| {
+                // "<ref>@{<time>}\t<subject>"
+                let (selector, subject) = line.split_once('\t')?;
+                let time = selector
+                    .rsplit_once("@{")?
+                    .1
+                    .strip_suffix('}')?
+                    .parse()
+                    .ok()?;
+                Some(ReflogEntry {
+                    time,
+                    subject: subject.to_string(),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn merge_base(a: &str, b: &str) -> Result<String, String> {
