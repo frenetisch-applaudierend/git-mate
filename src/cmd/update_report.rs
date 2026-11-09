@@ -4,10 +4,12 @@
 use console::{Style, style};
 
 /// How the base is brought into a branch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Strategy {
+    /// Rebase the branch onto its base.
     Rebase,
+    /// Merge the base into the branch.
     Merge,
 }
 

@@ -147,6 +147,37 @@ fn rebase_flag_overrides_strategy_config() {
 }
 
 #[test]
+fn strategy_flag_selects_merge_and_overrides_config() {
+    let repo = behind_main();
+    repo.git(&["config", "mate.update.strategy", "rebase"]);
+
+    let data = update_json(repo.path(), &["--strategy=merge"]);
+    assert_eq!(entry(&data, "feature")["action"], "merged");
+    assert_eq!(parent_count(repo.path(), "feature"), 2);
+}
+
+#[test]
+fn strategy_flag_selects_rebase() {
+    let repo = behind_main();
+    repo.git(&["config", "mate.update.strategy", "merge"]);
+
+    let data = update_json(repo.path(), &["--strategy", "rebase"]);
+    assert_eq!(entry(&data, "feature")["action"], "rebased");
+}
+
+#[test]
+fn strategy_flag_conflicts_with_its_shortcuts() {
+    let repo = behind_main();
+    let before = tip(repo.path(), "feature");
+    common::git_mate()
+        .args(["update", "--strategy=rebase", "--merge"])
+        .current_dir(repo.path())
+        .assert()
+        .failure();
+    assert_eq!(tip(repo.path(), "feature"), before);
+}
+
+#[test]
 fn invalid_strategy_config_is_an_error() {
     let repo = behind_main();
     repo.git(&["config", "mate.update.strategy", "bogus"]);
