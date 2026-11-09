@@ -19,12 +19,31 @@ pub fn push(outcome: &mut UpdateOutcome, mode: PushMode, dry_run: bool) {
     if !matches!(outcome.action, "rebased" | "merged" | "up-to-date") {
         return;
     }
-    match try_push(outcome, mode, dry_run) {
-        Ok(result) => outcome.push = Some(result),
-        Err(e) => {
-            outcome.push = Some("failed");
-            outcome.push_reason = Some(e);
-        }
+    let (result, reason) = match try_push(outcome, mode, dry_run) {
+        Ok(result) => (result, None),
+        Err(NotPushed::Skipped(reason)) => ("skipped", Some(reason)),
+        Err(NotPushed::Failed(e)) => ("failed", Some(e)),
+    };
+    outcome.push = Some(result);
+    outcome.push_reason = reason;
+}
+
+/// Why a branch wasn't pushed.
+enum NotPushed {
+    /// Deliberately left alone.
+    Skipped(String),
+    Failed(String),
+}
+
+impl From<String> for NotPushed {
+    fn from(e: String) -> Self {
+        NotPushed::Failed(e)
+    }
+}
+
+impl From<&str> for NotPushed {
+    fn from(e: &str) -> Self {
+        NotPushed::Failed(e.to_string())
     }
 }
 
@@ -32,13 +51,21 @@ fn try_push(
     outcome: &UpdateOutcome,
     mode: PushMode,
     dry_run: bool,
-) -> Result<&'static str, String> {
+) -> Result<&'static str, NotPushed> {
     let branch = outcome.branch.as_str();
     let Some(target) = crate::git::push_target(branch)? else {
         return Ok("no-remote");
     };
     let tip = crate::git::resolve_ref(&format!("refs/heads/{branch}"))?;
     let remote = crate::git::resolve_ref(&target.tracking_ref()).ok();
+    // Its upstream was deleted (e.g. after it was merged) and pruned:
+    // pushing would bring it back.
+    if remote.is_none() && target.is_upstream {
+        return Err(NotPushed::Skipped(format!(
+            "its upstream {}/{} is gone",
+            target.remote, target.remote_branch
+        )));
+    }
 
     // Under --dry-run the branch hasn't moved: judge by where it would be.
     let moves = dry_run && outcome.action != "up-to-date";
@@ -73,7 +100,8 @@ fn try_push(
         return Err(format!(
             "{}/{} has commits the local branch doesn't; pull them in first",
             target.remote, target.remote_branch
-        ));
+        )
+        .into());
     }
 
     let force = match mode {

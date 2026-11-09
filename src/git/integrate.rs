@@ -137,7 +137,14 @@ pub fn merge_into_branch(merge: &Merge, dry_run: bool) -> Result<Integration, St
 /// which needs no working tree and writes no refs. Returns the new tip, or
 /// `None` if replaying would conflict.
 fn replay_onto(onto: &str, boundary: &str, branch: &str) -> Result<Option<String>, String> {
-    let range = format!("{boundary}..refs/heads/{branch}");
+    let branch_ref = format!("refs/heads/{branch}");
+    // No commits of its own (e.g. merged into `onto` with a merge commit):
+    // `git replay` would print nothing, and the branch simply moves to
+    // `onto`, as `git rebase --onto` fast-forwards it.
+    if super::refs::count_commits(boundary, &branch_ref)? == 0 {
+        return super::refs::resolve_ref(onto).map(Some);
+    }
+    let range = format!("{boundary}..{branch_ref}");
     let onto_arg = format!("--onto={onto}");
     let mut output = replay(&["--ref-action=print", &onto_arg, &range])?;
     // Before Git 2.52, printing the ref updates was the only behavior and

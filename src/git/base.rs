@@ -92,38 +92,68 @@ pub fn behind_base(branch: &str, rebase: bool) -> Result<Option<(Base, usize)>, 
             .lines()
             .map(str::to_string)
             .collect();
-    let Detection::Found(base) = detect_base(branch, &default_branch, &candidates)? else {
+    let Detection::Found(base) = detect_base(branch, &default_branch, &candidates, &[])? else {
         return Ok(None);
     };
     Ok(behind(branch, &base, rebase)?.map(|count| (base, count)))
 }
 
+/// A local branch that was deleted after bases were first looked at (by
+/// `git mate sync`, say), and where it pointed.
+#[derive(Clone, Debug)]
+pub struct DeletedBranch {
+    pub name: String,
+    pub tip: String,
+}
+
 /// Detect `branch`'s base among `candidates` (the local branches), with
-/// `default_branch` as the fallback.
+/// `default_branch` as the fallback. A branch in `deleted` is only considered
+/// if it was merged into the default branch: then `branch`, stacked on it,
+/// still drops its commits.
 pub fn detect_base(
     branch: &str,
     default_branch: &str,
     candidates: &[String],
+    deleted: &[DeletedBranch],
 ) -> Result<Detection, String> {
     let tip = rev_parse(&format!("refs/heads/{branch}"))?;
-    let default_tip = rev_parse(&branch_ref(default_branch))?;
-    let created_from = created_from(branch, candidates);
+    let default_ref = branch_ref(default_branch);
+    let default_tip = rev_parse(&default_ref)?;
+    // Each candidate's name, the revision it is at, and whether it is deleted.
+    let all: Vec<(String, String, bool)> = candidates
+        .iter()
+        .map(|c| (c.clone(), format!("refs/heads/{c}"), false))
+        .chain(
+            deleted
+                .iter()
+                .map(|d| (d.name.clone(), d.tip.clone(), true)),
+        )
+        .collect();
+    let names: Vec<String> = all.iter().map(|(name, _, _)| name.clone()).collect();
+    let created_from = created_from(branch, &names);
 
     struct Parent {
         name: String,
+        rev: String,
         distance: usize,
         /// The graph alone can't tell whether it is a parent or a child.
         uncertain: bool,
     }
     let mut parents = Vec::new();
-    for candidate in candidates {
+    for (candidate, rev, is_deleted) in &all {
         if candidate == branch || candidate == default_branch {
             continue;
         }
-        let Some(link) = stack_link(&tip, candidate, &default_tip)? else {
+        let Some(link) = stack_link(&tip, rev, &default_tip)? else {
             continue;
         };
+        if *is_deleted && super::merge::content_merged_into(&default_ref, rev)?.is_none() {
+            continue;
+        }
         let named = created_from.as_deref() == Some(candidate.as_str());
+        // The candidate was created from `branch`: it is the child (e.g. a
+        // backup of `branch` taken before `branch` moved on).
+        let child = || self::created_from(candidate, &[branch.to_string()]).is_some();
         let uncertain = match link {
             // `branch` has nothing of its own beyond the candidate: they are
             // the same stack, but only the reflog says which came first.
@@ -133,21 +163,24 @@ pub fn detect_base(
                 }
                 false
             }
-            Link::Below { mutual: false } => false,
+            Link::Below { mutual: false } => {
+                if !named && child() {
+                    continue;
+                }
+                false
+            }
             // Both advanced since one was created from the other.
             Link::Below { mutual: true } => {
-                if !named && self::created_from(candidate, &[branch.to_string()]).is_some() {
+                if !named && child() {
                     continue;
                 }
                 !named
             }
         };
         parents.push(Parent {
-            distance: super::refs::count_commits(
-                &merge_base(&tip, &format!("refs/heads/{candidate}"))?,
-                &tip,
-            )?,
+            distance: super::refs::count_commits(&merge_base(&tip, rev)?, &tip)?,
             name: candidate.clone(),
+            rev: rev.clone(),
             uncertain,
         });
     }
@@ -178,8 +211,8 @@ pub fn detect_base(
         },
     };
 
-    let parent_tip = rev_parse(&format!("refs/heads/{}", chosen.name))?;
-    if super::merge::content_merged_into(&branch_ref(default_branch), &parent_tip)?.is_some() {
+    let parent_tip = rev_parse(&chosen.rev)?;
+    if super::merge::content_merged_into(&default_ref, &parent_tip)?.is_some() {
         return Ok(Detection::Found(Base {
             branch: default_branch.to_string(),
             source: BaseSource::MergedParent,
@@ -205,9 +238,9 @@ enum Link {
     Below { mutual: bool },
 }
 
-fn stack_link(tip: &str, candidate: &str, default_tip: &str) -> Result<Option<Link>, String> {
-    let candidate_ref = format!("refs/heads/{candidate}");
-    let Ok(shared) = merge_base(tip, &candidate_ref) else {
+/// `candidate_ref` is the revision the candidate branch is at.
+fn stack_link(tip: &str, candidate_ref: &str, default_tip: &str) -> Result<Option<Link>, String> {
+    let Ok(shared) = merge_base(tip, candidate_ref) else {
         return Ok(None);
     };
     // Only history the default branch also has: siblings, not a stack.
@@ -217,7 +250,7 @@ fn stack_link(tip: &str, candidate: &str, default_tip: &str) -> Result<Option<Li
     if shared == tip {
         return Ok(Some(Link::Contained));
     }
-    let candidate_tip = rev_parse(&candidate_ref)?;
+    let candidate_tip = rev_parse(candidate_ref)?;
     Ok(Some(Link::Below {
         mutual: shared != candidate_tip,
     }))

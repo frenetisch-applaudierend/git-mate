@@ -50,7 +50,8 @@ pub struct UpdateOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
     /// `pushed`, `forced`, `up-to-date`, `needs-force-push`, `declined`,
-    /// `no-remote` or `failed`, when pushing was asked for.
+    /// `no-remote`, `skipped` (see `push_reason`) or `failed`, when pushing
+    /// was asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub push: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,6 +147,10 @@ impl UpdateOutcome {
             Some("needs-force-push") => ", needs a force-push".to_string(),
             Some("declined") => ", force-push declined".to_string(),
             Some("no-remote") => ", no remote to push to".to_string(),
+            Some("skipped") => format!(
+                ", not pushed: {}",
+                self.push_reason.as_deref().unwrap_or_default()
+            ),
             Some("failed") => format!(
                 ", push failed: {}",
                 self.push_reason
