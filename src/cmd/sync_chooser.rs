@@ -240,7 +240,7 @@ pub fn resolve(
 #[cfg(test)]
 mod tests {
     use super::{Selection, Step};
-    use crate::cmd::sync_report::{Candidate, Choice};
+    use crate::cmd::sync_report::{Candidate, Choice, Unpushed};
     use console::Key;
 
     fn candidate(branch: &str, recommended: Choice) -> Candidate {
@@ -250,6 +250,7 @@ mod tests {
             warn: false,
             recommended,
             bulk_delete_blocker: None,
+            unpushed: Unpushed::None,
         }
     }
 

@@ -973,7 +973,7 @@ fn keeps_local_branch_with_unpushed_commits_when_remote_pruned() {
 
     let data = sync_json(setup.local_path(), &[]);
     let entry = assert_action(&data, "feature/keep", "deletion-candidate");
-    assert_eq!(entry["detail"], "1 unpushed commit");
+    assert_eq!(entry["unpushedCommits"], 1);
     assert_eq!(entry["recommended"], "later");
 
     assert!(
@@ -1022,7 +1022,59 @@ fn offers_pruned_branch_with_unpushed_commits_already_squash_merged_for_deletion
     let data = sync_json(setup.local_path(), &[]);
     let entry = assert_action(&data, "feature/done", "deletion-candidate");
     assert_eq!(entry["detail"], "merged in #42, incl. 1 unpushed commit");
+    assert_eq!(entry["unpushedCommits"], 1);
     assert_eq!(entry["recommended"], "delete");
+}
+
+#[test]
+fn counts_unpushed_commits_beyond_those_from_the_default_branch() {
+    let setup = common::RepoWithRemote::new();
+    pruned_branch_with_unpushed_commits(&setup, "feature/wip");
+    // main moves on and is merged into the branch: only the merge commit and
+    // the earlier local commit are unpushed, not main's history.
+    commit_file(setup.local_path(), "main.txt", "main", "main moves on");
+    setup.local_git(&["push", "-q", "origin", "main"]);
+    setup.local_git(&["checkout", "-q", "feature/wip"]);
+    setup.local_git(&["merge", "-q", "--no-ff", "-m", "merge main", "main"]);
+    setup.local_git(&["checkout", "-q", "main"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/wip", "deletion-candidate");
+    assert_eq!(entry["unpushedCommits"], 2);
+    assert_eq!(entry["recommended"], "later");
+}
+
+#[test]
+fn pruned_branch_with_unpushed_commits_in_dirty_worktree_is_skipped() {
+    let setup = common::RepoWithRemote::new();
+    pruned_branch_with_unpushed_commits(&setup, "feature/dirty");
+    let wt = TempDir::new().unwrap();
+    let wt_path = wt.path().join("dirty");
+    setup.local_git(&[
+        "worktree",
+        "add",
+        "-q",
+        wt_path.to_str().unwrap(),
+        "feature/dirty",
+    ]);
+    std::fs::write(wt_path.join("unpushed.txt"), "uncommitted edit").unwrap();
+
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    assert_action(&data, "feature/dirty", "skipped");
+    assert!(setup.local_branch_exists("feature/dirty"));
+    assert!(wt_path.exists());
+}
+
+#[test]
+fn delete_pruned_switches_away_from_current_branch_whose_unpushed_commits_are_merged() {
+    let setup = common::RepoWithRemote::new();
+    squash_merged_branch_with_unpushed_merge(&setup, "feature/done");
+    setup.local_git(&["checkout", "-q", "feature/done"]);
+
+    let data = sync_json(setup.local_path(), &["--delete-pruned"]);
+    assert_action(&data, "feature/done", "deleted");
+    assert!(!setup.local_branch_exists("feature/done"));
+    assert_eq!(setup.local_current_branch(), "main");
 }
 
 #[test]
@@ -1055,10 +1107,7 @@ fn delete_pruned_leaves_pruned_branch_with_unpushed_commits() {
 
     let data = sync_json(setup.local_path(), &["--delete-pruned"]);
     let entry = assert_action(&data, "feature/keep", "left-as-is");
-    assert_eq!(
-        entry["reason"],
-        "remote deleted but has unpushed commits, skipping"
-    );
+    assert_eq!(entry["unpushedCommits"], 1);
 
     assert!(setup.local_branch_exists("feature/keep"));
 }

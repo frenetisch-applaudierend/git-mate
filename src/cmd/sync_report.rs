@@ -81,6 +81,10 @@ pub struct BranchOutcome {
     /// The actions a deletion candidate can be resolved with.
     #[serde(skip_serializing_if = "Option::is_none")]
     choices: Option<&'static [Choice]>,
+    /// A remote-gone branch's commits that were never pushed: a count, or
+    /// `null` when they can't be ruled out. Omitted when there are none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unpushed_commits: Option<Option<usize>>,
     /// Set once sync acted (or tried to act) on the branch.
     #[serde(skip_serializing_if = "Option::is_none")]
     decided_by: Option<DecidedBy>,
@@ -101,6 +105,7 @@ impl BranchOutcome {
             candidate_detail: None,
             recommended: None,
             choices: None,
+            unpushed_commits: None,
             decided_by: None,
             group,
             detail,
@@ -255,6 +260,11 @@ impl BranchOutcome {
             String::new(),
         );
         outcome.candidate_detail = Some(candidate.detail.clone());
+        outcome.unpushed_commits = match candidate.unpushed {
+            Unpushed::None => None,
+            Unpushed::Commits(n) => Some(Some(n)),
+            Unpushed::Unknown => Some(None),
+        };
         outcome
     }
 
@@ -299,6 +309,18 @@ pub struct Candidate {
     /// Why `--delete-pruned` must leave this branch alone rather than delete
     /// it without asking, if it must.
     pub bulk_delete_blocker: Option<String>,
+    /// Commits on it that were never pushed.
+    pub unpushed: Unpushed,
+}
+
+/// Whether a remote-gone branch has commits that were never pushed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Unpushed {
+    None,
+    Commits(usize),
+    /// Unpushed commits can't be ruled out (e.g. the remote was already gone
+    /// before this sync, so there is no snapshot to compare against).
+    Unknown,
 }
 
 /// What to do with a branch whose remote is gone.
