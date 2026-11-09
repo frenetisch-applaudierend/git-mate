@@ -188,14 +188,15 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
     };
 
     // 4. Process all local branches that have an upstream.
-    let branches = crate::git::list_local_branches_with_upstream()?;
+    let branches = crate::git::list_branch_tips()?;
 
     let mut current_branch_pruned = false;
     let mut deletion_candidates: Vec<Candidate> = Vec::new();
 
     progress.update(&format!("Syncing {} branches…", branches.len()));
-    for (branch, upstream) in &branches {
-        let Some(upstream) = upstream else {
+    for tip in &branches {
+        let branch = &tip.branch;
+        let Some(upstream) = &tip.upstream else {
             branch_outcomes.push(BranchOutcome::no_upstream(branch));
             continue;
         };
@@ -236,7 +237,7 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
                 &mut branch_outcomes,
                 &mut deletion_candidates,
             );
-        } else if crate::git::resolve_ref(upstream).is_err() {
+        } else if tip.upstream_sha.is_none() {
             // The upstream is configured but its remote-tracking ref was
             // already gone before this fetch (pruned by an earlier fetch, an
             // IDE, or a previous sync where the branch was kept). Without a
@@ -270,7 +271,15 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
                 is_current,
                 rebase: diverged_strategy == DivergedStrategy::Rebase,
             };
-            match fast_forward_branch(&target, &worktrees, diverged_strategy, dry_run) {
+            let remote_sha = tip.upstream_sha.as_deref().unwrap_or_default();
+            match fast_forward_branch(
+                &target,
+                &tip.sha,
+                remote_sha,
+                &worktrees,
+                diverged_strategy,
+                dry_run,
+            ) {
                 Ok(outcome) => branch_outcomes.push(outcome),
                 Err(e) => branch_outcomes
                     .push(BranchOutcome::failed(branch, &e).decided_by(DecidedBy::Auto)),
@@ -497,18 +506,13 @@ fn warn(message: &str) {
 /// Returns (branch, local_sha, upstream_sha) for every local branch that has an upstream.
 /// Called before fetching, so upstream SHAs reflect the state on the remote right now.
 fn snapshot_branch_upstreams() -> Vec<(String, Option<String>, Option<String>)> {
-    let Ok(branches) = crate::git::list_local_branches_with_upstream() else {
+    let Ok(branches) = crate::git::list_branch_tips() else {
         return vec![];
     };
     branches
         .into_iter()
-        .map(|(branch, upstream)| {
-            let local_sha = crate::git::resolve_ref(&branch).ok();
-            let upstream_sha = upstream
-                .as_deref()
-                .and_then(|u| crate::git::resolve_ref(u).ok());
-            (branch, local_sha, upstream_sha)
-        })
+        .filter(|tip| tip.upstream.is_some())
+        .map(|tip| (tip.branch, Some(tip.sha), tip.upstream_sha))
         .collect()
 }
 
@@ -551,49 +555,34 @@ impl SyncTarget<'_> {
 
 fn fast_forward_branch(
     target: &SyncTarget,
+    local_sha: &str,
+    remote_sha: &str,
     worktrees: &[crate::git::WorktreeEntry],
     diverged_strategy: DivergedStrategy,
     dry_run: bool,
 ) -> Result<BranchOutcome, String> {
     let branch = target.branch;
     let upstream = target.upstream;
-    let local_sha = match crate::git::resolve_ref(branch) {
-        Ok(sha) => sha,
-        Err(_) => {
-            return Ok(BranchOutcome::needs_attention(
-                branch,
-                "could not resolve local ref",
-                "could not resolve the branch",
-            ));
-        }
-    };
-    let remote_sha = match crate::git::resolve_ref(upstream) {
-        Ok(sha) => sha,
-        Err(_) => {
-            let reason = format!("upstream {upstream} could not be resolved");
-            return Ok(BranchOutcome::needs_attention(branch, &reason, &reason));
-        }
-    };
     if local_sha == remote_sha {
         return Ok(BranchOutcome::up_to_date(branch));
     }
-    if crate::git::is_ancestor(&remote_sha, &local_sha)? {
+    if crate::git::is_ancestor(remote_sha, local_sha)? {
         // Only local commits on top of the upstream: nothing to bring in.
-        let commits = crate::git::count_commits(&remote_sha, &local_sha)?;
+        let commits = crate::git::count_commits(remote_sha, local_sha)?;
         return Ok(BranchOutcome::ahead(branch, commits));
     }
-    if !crate::git::is_ancestor(&local_sha, &remote_sha)? {
+    if !crate::git::is_ancestor(local_sha, remote_sha)? {
         return resolve_diverged_branch(
             target,
-            &local_sha,
-            &remote_sha,
+            local_sha,
+            remote_sha,
             worktrees,
             diverged_strategy,
             dry_run,
         );
     }
 
-    let commits = crate::git::count_commits(&local_sha, &remote_sha)?;
+    let commits = crate::git::count_commits(local_sha, remote_sha)?;
     if dry_run {
         return Ok(BranchOutcome::fast_forwarded(branch, commits, true));
     }
@@ -616,7 +605,7 @@ fn fast_forward_branch(
             .with_hint(target.dirty_hint(path)));
         }
     } else {
-        crate::git::update_ref(&format!("refs/heads/{branch}"), &remote_sha)?;
+        crate::git::update_ref(&format!("refs/heads/{branch}"), remote_sha)?;
     }
     Ok(BranchOutcome::fast_forwarded(branch, commits, false))
 }
