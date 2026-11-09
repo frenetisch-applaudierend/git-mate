@@ -113,6 +113,16 @@ impl BranchOutcome {
         }
     }
 
+    /// Report a remote-gone branch's unpushed commits as `unpushedCommits`.
+    pub fn with_unpushed(mut self, unpushed: Unpushed) -> Self {
+        self.unpushed_commits = match unpushed {
+            Unpushed::None => None,
+            Unpushed::Commits(n) => Some(Some(n)),
+            Unpushed::Unknown => Some(None),
+        };
+        self
+    }
+
     pub fn with_hint(mut self, hint: Hint) -> Self {
         self.hint = Some(hint);
         self
@@ -260,12 +270,7 @@ impl BranchOutcome {
             String::new(),
         );
         outcome.candidate_detail = Some(candidate.detail.clone());
-        outcome.unpushed_commits = match candidate.unpushed {
-            Unpushed::None => None,
-            Unpushed::Commits(n) => Some(Some(n)),
-            Unpushed::Unknown => Some(None),
-        };
-        outcome
+        outcome.with_unpushed(candidate.unpushed)
     }
 
     pub fn deletion_candidate(candidate: &Candidate) -> Self {
