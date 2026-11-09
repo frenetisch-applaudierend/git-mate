@@ -45,6 +45,50 @@ pub fn list_local_branches_with_upstream() -> Result<Vec<(String, Option<String>
         .collect())
 }
 
+/// A local branch with its tip, and its upstream's tip if that ref exists.
+pub struct BranchTip {
+    pub branch: String,
+    pub sha: String,
+    /// Short name, e.g. `origin/feature`.
+    pub upstream: Option<String>,
+    pub upstream_sha: Option<String>,
+}
+
+/// Every local branch with its tip and its upstream's, read with a single
+/// `for-each-ref` rather than resolving each ref on its own.
+pub fn list_branch_tips() -> Result<Vec<BranchTip>, String> {
+    let output = run_output(&[
+        "for-each-ref",
+        "--format=%(refname)%09%(objectname)%09%(upstream)%09%(upstream:short)",
+        "refs/heads/",
+        "refs/remotes/",
+    ])?;
+    let refs: Vec<Vec<&str>> = output.lines().map(|l| l.split('\t').collect()).collect();
+    let tips: std::collections::HashMap<&str, &str> = refs
+        .iter()
+        .map(|r| (r[0], r.get(1).copied().unwrap_or("")))
+        .collect();
+    Ok(refs
+        .iter()
+        .filter_map(|r| {
+            let branch = r[0].strip_prefix("refs/heads/")?;
+            let upstream_ref = r.get(2).copied().filter(|u| !u.is_empty());
+            Some(BranchTip {
+                branch: branch.to_string(),
+                sha: r.get(1)?.to_string(),
+                upstream: r.get(3).filter(|u| !u.is_empty()).map(|u| u.to_string()),
+                // An upstream tracked outside refs/remotes/ (a custom refspec)
+                // is rare enough to resolve on its own.
+                upstream_sha: upstream_ref.and_then(|u| match tips.get(u) {
+                    Some(sha) => Some(sha.to_string()),
+                    None if u.starts_with("refs/heads/") || u.starts_with("refs/remotes/") => None,
+                    None => super::refs::resolve_ref(u).ok(),
+                }),
+            })
+        })
+        .collect())
+}
+
 pub fn detect_default_branch(remote: bool) -> Result<String, String> {
     if let Ok(raw) = run_output(&["symbolic-ref", "refs/remotes/origin/HEAD"]) {
         let prefix = "refs/remotes/origin/";
