@@ -4,6 +4,7 @@ pub mod finish;
 pub mod init;
 pub mod new;
 pub mod protocol;
+pub mod skill;
 pub mod sync;
 mod sync_chooser;
 mod sync_report;

@@ -34,6 +34,8 @@ enum Commands {
     Init(cmd::init::InitArgs),
     /// Create and switch to a new branch
     New(cmd::new::NewArgs),
+    /// Print instructions for AI coding agents, or install them as a skill
+    Skill(cmd::skill::SkillArgs),
     Sync(cmd::sync::SyncArgs),
     Update(cmd::update::UpdateArgs),
     /// Internal: interpret shell protocol messages
@@ -57,7 +59,7 @@ fn main() {
     let command_name = command_name(&cli.command);
 
     let recovered = match cli.command {
-        Commands::Init(_) | Commands::Protocol(_) => Ok(()),
+        Commands::Init(_) | Commands::Protocol(_) | Commands::Skill(_) => Ok(()),
         _ => crate::cwd::recover(),
     };
     if let Err(e) = recovered {
@@ -78,6 +80,7 @@ fn main() {
         Commands::Finish(args) => cmd::finish::run(args).map_err(Into::into),
         Commands::Init(args) => cmd::init::run(args).map_err(Into::into),
         Commands::New(args) => cmd::new::run(args),
+        Commands::Skill(args) => cmd::skill::run(args),
         Commands::Sync(args) => cmd::sync::run(args).map_err(Into::into),
         Commands::Update(args) => cmd::update::run(args).map_err(Into::into),
         Commands::Protocol(args) => cmd::protocol::run(args).map_err(Into::into),
@@ -95,6 +98,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Finish(_) => "finish",
         Commands::Init(_) => "init",
         Commands::New(_) => "new",
+        Commands::Skill(_) => "skill",
         Commands::Sync(_) => "sync",
         Commands::Update(_) => "update",
         Commands::Protocol(_) => "_protocol",

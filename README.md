@@ -226,6 +226,23 @@ eval "$(command git-mate init zsh)"   # zsh
 eval "$(command git-mate init bash)"  # bash
 ```
 
+### AI coding agents
+
+git-mate ships instructions for AI coding agents: when to use which command, why to pass
+`--json`, and that the automatic `cd` doesn't reach an agent's shell. `git mate skill`
+prints them. To make them available to Claude Code as a skill:
+
+```bash
+git mate skill install            # for all your projects (~/.claude/skills/git-mate)
+git mate skill install --project  # for this repository (.claude/skills/git-mate)
+git mate skill install --dir <dir>  # into another skills directory
+```
+
+The installed skill only holds its description and loads the instructions from
+`git mate skill` whenever it is used, so it stays current when you upgrade git-mate. It
+pre-approves `git mate skill` via `allowed-tools`; if your settings disable shell
+execution in skills (`disableSkillShellExecution`), the skill can't load.
+
 ### Worktree location
 
 Worktrees are created under a root directory, organized by repository and branch names. Set the root path in the git configuration:
