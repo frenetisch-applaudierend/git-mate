@@ -119,9 +119,13 @@ pub fn detect_base(
     let tip = rev_parse(&format!("refs/heads/{branch}"))?;
     let default_ref = branch_ref(default_branch);
     let default_tip = rev_parse(&default_ref)?;
+    let linked = sharing_commits_beyond(&tip, &default_tip)?;
     // Each candidate's name, the revision it is at, and whether it is deleted.
+    // Only branches sharing commits beyond the default branch can be stacked
+    // on or under `branch`; deleted ones are few and checked as they are.
     let all: Vec<(String, String, bool)> = candidates
         .iter()
+        .filter(|c| c.as_str() != branch && c.as_str() != default_branch && linked.contains(*c))
         .map(|c| (c.clone(), format!("refs/heads/{c}"), false))
         .chain(
             deleted
@@ -130,7 +134,11 @@ pub fn detect_base(
         )
         .collect();
     let names: Vec<String> = all.iter().map(|(name, _, _)| name.clone()).collect();
-    let created_from = created_from(branch, &names);
+    let created_from = if all.is_empty() {
+        None
+    } else {
+        created_from(branch, &names)
+    };
 
     struct Parent {
         name: String,
@@ -226,6 +234,34 @@ pub fn detect_base(
         boundary: parent_tip,
         merged_parent: None,
     }))
+}
+
+/// The local branches that share commits with `tip` the default branch (at
+/// `default_tip`) doesn't have — the only ones it can be stacked on or under.
+/// One `for-each-ref` instead of a merge-base per branch: a branch shares such
+/// a commit exactly when it contains one of the oldest of them.
+fn sharing_commits_beyond(
+    tip: &str,
+    default_tip: &str,
+) -> Result<std::collections::HashSet<String>, String> {
+    let own = run_output(&["rev-list", "--parents", tip, &format!("^{default_tip}")])?;
+    let own: Vec<Vec<&str>> = own
+        .lines()
+        .map(|line| line.split_whitespace().collect())
+        .collect();
+    let in_own: std::collections::HashSet<&str> = own.iter().map(|c| c[0]).collect();
+    let oldest: Vec<String> = own
+        .iter()
+        .filter(|c| c[1..].iter().all(|parent| !in_own.contains(parent)))
+        .map(|c| format!("--contains={}", c[0]))
+        .collect();
+    if oldest.is_empty() {
+        return Ok(Default::default());
+    }
+    let mut args = vec!["for-each-ref", "--format=%(refname:short)"];
+    args.extend(oldest.iter().map(String::as_str));
+    args.push("refs/heads/");
+    Ok(run_output(&args)?.lines().map(str::to_string).collect())
 }
 
 /// How a branch at `tip` relates to `candidate`, if it is stacked on it.
