@@ -7,6 +7,10 @@ pub struct PushTarget {
     pub remote_branch: String,
     /// The branch has no upstream yet; pushing sets it.
     pub set_upstream: bool,
+    /// The remote branch is the branch's configured upstream, so if its
+    /// remote-tracking ref is missing, the remote branch was deleted (and
+    /// pruned), not never pushed.
+    pub is_upstream: bool,
 }
 
 impl PushTarget {
@@ -16,38 +20,63 @@ impl PushTarget {
     }
 }
 
-/// Where `branch` is pushed: the same-named branch on its upstream's remote,
-/// or `origin/<branch>` (to be set as the upstream) if it has no upstream.
-/// `Ok(None)` without a remote to push to.
+/// Where `branch` is pushed, as `git push` with the default
+/// `push.default=simple` would push it: to the same-named branch on its push
+/// remote (`branch.<name>.pushRemote`, else `remote.pushDefault`) if that
+/// differs from its upstream's remote; else to its upstream; else to
+/// `origin/<branch>`, to be set as the upstream. `Ok(None)` without a remote
+/// to push to.
 ///
-/// Like git's `push.default=simple`, this refuses an upstream with a
-/// different name: a branch created from `origin/main` tracks `main`, and
-/// pushing it there would publish its commits onto `main`.
+/// Like `simple`, this refuses an upstream with a different name: a branch
+/// created from `origin/main` tracks `main`, and pushing it there would
+/// publish its commits onto `main`.
 pub fn push_target(branch: &str) -> Result<Option<PushTarget>, String> {
-    let remote = super::config::read_string(&format!("branch.{branch}.remote"));
-    let merge = super::config::read_string(&format!("branch.{branch}.merge"));
-    if let (Some(remote), Some(merge)) = (remote, merge)
-        && remote != "."
-        && let Some(remote_branch) = merge.strip_prefix("refs/heads/")
-    {
-        if remote_branch != branch {
-            return Err(format!(
-                "its upstream {remote}/{remote_branch} has a different name; \
-                 push it yourself with git push {remote} {branch}"
-            ));
+    let branch_config = |key: &str| super::config::read_string(&format!("branch.{branch}.{key}"));
+    let upstream = match (branch_config("remote"), branch_config("merge")) {
+        (Some(remote), Some(merge)) if remote != "." => merge
+            .strip_prefix("refs/heads/")
+            .map(|name| (remote, name.to_string())),
+        _ => None,
+    };
+    let push_remote =
+        branch_config("pushRemote").or_else(|| super::config::read_string("remote.pushDefault"));
+    match (push_remote, upstream) {
+        (Some(push_remote), upstream)
+            if upstream
+                .as_ref()
+                .is_none_or(|(remote, _)| *remote != push_remote) =>
+        {
+            Ok(Some(PushTarget {
+                remote: push_remote,
+                remote_branch: branch.to_string(),
+                set_upstream: false,
+                is_upstream: false,
+            }))
         }
-        return Ok(Some(PushTarget {
-            remote,
-            remote_branch: remote_branch.to_string(),
-            set_upstream: false,
-        }));
+        (_, Some((remote, remote_branch))) => {
+            if remote_branch != branch {
+                return Err(format!(
+                    "its upstream {remote}/{remote_branch} has a different name; \
+                     push it yourself with git push {remote} {branch}"
+                ));
+            }
+            Ok(Some(PushTarget {
+                remote,
+                remote_branch,
+                set_upstream: false,
+                is_upstream: true,
+            }))
+        }
+        _ => {
+            let has_origin = super::remote::list_remotes()?.iter().any(|r| r == "origin");
+            Ok(has_origin.then(|| PushTarget {
+                remote: "origin".to_string(),
+                remote_branch: branch.to_string(),
+                set_upstream: true,
+                is_upstream: false,
+            }))
+        }
     }
-    let has_origin = super::remote::list_remotes()?.iter().any(|r| r == "origin");
-    Ok(has_origin.then(|| PushTarget {
-        remote: "origin".to_string(),
-        remote_branch: branch.to_string(),
-        set_upstream: true,
-    }))
 }
 
 /// Push `branch` to `target`. With `lease`, force the push, but only if the

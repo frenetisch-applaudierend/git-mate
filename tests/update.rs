@@ -275,6 +275,22 @@ fn updates_named_branch_that_is_not_checked_out() {
 }
 
 #[test]
+fn branch_merged_with_a_merge_commit_is_fast_forwarded_when_not_checked_out() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    common::git(dir, &["branch", "feature", "main"]);
+    commit_on(dir, "feature", "feature.txt", "feature");
+    common::git(
+        dir,
+        &["merge", "-q", "--no-ff", "-m", "merge feature", "feature"],
+    );
+
+    let data = update_json(dir, &["--all"]);
+    assert_eq!(entry(&data, "feature")["action"], "rebased");
+    assert_eq!(tip(dir, "feature"), tip(dir, "main"));
+}
+
+#[test]
 fn updates_branch_checked_out_in_linked_worktree() {
     let repo = behind_main();
     let dir = repo.path();
@@ -564,6 +580,25 @@ fn rebase_that_cannot_start_is_a_failure_not_a_conflict() {
     );
 }
 
+#[test]
+fn backup_of_a_branch_is_not_taken_for_its_base() {
+    let repo = common::RepoWithoutRemote::new();
+    let dir = repo.path();
+    common::git(dir, &["checkout", "-q", "-b", "feat"]);
+    commit_file(dir, "feat.txt", "feat");
+    common::git(dir, &["branch", "feat-backup"]);
+    commit_file(dir, "feat2.txt", "feat");
+    commit_on(dir, "main", "main.txt", "main");
+    let backup = tip(dir, "feat-backup");
+
+    let data = update_json(dir, &["feat", "--stack"]);
+    let feat = entry(&data, "feat");
+    assert_eq!(feat["base"], "main");
+    assert_eq!(feat["action"], "rebased");
+    assert!(is_ancestor(dir, "main", "feat"));
+    assert_eq!(tip(dir, "feat-backup"), backup);
+}
+
 // --- --all and stacks ---
 
 #[test]
@@ -700,9 +735,13 @@ fn invalid_stack_config_is_an_error() {
 // --- --push ---
 
 fn remote_tip(setup: &common::RepoWithRemote, branch: &str) -> Option<String> {
+    bare_tip(setup.bare_path(), branch)
+}
+
+fn bare_tip(bare: &Path, branch: &str) -> Option<String> {
     let out = Command::new("git")
         .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
-        .current_dir(setup.bare_path())
+        .current_dir(bare)
         .output()
         .unwrap();
     out.status
@@ -890,6 +929,108 @@ fn push_flag_does_not_swallow_branch_names() {
     assert_eq!(entry(&data, "feature")["push"], "pushed");
 }
 
+#[test]
+fn push_does_not_recreate_a_remote_branch_deleted_after_merge() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    setup.delete_remote_branch("feature");
+    setup.local_fetch();
+
+    let data = update_json(dir, &["--all", "--push"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "skipped");
+    assert_eq!(remote_tip(&setup, "feature"), None);
+}
+
+/// A second bare repository, added to the clone at `dir` as remote `fork`.
+fn add_fork_remote(dir: &Path) -> tempfile::TempDir {
+    let fork = tempfile::TempDir::new().unwrap();
+    common::git(fork.path(), &["init", "-q", "--bare"]);
+    common::git(
+        dir,
+        &["remote", "add", "fork", fork.path().to_str().unwrap()],
+    );
+    fork
+}
+
+#[test]
+fn push_goes_to_the_branch_push_remote() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    let fork = add_fork_remote(dir);
+    common::git(dir, &["config", "branch.feature.pushRemote", "fork"]);
+    let origin_before = remote_tip(&setup, "feature");
+
+    let data = update_json(dir, &["--push"]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "pushed");
+    assert_eq!(bare_tip(fork.path(), "feature"), Some(tip(dir, "feature")));
+    assert_eq!(remote_tip(&setup, "feature"), origin_before);
+    assert_eq!(
+        git_output(dir, &["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
+        "origin/feature"
+    );
+}
+
+#[test]
+fn force_push_goes_to_the_default_push_remote() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    let fork = add_fork_remote(dir);
+    common::git(dir, &["push", "-q", "fork", "feature"]);
+    common::git(dir, &["config", "remote.pushDefault", "fork"]);
+    let origin_before = remote_tip(&setup, "feature");
+
+    let data = update_json(dir, &["--push=force"]);
+    assert_eq!(entry(&data, "feature")["push"], "forced");
+    assert_eq!(bare_tip(fork.path(), "feature"), Some(tip(dir, "feature")));
+    assert_eq!(remote_tip(&setup, "feature"), origin_before);
+}
+
+#[test]
+fn force_push_to_push_remote_leases_its_tracking_branch() {
+    let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
+    let fork = add_fork_remote(dir);
+    common::git(dir, &["push", "-q", "fork", "feature"]);
+    common::git(dir, &["config", "remote.pushDefault", "fork"]);
+    // Someone else pushes to the fork; this clone hasn't fetched it.
+    let other = tempfile::TempDir::new().unwrap();
+    common::git(
+        other.path(),
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "feature",
+            fork.path().to_str().unwrap(),
+            ".",
+        ],
+    );
+    common::git(
+        other.path(),
+        &[
+            "-c",
+            "user.name=Other",
+            "-c",
+            "user.email=other@test.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "someone else's work",
+        ],
+    );
+    common::git(other.path(), &["push", "-q", "origin", "feature"]);
+    let fork_before = bare_tip(fork.path(), "feature");
+
+    let data = update_json(dir, &["--push=force"]);
+    assert_eq!(entry(&data, "feature")["push"], "failed");
+    assert_eq!(bare_tip(fork.path(), "feature"), fork_before);
+}
+
 // --- --sync ---
 
 /// `feature` checked out; `main` moved on only on the remote.
@@ -941,4 +1082,70 @@ fn sync_config_syncs_first_and_no_sync_overrides_it() {
     let data = update_json(dir, &[]);
     assert!(data.get("sync").is_some());
     assert_eq!(entry(&data, "feature")["action"], "rebased");
+}
+
+/// `main` ← `bar` ← `foo`, `bar` pushed and checked out is `foo`; on the
+/// remote, `bar` was then squash-merged into `main` and deleted.
+#[cfg(unix)]
+fn stack_with_parent_squash_merged_on_remote() -> common::RepoWithRemote {
+    let setup = common::RepoWithRemote::new();
+    let dir = setup.local_path();
+    common::git(dir, &["checkout", "-q", "-b", "bar"]);
+    commit_file(dir, "bar.txt", "1");
+    commit_file(dir, "bar.txt", "2");
+    common::git(dir, &["push", "-q", "-u", "origin", "bar"]);
+    common::git(dir, &["checkout", "-q", "-b", "foo"]);
+    commit_file(dir, "foo.txt", "foo");
+
+    let other = tempfile::TempDir::new().unwrap();
+    let o = other.path();
+    common::git(
+        o,
+        &["clone", "-q", setup.bare_path().to_str().unwrap(), "."],
+    );
+    common::git(o, &["config", "user.email", "test@test.com"]);
+    common::git(o, &["config", "user.name", "Test"]);
+    common::git(o, &["merge", "-q", "--squash", "origin/bar"]);
+    common::git(o, &["commit", "-q", "-m", "squashed bar"]);
+    common::git(o, &["push", "-q", "origin", "main", ":bar"]);
+    setup
+}
+
+/// Make the first ref update in `dir` (from now on) delete local branch
+/// `branch`, as `sync` does when told to delete a branch whose remote is
+/// gone.
+#[cfg(unix)]
+fn delete_branch_on_next_ref_update(dir: &Path, branch: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let marker = dir.join(".git").join("deleted-by-hook");
+    let hook = dir.join(".git").join("hooks").join("reference-transaction");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ntest \"$1\" = committed || exit 0\ntest -e '{marker}' && exit 0\n\
+             touch '{marker}'\ngit branch -q -D {branch}\n",
+            marker = marker.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn merged_parent_deleted_by_sync_is_still_dropped() {
+    let setup = stack_with_parent_squash_merged_on_remote();
+    let dir = setup.local_path();
+    delete_branch_on_next_ref_update(dir, "bar");
+
+    let data = update_json(dir, &["--sync", "foo"]);
+    assert!(!setup.local_branch_exists("bar"), "the hook deleted bar");
+    let foo = entry(&data, "foo");
+    assert_eq!(foo["base"], "main");
+    assert_eq!(foo["baseSource"], "mergedParent");
+    assert_eq!(foo["mergedParent"], "bar");
+    assert_eq!(foo["action"], "rebased");
+    assert!(is_ancestor(dir, "origin/main", "foo"));
+    assert_eq!(git_output(dir, &["rev-list", "--count", "main..foo"]), "1");
 }

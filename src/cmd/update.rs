@@ -32,10 +32,12 @@ so without asking, or --no-stack to only update the named branches. Without a te
 to ask on, the stack is left alone and the report says the base is behind.
 
 Pass --push to push every updated (or already up-to-date) branch afterwards, if that is
-a fast-forward or creates the remote branch; a branch whose rebase rewrote commits that
-were already pushed is listed as needing a force-push. --push=ask asks before each
-force-push, and --push=force force-pushes without asking. A force-push only goes through
-if the remote branch is still where the last fetch saw it (--force-with-lease).
+a fast-forward or creates the remote branch. Branches go where `git push` would push them
+(branch.<name>.pushRemote, else remote.pushDefault, else the upstream); a branch whose
+upstream was deleted is not pushed. A branch whose rebase rewrote commits that were
+already pushed is listed as needing a force-push. --push=ask asks before each force-push,
+and --push=force force-pushes without asking. A force-push only goes through if the
+remote branch is still where the last fetch saw it (--force-with-lease).
 
 Pass --sync to run `git mate sync` first, bringing the base branches up to date with their
 remotes.
@@ -136,13 +138,46 @@ struct Plan {
     parent_behind: Option<ParentBehind>,
 }
 
+/// The branches bases are detected among.
+struct Branches<'a> {
+    default: &'a str,
+    local: &'a [String],
+    /// Deleted by `--sync`, but possibly a merged parent.
+    deleted: &'a [crate::git::DeletedBranch],
+}
+
+impl Branches<'_> {
+    fn detect_base(&self, branch: &str) -> Result<Detection, String> {
+        crate::git::detect_base(branch, self.default, self.local, self.deleted)
+    }
+}
+
+/// Every local branch and the commit it is at.
+fn local_branch_tips() -> Result<Vec<(String, String)>, String> {
+    crate::git::list_local_branches_with_upstream()?
+        .into_iter()
+        .map(|(branch, _)| {
+            let tip = crate::git::resolve_ref(&format!("refs/heads/{branch}"))?;
+            Ok((branch, tip))
+        })
+        .collect()
+}
+
 pub fn run(args: UpdateArgs) -> Result<(), String> {
     let strategy = strategy(&args)?;
     let stack = stack_mode(&args)?;
     let push = push_mode(&args)?;
     let dry_run = args.dry_run;
 
-    let sync = if sync_enabled(&args)? {
+    // Sync may delete branches (whose remote is gone, e.g. after being
+    // merged). Remember where they were, so a branch stacked on one that was
+    // merged still drops its commits.
+    let tips_before_sync = if sync_enabled(&args)? {
+        Some(local_branch_tips()?)
+    } else {
+        None
+    };
+    let sync = if tips_before_sync.is_some() {
         Some(super::sync::sync(super::sync::SyncArgs {
             dry_run,
             // Update is about to bring the branch up to date with its base.
@@ -158,6 +193,17 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
         .into_iter()
         .map(|(branch, _)| branch)
         .collect::<Vec<_>>();
+    let deleted: Vec<crate::git::DeletedBranch> = tips_before_sync
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, _)| !local_branches.contains(name))
+        .map(|(name, tip)| crate::git::DeletedBranch { name, tip })
+        .collect();
+    let branches = Branches {
+        default: &default_branch,
+        local: &local_branches,
+        deleted: &deleted,
+    };
     let targets = targets(&args, &default_branch, &local_branches)?;
     let onto = match &args.onto {
         Some(onto) => Some(onto_base(onto, &targets)?),
@@ -169,7 +215,7 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
         .map(|branch| {
             let detection = match &onto {
                 Some(base) => Ok(Detection::Found(base.clone())),
-                None => crate::git::detect_base(&branch, &default_branch, &local_branches),
+                None => branches.detect_base(&branch),
             };
             Plan {
                 branch,
@@ -179,14 +225,7 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
         })
         .collect::<Vec<_>>();
     if !args.all {
-        add_stacked_parents(
-            &mut plans,
-            stack,
-            strategy,
-            dry_run,
-            &default_branch,
-            &local_branches,
-        )?;
+        add_stacked_parents(&mut plans, stack, strategy, dry_run, &branches)?;
     }
 
     let worktrees = crate::git::list_worktrees()?;
@@ -194,7 +233,7 @@ pub fn run(args: UpdateArgs) -> Result<(), String> {
     // dry run can tell what would happen to the branches stacked on them.
     let mut moved = std::collections::HashSet::new();
     let mut outcomes = Vec::new();
-    for plan in stack_order(plans) {
+    for plan in stack_order(plans, &default_branch) {
         let mut outcome = UpdateOutcome::new(&plan.branch, strategy, dry_run);
         outcome.parent_behind = plan.parent_behind;
         let mut outcome = match plan.detection {
@@ -343,12 +382,10 @@ fn add_stacked_parents(
     stack: StackMode,
     strategy: Strategy,
     dry_run: bool,
-    default_branch: &str,
-    local_branches: &[String],
+    branches: &Branches,
 ) -> Result<(), String> {
     for i in 0..plans.len() {
-        let (chain, behind) =
-            stack_below(&plans[i], plans, strategy, default_branch, local_branches)?;
+        let (chain, behind) = stack_below(&plans[i], plans, strategy, branches)?;
         let Some(behind) = behind else {
             continue;
         };
@@ -388,8 +425,7 @@ fn stack_below(
     plan: &Plan,
     plans: &[Plan],
     strategy: Strategy,
-    default_branch: &str,
-    local_branches: &[String],
+    branches: &Branches,
 ) -> Result<(Vec<Plan>, Option<ParentBehind>), String> {
     let mut chain = Vec::new();
     let mut deepest_behind = None;
@@ -405,9 +441,7 @@ fn stack_below(
             break;
         }
         let parent = base.branch;
-        let Ok(Detection::Found(parent_base)) =
-            crate::git::detect_base(&parent, default_branch, local_branches)
-        else {
+        let Ok(Detection::Found(parent_base)) = branches.detect_base(&parent) else {
             break;
         };
         if let Some(behind) =
@@ -501,8 +535,9 @@ fn onto_base(onto: &str, targets: &[String]) -> Result<Base, String> {
 }
 
 /// Order plans so that a branch comes after the branch it is stacked on,
-/// keeping the given order otherwise.
-fn stack_order(mut plans: Vec<Plan>) -> Vec<Plan> {
+/// keeping the given order otherwise. Branches whose bases form a cycle
+/// can't be ordered (nor updated): their base is reported as ambiguous.
+fn stack_order(mut plans: Vec<Plan>, default_branch: &str) -> Vec<Plan> {
     let base_of = |plan: &Plan| match &plan.detection {
         Ok(Detection::Found(base)) => Some(base.branch.clone()),
         _ => None,
@@ -510,12 +545,32 @@ fn stack_order(mut plans: Vec<Plan>) -> Vec<Plan> {
     let mut ordered = Vec::with_capacity(plans.len());
     while !plans.is_empty() {
         let pending: Vec<String> = plans.iter().map(|p| p.branch.clone()).collect();
-        let ready = plans
+        match plans
             .iter()
             .position(|p| base_of(p).is_none_or(|base| !pending.contains(&base)))
-            // A cycle can't be ordered; go on in the given order.
-            .unwrap_or(0);
-        ordered.push(plans.remove(ready));
+        {
+            Some(ready) => ordered.push(plans.remove(ready)),
+            None => {
+                // Every pending branch waits for another: follow the bases
+                // from the first one until they come round, and break the
+                // cycle there.
+                let mut seen = vec![plans[0].branch.clone()];
+                let mut at = 0;
+                loop {
+                    let base = base_of(&plans[at]).expect("pending plans have a base");
+                    if let Some(start) = seen.iter().position(|b| *b == base) {
+                        let mut cycle = seen.split_off(start);
+                        cycle.retain(|b| *b != base);
+                        cycle.push(default_branch.to_string());
+                        let index = plans.iter().position(|p| p.branch == base).unwrap();
+                        plans[index].detection = Ok(Detection::Ambiguous(cycle));
+                        break;
+                    }
+                    at = plans.iter().position(|p| p.branch == base).unwrap();
+                    seen.push(base);
+                }
+            }
+        }
     }
     ordered
 }
@@ -605,31 +660,65 @@ fn update_branch(
             let (verb, hint) = match strategy {
                 Strategy::Rebase => (
                     format!("rebasing onto {} would conflict", base.branch),
-                    rebase_command(branch, base),
+                    rebase_command(branch, base, worktree.as_deref()),
                 ),
                 Strategy::Merge => (
                     format!("merging {} would conflict", base.branch),
-                    format!("git checkout {branch} && git merge {}", base.branch),
+                    match git_in(worktree.as_deref()) {
+                        Some(git) => format!("{git} merge {}", base.branch),
+                        None => format!("git checkout {branch} && git merge {}", base.branch),
+                    },
                 ),
             };
             outcome.skipped(verb, Some(hint))
         }
         Integration::Unavailable(e) => outcome.skipped(
             format!("could not rebase: {e}"),
-            Some(rebase_command(branch, base)),
+            Some(rebase_command(branch, base, worktree.as_deref())),
         ),
     })
 }
 
-/// The `git rebase` that does what update could not.
-fn rebase_command(branch: &str, base: &Base) -> String {
+/// The `git rebase` that does what update could not, run in `worktree` if
+/// the branch is checked out there.
+fn rebase_command(branch: &str, base: &Base, worktree: Option<&str>) -> String {
     let boundary_is_base = crate::git::resolve_ref(&crate::git::branch_ref(&base.branch))
         .is_ok_and(|tip| tip == base.boundary);
+    let (git, branch) = match git_in(worktree) {
+        Some(git) => (git, String::new()),
+        None => ("git".to_string(), format!(" {branch}")),
+    };
     if boundary_is_base {
-        format!("git rebase {} {branch}", base.branch)
+        format!("{git} rebase {}{branch}", base.branch)
     } else {
         let short = &base.boundary[..base.boundary.len().min(12)];
-        format!("git rebase --onto {} {short} {branch}", base.branch)
+        format!("{git} rebase --onto {} {short}{branch}", base.branch)
+    }
+}
+
+/// How to run git on a branch checked out in `worktree`: there, since it
+/// can't be checked out anywhere else. `None` if it isn't checked out.
+fn git_in(worktree: Option<&str>) -> Option<String> {
+    let path = worktree?;
+    let canonical = |p: &std::path::Path| std::fs::canonicalize(p).ok();
+    let here = crate::git::current_worktree_root().ok();
+    if here.is_some_and(|here| canonical(&here) == canonical(std::path::Path::new(path))) {
+        Some("git".to_string())
+    } else {
+        Some(format!("git -C {}", shell_quote(path)))
+    }
+}
+
+/// `arg`, quoted for a POSIX shell if it needs to be.
+fn shell_quote(arg: &str) -> String {
+    let plain = !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+:,=@%".contains(c));
+    if plain {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
     }
 }
 
@@ -657,4 +746,64 @@ fn worktree_of(
                 .ok_or_else(|| "worktree path is not valid UTF-8".to_string())
         })
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(branch: &str, base: &str) -> Plan {
+        Plan {
+            branch: branch.to_string(),
+            detection: Ok(Detection::Found(Base {
+                branch: base.to_string(),
+                source: BaseSource::Stacked,
+                boundary: String::new(),
+                merged_parent: None,
+            })),
+            parent_behind: None,
+        }
+    }
+
+    fn summary(plans: &[Plan]) -> Vec<(String, String)> {
+        plans
+            .iter()
+            .map(|p| {
+                let base = match &p.detection {
+                    Ok(Detection::Found(base)) => base.branch.clone(),
+                    Ok(Detection::Ambiguous(names)) => format!("?{}", names.join(",")),
+                    Err(e) => format!("!{e}"),
+                };
+                (p.branch.clone(), base)
+            })
+            .collect()
+    }
+
+    fn pairs(expected: &[(&str, &str)]) -> Vec<(String, String)> {
+        expected
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn stack_order_puts_parents_first() {
+        let ordered = stack_order(
+            vec![plan("c", "b"), plan("b", "a"), plan("a", "main")],
+            "main",
+        );
+        assert_eq!(
+            summary(&ordered),
+            pairs(&[("a", "main"), ("b", "a"), ("c", "b")])
+        );
+    }
+
+    #[test]
+    fn stack_order_reports_a_cycle_as_ambiguous() {
+        let ordered = stack_order(vec![plan("x", "a"), plan("a", "b"), plan("b", "a")], "main");
+        assert_eq!(
+            summary(&ordered),
+            pairs(&[("a", "?b,main"), ("x", "a"), ("b", "a")])
+        );
+    }
 }

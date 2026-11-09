@@ -10,7 +10,8 @@ mod run;
 mod worktree;
 
 pub use base::{
-    Base, BaseSource, Detection, behind, behind_base, branch_ref, default_base_branch, detect_base,
+    Base, BaseSource, DeletedBranch, Detection, behind, behind_base, branch_ref,
+    default_base_branch, detect_base,
 };
 pub use branch::{
     checkout, checkout_force_in, checkout_in, checkout_new_in, current_branch,
