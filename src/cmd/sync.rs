@@ -1,6 +1,6 @@
 use super::sync_chooser;
 use super::sync_report::{
-    self as report, BranchOutcome, Candidate, Choice, DecidedBy, DecisionRow, Hint,
+    self as report, BranchOutcome, Candidate, Choice, DecidedBy, DecisionRow, Hint, Unpushed,
 };
 
 #[derive(clap::Args, Default)]
@@ -33,7 +33,8 @@ to leave them all as they are. Without a terminal there is nobody to ask, so the
 listed and left as they are. A branch with unpushed commits is treated like a merged
 one if everything on it is already in the default branch (e.g. the PR was squash-merged
 and the unpushed commit only merged the default branch in); otherwise it starts out as
-ask later and is only deleted when you pick it; keep it to push it again later.
+ask later and is only deleted when you pick it; keep it to push it again later with
+`git push -u`. Under --json, `unpushedCommits` counts such commits (null if unknown).
 Branches whose worktree has uncommitted changes are never offered for deletion.
 Branches whose remote was already gone before this sync (e.g. pruned by an earlier
 fetch) are offered too; since sync cannot tell whether they had unpushed commits, an
@@ -824,6 +825,7 @@ fn gone_branch_status(
             warn: false,
             recommended: Choice::Delete,
             bulk_delete_blocker: None,
+            unpushed: Unpushed::Unknown,
         },
         None => Candidate {
             branch: branch.to_string(),
@@ -833,22 +835,14 @@ fn gone_branch_status(
             bulk_delete_blocker: Some(format!(
                 "upstream {upstream} is gone and branch has changes not in {remote}, skipping"
             )),
+            unpushed: Unpushed::Unknown,
         },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
 }
 
 /// Whether a branch whose upstream was pruned during this sync had commits
-/// its upstream did not, as of the snapshot taken before fetching.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Unpushed {
-    None,
-    Commits(usize),
-    /// No usable snapshot, so unpushed commits can't be ruled out.
-    Unknown,
-}
-
-/// Commits that only came in from the default branch (e.g. by merging it
+/// its upstream did not, as of the snapshot taken before fetching. Commits that only came in from the default branch (e.g. by merging it
 /// into the branch) exist there too, so they don't count.
 fn unpushed_before_prune(
     branches_before: &[(String, Option<String>, Option<String>)],
@@ -906,15 +900,18 @@ fn unpushed_branch_status(
             warn: false,
             recommended: Choice::Delete,
             bulk_delete_blocker: None,
+            unpushed,
         },
         None => Candidate {
             branch: branch.to_string(),
+            bulk_delete_blocker: Some(match default_branch.remote.as_deref() {
+                Some(remote) => format!("remote deleted and {unpushed_detail} not in {remote}"),
+                None => format!("remote deleted and {unpushed_detail}"),
+            }),
             detail: unpushed_detail,
             warn: true,
             recommended: Choice::Later,
-            bulk_delete_blocker: Some(
-                "remote deleted but has unpushed commits, skipping".to_string(),
-            ),
+            unpushed,
         },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
@@ -939,6 +936,7 @@ fn pruned_branch_status(
             warn: false,
             recommended: Choice::Delete,
             bulk_delete_blocker: None,
+            unpushed: Unpushed::None,
         },
         Some((remote, Ok(None))) => Candidate {
             branch: branch.to_string(),
@@ -946,6 +944,7 @@ fn pruned_branch_status(
             warn: true,
             recommended: Choice::Later,
             bulk_delete_blocker: None,
+            unpushed: Unpushed::None,
         },
         _ => Candidate {
             branch: branch.to_string(),
@@ -953,6 +952,7 @@ fn pruned_branch_status(
             warn: false,
             recommended: Choice::Later,
             bulk_delete_blocker: None,
+            unpushed: Unpushed::None,
         },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
