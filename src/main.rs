@@ -81,7 +81,7 @@ fn main() {
         Commands::Init(args) => cmd::init::run(args).map_err(Into::into),
         Commands::New(args) => cmd::new::run(args),
         Commands::Skill(args) => cmd::skill::run(args),
-        Commands::Sync(args) => cmd::sync::run(args).map_err(Into::into),
+        Commands::Sync(args) => cmd::sync::run(args),
         Commands::Update(args) => cmd::update::run(args).map_err(Into::into),
         Commands::Protocol(args) => cmd::protocol::run(args).map_err(Into::into),
     };

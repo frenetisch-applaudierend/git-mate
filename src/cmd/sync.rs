@@ -41,8 +41,11 @@ fetch) are offered too; since sync cannot tell whether they had unpushed commits
 unmerged one is only deleted when you pick it. Pass --apply-recommended to skip the
 chooser and apply the preselected actions, or --delete-pruned to delete all of them
 except unmerged ones with unpushed commits or whose remote was already gone (either
-also makes --json act instead of just reporting candidates). Branches you keep stop
-tracking their deleted upstream, so they aren't offered again.
+also makes --json act instead of just reporting candidates). To decide per branch
+without the chooser, name branches with --delete <branch> and --keep <branch> (both
+repeatable); with --apply-recommended the others get their preselected action, otherwise
+they are left as they are (and, under --json, reported as candidates). Branches you keep
+stop tracking their deleted upstream, so they aren't offered again.
 
 Sync never merges or rebases a branch onto the branch it is based on; if the current
 branch is behind its base, it suggests `git mate update`, which does.
@@ -63,6 +66,20 @@ pub struct SyncArgs {
         help = "Delete merged branches whose remote was pruned and leave the rest, without prompting"
     )]
     pub apply_recommended: bool,
+    #[arg(
+        long = "delete",
+        value_name = "BRANCH",
+        conflicts_with_all = ["dry_run", "delete_pruned"],
+        help = "Delete this branch if its remote is gone, without prompting (repeatable)"
+    )]
+    pub delete: Vec<String>,
+    #[arg(
+        long = "keep",
+        value_name = "BRANCH",
+        conflicts_with_all = ["dry_run", "delete_pruned"],
+        help = "Keep this branch if its remote is gone and stop tracking the deleted remote, without prompting (repeatable)"
+    )]
+    pub keep: Vec<String>,
     #[arg(
         long,
         help = "Preview planned actions without making any changes or prompting"
@@ -125,14 +142,44 @@ pub struct SyncData {
     dry_run: bool,
     branches: Vec<BranchOutcome>,
     current_branch: CurrentBranchOutcome,
+    /// Branches named by `--delete` or `--keep` that weren't up for deletion
+    /// (their remote still exists, or they need attention); left alone.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ignored_decisions: Vec<String>,
 }
 
-pub fn run(args: SyncArgs) -> Result<(), String> {
+pub fn run(args: SyncArgs) -> Result<(), crate::output::CommandError> {
+    validate_decisions(&args)?;
     let data = sync(args)?;
     if crate::output::json_mode() {
         crate::output::emit_json_success("sync", data);
     }
     Ok(())
+}
+
+/// Fail before changing anything when `--delete`/`--keep` name a branch that
+/// doesn't exist, or the same branch twice with different actions.
+fn validate_decisions(args: &SyncArgs) -> Result<(), crate::output::CommandError> {
+    for branch in args.delete.iter().chain(&args.keep) {
+        if !crate::git::commit_exists(&format!("refs/heads/{branch}")) {
+            return Err(crate::output::CommandError::branch(
+                format!("branch {branch} not found"),
+                "branch_not_found",
+                branch,
+            ));
+        }
+    }
+    if let Some(branch) = args.delete.iter().find(|b| args.keep.contains(b)) {
+        return Err(format!("branch {branch} is named by both --delete and --keep").into());
+    }
+    Ok(())
+}
+
+/// The action named for each branch by `--delete` and `--keep`.
+fn decisions(args: &SyncArgs) -> std::collections::HashMap<String, Choice> {
+    let delete = args.delete.iter().map(|b| (b.clone(), Choice::Delete));
+    let keep = args.keep.iter().map(|b| (b.clone(), Choice::Keep));
+    delete.chain(keep).collect()
 }
 
 /// Sync, printing the human-readable report (unless in JSON mode) and
@@ -299,6 +346,21 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
         report::print_sections(&branch_outcomes, column);
     }
 
+    let decisions = decisions(&args);
+    let mut ignored_decisions: Vec<String> = decisions
+        .keys()
+        .filter(|branch| !deletion_candidates.iter().any(|c| &c.branch == *branch))
+        .cloned()
+        .collect();
+    ignored_decisions.sort();
+    if !json {
+        for branch in &ignored_decisions {
+            warn(&format!(
+                "{branch} isn't up for deletion (its remote still exists, or it needs attention); left it alone"
+            ));
+        }
+    }
+
     // Ask once, up front, about every branch whose remote was deleted rather
     // than prompting one at a time. Under --json or --dry-run, no prompt is
     // issued: candidates are reported but never deleted (see pruned_branch
@@ -313,6 +375,7 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
             dry_run,
             delete_pruned: args.delete_pruned,
             apply_recommended: args.apply_recommended,
+            decisions: &decisions,
         },
         column,
     )?);
@@ -396,6 +459,7 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
             pull_skipped_reason,
             behind_base,
         },
+        ignored_decisions,
     })
 }
 
@@ -1020,18 +1084,21 @@ fn pull_request_number(subject: &str) -> Option<&str> {
 }
 
 /// How the deletion of branches whose remote is gone is resolved.
-struct PruneMode {
+struct PruneMode<'a> {
     json: bool,
     dry_run: bool,
     delete_pruned: bool,
     apply_recommended: bool,
+    /// Actions named per branch by `--delete` and `--keep`.
+    decisions: &'a std::collections::HashMap<String, Choice>,
 }
 
 /// Resolves what to do with branches whose remote was deleted, in priority
 /// order: `--dry-run` always previews only, regardless of the other flags;
 /// then `--delete-pruned` deletes all candidates (except those it must not
-/// delete without asking, which are left as they are) and `--apply-recommended`
-/// applies each one's recommended action, both without prompting (this is
+/// delete without asking, which are left as they are), and `--delete`/`--keep`
+/// apply the action named for a branch and `--apply-recommended` each other
+/// one's recommended action, all without prompting (this is
 /// what makes `--json` actually act rather than just report); otherwise
 /// plain `--json` never prompts (which would block on stdin) and reports
 /// candidates without acting; otherwise let the user pick an action per
@@ -1042,7 +1109,7 @@ fn resolve_pruned_deletions(
     current_wt: &Option<std::path::PathBuf>,
     worktrees: &[crate::git::WorktreeEntry],
     main_wt_path: &str,
-    mode: PruneMode,
+    mode: PruneMode<'_>,
     column: usize,
 ) -> Result<Vec<BranchOutcome>, String> {
     if candidates.is_empty() {
@@ -1108,15 +1175,24 @@ fn resolve_pruned_deletions(
         apply_choice(candidate, choice, current_wt, worktrees, main_wt_path)
     };
 
-    if mode.apply_recommended {
+    if mode.apply_recommended || !mode.decisions.is_empty() {
         if !mode.json {
             report::print_title("Remote gone");
         }
         let detail_column = report::detail_column(candidates);
-        let rows: Vec<DecisionRow> = candidates
+        let mut kept = 0;
+        let outcomes = candidates
             .iter()
             .map(|candidate| {
-                let row = apply(candidate, candidate.recommended);
+                let choice = mode
+                    .decisions
+                    .get(&candidate.branch)
+                    .copied()
+                    .or(mode.apply_recommended.then_some(candidate.recommended));
+                let row = match choice {
+                    Some(choice) => apply(candidate, choice),
+                    None => DecisionRow::Left,
+                };
                 if !mode.json {
                     for line in
                         report::decision_lines(candidate, &row, false, column, detail_column)
@@ -1124,17 +1200,18 @@ fn resolve_pruned_deletions(
                         eprintln!("{line}");
                     }
                 }
-                row
+                kept += usize::from(row == DecisionRow::Kept);
+                match choice {
+                    Some(_) => decision_outcome(candidate, &row, DecidedBy::Flag),
+                    // Nobody decided: still a candidate for the next run.
+                    None => BranchOutcome::deletion_candidate(candidate),
+                }
             })
             .collect();
         if !mode.json {
-            print_kept_note(rows.iter().filter(|r| **r == DecisionRow::Kept).count());
+            print_kept_note(kept);
         }
-        return Ok(candidates
-            .iter()
-            .zip(&rows)
-            .map(|(candidate, row)| decision_outcome(candidate, row, DecidedBy::Flag))
-            .collect());
+        return Ok(outcomes);
     }
 
     if mode.json {

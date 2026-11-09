@@ -1704,3 +1704,147 @@ fn update_sync_leaves_out_the_behind_base_hint() {
     );
     assert_eq!(json["data"]["branches"][0]["action"], "rebased");
 }
+
+// --- --delete / --keep ---
+
+/// `feature/merged` (merged into main) and `feature/unmerged` (pushed work
+/// that never landed), both with their remote deleted.
+fn merged_and_unmerged_gone(setup: &common::RepoWithRemote) {
+    setup.push_branch_to_remote("feature/merged");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/merged");
+
+    setup.local_git(&["checkout", "-q", "-b", "feature/unmerged"]);
+    commit_file(setup.local_path(), "u.txt", "u", "unmerged work");
+    setup.local_git(&["push", "-q", "-u", "origin", "feature/unmerged"]);
+    setup.local_git(&["checkout", "-q", "main"]);
+
+    setup.delete_remote_branch("feature/merged");
+    setup.delete_remote_branch("feature/unmerged");
+}
+
+#[test]
+fn delete_and_keep_apply_named_actions_over_recommendations() {
+    let setup = common::RepoWithRemote::new();
+    merged_and_unmerged_gone(&setup);
+
+    let data = sync_json(
+        setup.local_path(),
+        &["--delete", "feature/unmerged", "--keep", "feature/merged"],
+    );
+    let deleted = assert_action(&data, "feature/unmerged", "deleted");
+    assert_eq!(deleted["decidedBy"], "flag");
+    let kept = assert_action(&data, "feature/merged", "kept");
+    assert_eq!(kept["decidedBy"], "flag");
+    assert!(data.get("ignoredDecisions").is_none());
+
+    assert!(!setup.local_branch_exists("feature/unmerged"));
+    assert!(setup.local_branch_exists("feature/merged"));
+    assert!(!tracks_upstream(&setup, "feature/merged"));
+}
+
+#[test]
+fn unnamed_branches_stay_candidates_without_apply_recommended() {
+    let setup = common::RepoWithRemote::new();
+    merged_and_unmerged_gone(&setup);
+
+    let data = sync_json(setup.local_path(), &["--keep", "feature/unmerged"]);
+    assert_action(&data, "feature/unmerged", "kept");
+    let merged = assert_action(&data, "feature/merged", "deletion-candidate");
+    assert_eq!(merged["recommended"], "delete");
+    assert!(merged.get("decidedBy").is_none());
+
+    assert!(setup.local_branch_exists("feature/merged"));
+    assert!(tracks_upstream(&setup, "feature/merged"));
+}
+
+#[test]
+fn apply_recommended_with_keep_overrides_one_branch() {
+    let setup = common::RepoWithRemote::new();
+    merged_and_unmerged_gone(&setup);
+    setup.push_branch_to_remote("feature/merged-too");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/merged-too");
+    setup.delete_remote_branch("feature/merged-too");
+
+    let data = sync_json(
+        setup.local_path(),
+        &["--apply-recommended", "--keep", "feature/merged"],
+    );
+    assert_action(&data, "feature/merged", "kept");
+    assert_action(&data, "feature/merged-too", "deleted");
+    assert_action(&data, "feature/unmerged", "left-as-is");
+
+    assert!(setup.local_branch_exists("feature/merged"));
+    assert!(!setup.local_branch_exists("feature/merged-too"));
+    assert!(setup.local_branch_exists("feature/unmerged"));
+}
+
+#[test]
+fn delete_removes_branch_with_unpushed_commits_when_named() {
+    let setup = common::RepoWithRemote::new();
+    pruned_branch_with_unpushed_commits(&setup, "feature/abandoned");
+
+    let data = sync_json(setup.local_path(), &["--delete", "feature/abandoned"]);
+    assert_action(&data, "feature/abandoned", "deleted");
+    assert!(!setup.local_branch_exists("feature/abandoned"));
+}
+
+#[test]
+fn named_branch_with_remote_is_ignored() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/alive");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/alive");
+
+    let data = sync_json(setup.local_path(), &["--delete", "feature/alive"]);
+    assert_eq!(
+        data["ignoredDecisions"],
+        serde_json::json!(["feature/alive"])
+    );
+    assert!(setup.local_branch_exists("feature/alive"));
+    assert!(tracks_upstream(&setup, "feature/alive"));
+}
+
+#[test]
+fn unknown_named_branch_fails_before_fetching() {
+    let setup = common::RepoWithRemote::new();
+    merged_and_unmerged_gone(&setup);
+
+    let output = common::git_mate()
+        .args(["--json", "sync", "--delete", "feature/nope"])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::assert_json_error_code(&output, "branch_not_found");
+    assert_eq!(data["branch"], "feature/nope");
+    // Nothing was fetched: the deleted remote branch is still tracked.
+    assert!(setup.remote_tracking_exists("origin/feature/merged"));
+}
+
+#[test]
+fn branch_named_by_delete_and_keep_fails() {
+    let setup = common::RepoWithRemote::new();
+    merged_and_unmerged_gone(&setup);
+
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "sync",
+            "--delete",
+            "feature/merged",
+            "--keep",
+            "feature/merged",
+        ])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error_code(&output, "error");
+    assert!(setup.local_branch_exists("feature/merged"));
+}

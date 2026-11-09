@@ -125,14 +125,20 @@ Fetches all remotes and prunes stale remote-tracking references, then:
 - Resolves branches that diverged from their upstream: resets them if the remote was rewritten (force-pushed) and they have no local work, otherwise merges the upstream in when that is conflict-free (`--diverged=rebase` rebases local commits onto the upstream instead, also for branches that aren't checked out; `--diverged=skip` leaves them alone); branches with conflicts or uncommitted changes in the way are left untouched and listed under "Needs attention" — sync never leaves a half-done merge or rebase behind
 - Leaves branches you rebased locally but haven't pushed yet alone, listing them as needing a force-push instead of merging the old commits back in
 - Points out when the current branch is behind the branch it is based on (e.g. `main` moved on since you branched), suggesting `git mate update`; with `--json` this is `currentBranch.behindBase` (`base`, `count`, and `mergedParent` if the branch it was stacked on has been merged)
-- Offers to delete local branches whose remote was deleted (if their working tree is clean; a branch with unpushed commits is only preselected for deletion when everything on it is already in the default branch): pick delete, keep or ask later per branch, with branches already merged into the default branch preselected for deletion and the rest for asking again next sync (`--apply-recommended` applies those preselections without asking)
+- Offers to delete local branches whose remote was deleted (if their working tree is clean; a branch with unpushed commits is only preselected for deletion when everything on it is already in the default branch): pick delete, keep or ask later per branch, with branches already merged into the default branch preselected for deletion and the rest for asking again next sync (`--apply-recommended` applies those preselections without asking; `--delete <branch>` and `--keep <branch>` decide for single branches without asking, leaving the others as they are unless combined with `--apply-recommended`)
 
 ```bash
 git mate sync                       # fetch + prune, then bring every branch up to date
 git mate sync --diverged=rebase     # rebase diverged branches onto their upstream instead of merging
 git mate sync --diverged=skip       # only fast-forward; leave diverged branches untouched
+git mate sync --delete feature/a --keep feature/b  # decide for these branches without the chooser
 git config mate.sync.diverged rebase  # make rebase the default
 ```
+
+With `--json`, sync doesn't ask: branches whose remote was deleted are listed with
+`action: "deletion-candidate"`, their `recommended` action and `choices`, until a flag decides
+for them. Branches named by `--delete`/`--keep` that weren't up for deletion are listed in
+`ignoredDecisions`; naming a branch that doesn't exist fails before anything is fetched.
 
 Sync never merges the default branch into your branches; `mate.autoMerge` and the
 `--merge`, `--no-merge`, `--rebase` and `--ff-only` flags were removed. The

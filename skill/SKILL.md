@@ -86,10 +86,15 @@ and finds local branches whose remote was deleted.
 
 - `--dry-run` previews without changing anything. Use it first when the user only asked
   what sync would do.
-- Branches whose remote is gone are only reported with `--json` (their `recommended`
-  choice and possible `choices`). To act on them: `--apply-recommended` deletes the ones
-  already merged into the default branch; `--delete-pruned` deletes all of them, including
-  unmerged ones. Only use `--delete-pruned` when the user asked for it.
+- Branches whose remote is gone are only reported (`action: "deletion-candidate"`, with
+  `detail`, `recommended` and `unpushedCommits`). Show them to the user and let them decide
+  per branch, then apply exactly that: `--delete <branch>` deletes it, `--keep <branch>`
+  keeps it and stops tracking the deleted remote (both repeatable); unnamed ones stay
+  candidates. `--apply-recommended` applies the recommendation to every branch not named.
+  Deleting a branch with `unpushedCommits` loses those commits: say so before deleting.
+  `--delete-pruned` deletes all except ones that may hold unique work; only use it when
+  the user asked for it.
+- Names in `data.ignoredDecisions` weren't up for deletion and were left alone.
 - Result: `data.branches[]` (`branch`, `action`, `reason`); report every branch with a
   `reason`. `data.currentBranch.behindBase` means the current branch is behind the branch
   it is based on; suggest `git mate update`.
