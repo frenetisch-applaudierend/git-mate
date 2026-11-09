@@ -34,7 +34,7 @@ listed and left as they are. A branch with unpushed commits is treated like a me
 one if everything on it is already in the default branch (e.g. the PR was squash-merged
 and the unpushed commit only merged the default branch in); otherwise it starts out as
 ask later and is only deleted when you pick it; keep it to push it again later with
-`git push -u`. Under --json, `unpushedCommits` counts such commits (null if unknown).
+`git push -u origin <branch>`. Under --json, `unpushedCommits` counts such commits (null if unknown).
 Branches whose worktree has uncommitted changes are never offered for deletion.
 Branches whose remote was already gone before this sync (e.g. pruned by an earlier
 fetch) are offered too; since sync cannot tell whether they had unpushed commits, an
@@ -841,9 +841,10 @@ fn gone_branch_status(
     deletable_unless_dirty(branch, worktrees, candidate)
 }
 
-/// Whether a branch whose upstream was pruned during this sync had commits
-/// its upstream did not, as of the snapshot taken before fetching. Commits that only came in from the default branch (e.g. by merging it
-/// into the branch) exist there too, so they don't count.
+/// How many commits a branch whose upstream was pruned during this sync had
+/// that its upstream did not, as of the snapshot taken before fetching.
+/// Commits that only came in from the default branch (e.g. by merging it into
+/// the branch) exist there too, so they don't count.
 fn unpushed_before_prune(
     branches_before: &[(String, Option<String>, Option<String>)],
     branch: &str,
@@ -979,7 +980,8 @@ fn deletable_unless_dirty(
                     "remote deleted but working tree is dirty, skipping",
                     &format!("{}, but worktree has uncommitted changes", candidate.detail),
                 )
-                .with_hint(Hint::new("worktree", wt_str)),
+                .with_hint(Hint::new("worktree", wt_str))
+                .with_unpushed(candidate.unpushed),
             ));
         }
     }

@@ -1045,6 +1045,34 @@ fn counts_unpushed_commits_beyond_those_from_the_default_branch() {
 }
 
 #[test]
+fn pruned_branch_without_unpushed_commits_reports_none() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/pushed");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/pushed");
+    setup.delete_remote_branch("feature/pushed");
+
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/pushed", "deletion-candidate");
+    assert!(entry.get("unpushedCommits").is_none(), "got: {entry}");
+}
+
+#[test]
+fn branch_whose_remote_was_already_gone_reports_unknown_unpushed_commits() {
+    let setup = common::RepoWithRemote::new();
+    setup.push_branch_to_remote("feature/gone");
+    setup.local_fetch();
+    setup.create_local_tracking_branch("feature/gone");
+    setup.delete_remote_branch("feature/gone");
+    setup.local_git(&["fetch", "-q", "--prune"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    let entry = assert_action(&data, "feature/gone", "deletion-candidate");
+    assert!(entry["unpushedCommits"].is_null(), "got: {entry}");
+    assert!(entry.get("unpushedCommits").is_some(), "got: {entry}");
+}
+
+#[test]
 fn pruned_branch_with_unpushed_commits_in_dirty_worktree_is_skipped() {
     let setup = common::RepoWithRemote::new();
     pruned_branch_with_unpushed_commits(&setup, "feature/dirty");
@@ -1060,7 +1088,8 @@ fn pruned_branch_with_unpushed_commits_in_dirty_worktree_is_skipped() {
     std::fs::write(wt_path.join("unpushed.txt"), "uncommitted edit").unwrap();
 
     let data = sync_json(setup.local_path(), &["--delete-pruned"]);
-    assert_action(&data, "feature/dirty", "skipped");
+    let entry = assert_action(&data, "feature/dirty", "skipped");
+    assert_eq!(entry["unpushedCommits"], 1);
     assert!(setup.local_branch_exists("feature/dirty"));
     assert!(wt_path.exists());
 }
