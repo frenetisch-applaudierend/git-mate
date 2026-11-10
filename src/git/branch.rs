@@ -259,9 +259,46 @@ pub fn unset_upstream(branch: &str) -> Result<(), String> {
     run(&["branch", "--unset-upstream", branch])
 }
 
+/// Mark `branch` as kept local, so `git mate sync` stops offering to push it
+/// while it has no upstream. Stored as `branch.<name>.mateLocal`, so git
+/// renames and removes it along with the branch.
+pub fn mark_kept_local(branch: &str) -> Result<(), String> {
+    run(&["config", &format!("branch.{branch}.mateLocal"), "true"])
+}
+
+/// The branches marked by [`mark_kept_local`].
+pub fn kept_local_branches() -> std::collections::HashSet<String> {
+    // Exits with 1 when nothing matches.
+    let output =
+        run_output(&["config", "--get-regexp", r"^branch\..*\.matelocal$"]).unwrap_or_default();
+    parse_kept_local(&output)
+}
+
+fn parse_kept_local(output: &str) -> std::collections::HashSet<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(' ').unwrap_or((line, "true"));
+            let branch = key.strip_prefix("branch.")?.strip_suffix(".matelocal")?;
+            matches!(value.to_lowercase().as_str(), "true" | "yes" | "on" | "1")
+                .then(|| branch.to_string())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Tracking, parse_track_counts};
+    use super::{Tracking, parse_kept_local, parse_track_counts};
+
+    #[test]
+    fn parses_kept_local_branches() {
+        let kept = parse_kept_local(
+            "branch.feature/Local.matelocal true\nbranch.off.matelocal false\nbranch.bare.matelocal\n",
+        );
+        assert!(kept.contains("feature/Local"));
+        assert!(kept.contains("bare"));
+        assert!(!kept.contains("off"));
+    }
 
     #[test]
     fn parses_track_counts() {

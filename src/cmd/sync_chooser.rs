@@ -1,5 +1,5 @@
 //! The inline chooser `git mate sync` shows for branches whose remote is
-//! gone: one row per branch with its recommended action preselected, changed
+//! gone or that have no upstream: one row per branch with its recommended action preselected, changed
 //! in place with the arrow keys and applied row by row, each row turning
 //! into its result where it stands.
 
@@ -19,6 +19,8 @@ enum Step {
 /// The action picked for every row and the row being changed.
 struct Selection {
     choices: Vec<Choice>,
+    /// The actions each row can be set to.
+    options: Vec<&'static [Choice]>,
     focus: usize,
 }
 
@@ -26,6 +28,7 @@ impl Selection {
     fn new(candidates: &[Candidate]) -> Self {
         Self {
             choices: candidates.iter().map(|c| c.recommended).collect(),
+            options: candidates.iter().map(|c| c.choices).collect(),
             focus: 0,
         }
     }
@@ -35,9 +38,12 @@ impl Selection {
         match key {
             Key::ArrowUp => self.focus = self.focus.saturating_sub(1),
             Key::ArrowDown => self.focus = (self.focus + 1).min(last),
-            Key::ArrowLeft => self.choices[self.focus] = self.choices[self.focus].previous(),
+            Key::ArrowLeft => {
+                self.choices[self.focus] =
+                    self.choices[self.focus].previous(self.options[self.focus])
+            }
             Key::ArrowRight | Key::Char(' ') => {
-                self.choices[self.focus] = self.choices[self.focus].next()
+                self.choices[self.focus] = self.choices[self.focus].next(self.options[self.focus])
             }
             Key::Enter => return Step::Apply,
             Key::Escape | Key::CtrlC | Key::Char('q') => return Step::Cancel,
@@ -185,6 +191,7 @@ impl Drop for HiddenCursor<'_> {
 /// Returns `None` without printing anything when there is no terminal to
 /// interact with.
 pub fn resolve(
+    title: &str,
     candidates: &[Candidate],
     column: usize,
     mut apply: impl FnMut(&Candidate, Choice) -> DecisionRow,
@@ -205,7 +212,7 @@ pub fn resolve(
         first: 0,
     };
 
-    report::print_title("Remote gone");
+    report::print_title(title);
     let cursor = HiddenCursor::new(&term);
     let step = loop {
         board.draw(&selection.rows(), View::Choosing(selection.focus));
@@ -240,12 +247,16 @@ pub fn resolve(
 #[cfg(test)]
 mod tests {
     use super::{Selection, Step};
-    use crate::cmd::sync_report::{Candidate, Choice, Unpushed};
+    use crate::cmd::sync_report::{
+        Candidate, CandidateKind, Choice, REMOTE_GONE_CHOICES, Unpushed,
+    };
     use console::Key;
 
     fn candidate(branch: &str, recommended: Choice) -> Candidate {
         Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: String::new(),
             warn: false,
             recommended,
@@ -293,5 +304,19 @@ mod tests {
         assert_eq!(selection.handle(&Key::Enter), Step::Apply);
         assert_eq!(selection.handle(&Key::Escape), Step::Cancel);
         assert_eq!(selection.handle(&Key::CtrlC), Step::Cancel);
+    }
+}
+
+#[cfg(test)]
+mod choice_tests {
+    use crate::cmd::sync_report::{Choice, NO_UPSTREAM_DIRTY_CHOICES, REMOTE_GONE_CHOICES};
+
+    #[test]
+    fn cycles_within_the_rows_choices() {
+        assert_eq!(Choice::Later.next(REMOTE_GONE_CHOICES), Choice::Delete);
+        assert_eq!(Choice::Delete.previous(REMOTE_GONE_CHOICES), Choice::Later);
+        // A dirty branch can't be deleted: push → keep → ask later → push.
+        assert_eq!(Choice::Push.next(NO_UPSTREAM_DIRTY_CHOICES), Choice::Keep);
+        assert_eq!(Choice::Later.next(NO_UPSTREAM_DIRTY_CHOICES), Choice::Push);
     }
 }

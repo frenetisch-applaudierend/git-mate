@@ -146,19 +146,24 @@ Fetches all remotes and prunes stale remote-tracking references, then:
 - Leaves branches you rebased locally but haven't pushed yet alone, listing them as needing a force-push instead of merging the old commits back in
 - Points out when the current branch is behind the branch it is based on (e.g. `main` moved on since you branched), suggesting `git mate update`; with `--json` this is `currentBranch.behindBase` (`base`, `count`, and `mergedParent` if the branch it was stacked on has been merged)
 - Offers to delete local branches whose remote was deleted (if their working tree is clean; a branch with unpushed commits is only preselected for deletion when everything on it is already in the default branch): pick delete, keep or ask later per branch, with branches already merged into the default branch preselected for deletion and the rest for asking again next sync (`--apply-recommended` applies those preselections without asking; `--delete <branch>` and `--keep <branch>` decide for single branches without asking, leaving the others as they are unless combined with `--apply-recommended`)
+- Offers the same for local branches without an upstream (never pushed, or pushed without `-u`): pick push (`git push -u`), delete, keep local or ask later per branch. Branches whose commits already landed in the default branch (e.g. squash-merged) are preselected for deletion, the rest for asking again; a branch whose worktree has uncommitted changes can't be deleted. `--push <branch>` pushes one without asking. Kept branches are marked with `branch.<name>.mateLocal` and not offered again (`git config --unset branch.<name>.mateLocal` undoes that). The default branch, and repositories without a remote, are left out
 
 ```bash
 git mate sync                       # fetch + prune, then bring every branch up to date
 git mate sync --diverged=rebase     # rebase diverged branches onto their upstream instead of merging
 git mate sync --diverged=skip       # only fast-forward; leave diverged branches untouched
 git mate sync --delete feature/a --keep feature/b  # decide for these branches without the chooser
+git mate sync --push feature/c      # push a branch that has no upstream yet, and track it
 git config mate.sync.diverged rebase  # make rebase the default
 ```
 
 With `--json`, sync doesn't ask: branches whose remote was deleted are listed with
-`action: "deletion-candidate"`, their `recommended` action and `choices`, until a flag decides
-for them. Branches named by `--delete`/`--keep` that weren't up for deletion are listed in
-`ignoredDecisions`; naming a branch that doesn't exist fails before anything is fetched.
+`action: "deletion-candidate"`, branches without upstream with `action: "no-upstream"`, each
+with a `detail`, their `recommended` action and `choices`, until a flag decides for them
+(`pushed`, `deleted`, `kept`). A branch kept local is listed as `no-upstream` with reason
+`kept local` and no `choices`. Branches named by `--delete`/`--keep`/`--push` that weren't
+up for a decision are listed in `ignoredDecisions`; naming a branch that doesn't exist fails
+before anything is fetched.
 
 Sync never merges the default branch into your branches; `mate.autoMerge` and the
 `--merge`, `--no-merge`, `--rebase` and `--ff-only` flags were removed. The

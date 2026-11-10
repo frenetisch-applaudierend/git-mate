@@ -1,6 +1,7 @@
 use super::sync_chooser;
 use super::sync_report::{
-    self as report, BranchOutcome, Candidate, Choice, DecidedBy, DecisionRow, Hint, Unpushed,
+    self as report, BranchOutcome, Candidate, CandidateKind, Choice, DecidedBy, DecisionRow, Hint,
+    NO_UPSTREAM_CHOICES, NO_UPSTREAM_DIRTY_CHOICES, REMOTE_GONE_CHOICES, Unpushed,
 };
 
 #[derive(clap::Args, Default)]
@@ -47,6 +48,16 @@ repeatable); with --apply-recommended the others get their preselected action, o
 they are left as they are (and, under --json, reported as candidates). Branches you keep
 stop tracking their deleted upstream, so they aren't offered again.
 
+Local branches without an upstream (never pushed, or pushed without -u) are listed
+next, each with an action to choose: push it (setting the pushed branch as its
+upstream), delete it, keep it local (sync stops asking about it), or ask again next
+time. One whose commits are already in the default branch starts out as delete, the
+others as ask later; one whose worktree has uncommitted changes can't be deleted.
+--push <branch>, --delete <branch> and --keep <branch> decide for them without the
+chooser, and --apply-recommended applies the preselected action to the others. Under
+--json, they are reported as `no-upstream` with `detail`, `recommended` and `choices`.
+The default branch and repositories without a remote are left out.
+
 Sync never merges or rebases a branch onto the branch it is based on; if the current
 branch is behind its base, it suggests `git mate update`, which does.
 
@@ -70,16 +81,23 @@ pub struct SyncArgs {
         long = "delete",
         value_name = "BRANCH",
         conflicts_with_all = ["dry_run", "delete_pruned"],
-        help = "Delete this branch if its remote is gone, without prompting (repeatable)"
+        help = "Delete this branch if its remote is gone or it has no upstream, without prompting (repeatable)"
     )]
     pub delete: Vec<String>,
     #[arg(
         long = "keep",
         value_name = "BRANCH",
         conflicts_with_all = ["dry_run", "delete_pruned"],
-        help = "Keep this branch if its remote is gone and stop tracking the deleted remote, without prompting (repeatable)"
+        help = "Keep this branch if its remote is gone or it has no upstream, and stop asking about it, without prompting (repeatable)"
     )]
     pub keep: Vec<String>,
+    #[arg(
+        long = "push",
+        value_name = "BRANCH",
+        conflicts_with_all = ["dry_run", "delete_pruned"],
+        help = "Push this branch if it has no upstream and set the pushed branch as its upstream, without prompting (repeatable)"
+    )]
+    pub push: Vec<String>,
     #[arg(
         long,
         help = "Preview planned actions without making any changes or prompting"
@@ -142,8 +160,9 @@ pub struct SyncData {
     dry_run: bool,
     branches: Vec<BranchOutcome>,
     current_branch: CurrentBranchOutcome,
-    /// Branches named by `--delete` or `--keep` that weren't up for deletion
-    /// (their remote still exists, or they need attention); left alone.
+    /// Branches named by `--delete`, `--keep` or `--push` that weren't up for
+    /// a decision (their remote still exists, or they need attention); left
+    /// alone.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     ignored_decisions: Vec<String>,
 }
@@ -157,10 +176,10 @@ pub fn run(args: SyncArgs) -> Result<(), crate::output::CommandError> {
     Ok(())
 }
 
-/// Fail before changing anything when `--delete`/`--keep` name a branch that
-/// doesn't exist, or the same branch twice with different actions.
+/// Fail before changing anything when `--delete`/`--keep`/`--push` name a
+/// branch that doesn't exist, or the same branch with different actions.
 fn validate_decisions(args: &SyncArgs) -> Result<(), crate::output::CommandError> {
-    for branch in args.delete.iter().chain(&args.keep) {
+    for branch in args.delete.iter().chain(&args.keep).chain(&args.push) {
         if !crate::git::commit_exists(&format!("refs/heads/{branch}")) {
             return Err(crate::output::CommandError::branch(
                 format!("branch {branch} not found"),
@@ -169,17 +188,27 @@ fn validate_decisions(args: &SyncArgs) -> Result<(), crate::output::CommandError
             ));
         }
     }
-    if let Some(branch) = args.delete.iter().find(|b| args.keep.contains(b)) {
-        return Err(format!("branch {branch} is named by both --delete and --keep").into());
+    let named = [
+        ("--delete", &args.delete),
+        ("--keep", &args.keep),
+        ("--push", &args.push),
+    ];
+    for (i, (flag, branches)) in named.iter().enumerate() {
+        for (other, other_branches) in &named[i + 1..] {
+            if let Some(branch) = branches.iter().find(|b| other_branches.contains(b)) {
+                return Err(format!("branch {branch} is named by both {flag} and {other}").into());
+            }
+        }
     }
     Ok(())
 }
 
-/// The action named for each branch by `--delete` and `--keep`.
+/// The action named for each branch by `--delete`, `--keep` and `--push`.
 fn decisions(args: &SyncArgs) -> std::collections::HashMap<String, Choice> {
     let delete = args.delete.iter().map(|b| (b.clone(), Choice::Delete));
     let keep = args.keep.iter().map(|b| (b.clone(), Choice::Keep));
-    delete.chain(keep).collect()
+    let push = args.push.iter().map(|b| (b.clone(), Choice::Push));
+    delete.chain(keep).chain(push).collect()
 }
 
 /// Sync, printing the human-readable report (unless in JSON mode) and
@@ -239,17 +268,36 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
         remote: crate::git::detect_default_branch(true).ok(),
     };
 
+    // Branches without upstream are offered to be pushed, unless there is
+    // nowhere to push to or the user chose to keep them local.
+    let has_remote = !crate::git::list_remotes()?.is_empty();
+    let kept_local = crate::git::kept_local_branches();
+
     // 4. Process all local branches that have an upstream.
     let branches = crate::git::list_branch_tips()?;
 
     let mut current_branch_pruned = false;
     let mut deletion_candidates: Vec<Candidate> = Vec::new();
+    let mut local_candidates: Vec<Candidate> = Vec::new();
 
     progress.update(&format!("Syncing {} branches…", branches.len()));
     for tip in &branches {
         let branch = &tip.branch;
         let Some(upstream) = &tip.upstream else {
-            branch_outcomes.push(BranchOutcome::no_upstream(branch));
+            let outcome = if !has_remote || default_branch.local.as_deref() == Some(branch) {
+                BranchOutcome::no_upstream(branch)
+            } else if kept_local.contains(branch) {
+                BranchOutcome::kept_local(branch)
+            } else {
+                match no_upstream_candidate(branch, &worktrees, &default_branch) {
+                    Ok(candidate) => {
+                        local_candidates.push(candidate);
+                        continue;
+                    }
+                    Err(e) => BranchOutcome::failed(branch, &e),
+                }
+            };
+            branch_outcomes.push(outcome);
             continue;
         };
 
@@ -339,6 +387,7 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
             .chain(
                 deletion_candidates
                     .iter()
+                    .chain(&local_candidates)
                     .map(|c| (c.branch.as_str(), c.detail.as_str())),
             ),
     );
@@ -349,36 +398,44 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
     let decisions = decisions(&args);
     let mut ignored_decisions: Vec<String> = decisions
         .keys()
-        .filter(|branch| !deletion_candidates.iter().any(|c| &c.branch == *branch))
+        .filter(|branch| {
+            !deletion_candidates
+                .iter()
+                .chain(&local_candidates)
+                .any(|c| &c.branch == *branch)
+        })
         .cloned()
         .collect();
     ignored_decisions.sort();
     if !json {
         for branch in &ignored_decisions {
             warn(&format!(
-                "{branch} isn't up for deletion (its remote still exists, or it needs attention); left it alone"
+                "{branch} isn't up for a decision (it has a remote, needs attention or is kept local); left it alone"
             ));
         }
     }
 
-    // Ask once, up front, about every branch whose remote was deleted rather
-    // than prompting one at a time. Under --json or --dry-run, no prompt is
-    // issued: candidates are reported but never deleted (see pruned_branch
-    // deletion policy above).
-    branch_outcomes.extend(resolve_pruned_deletions(
-        &deletion_candidates,
-        &current_wt,
-        &worktrees,
-        &main_wt_path,
-        PruneMode {
-            json,
-            dry_run,
-            delete_pruned: args.delete_pruned,
-            apply_recommended: args.apply_recommended,
-            decisions: &decisions,
-        },
-        column,
-    )?);
+    // Ask once, up front, about every branch whose remote was deleted, then
+    // about every branch without upstream, rather than prompting one at a
+    // time. Under --json or --dry-run, no prompt is issued: candidates are
+    // reported but never acted on (see pruned_branch deletion policy above).
+    let mode = PruneMode {
+        json,
+        dry_run,
+        delete_pruned: args.delete_pruned,
+        apply_recommended: args.apply_recommended,
+        decisions: &decisions,
+    };
+    for candidates in [&deletion_candidates, &local_candidates] {
+        branch_outcomes.extend(resolve_pruned_deletions(
+            candidates,
+            &current_wt,
+            &worktrees,
+            &main_wt_path,
+            &mode,
+            column,
+        )?);
+    }
 
     if !json {
         report::print_summary(&branch_outcomes);
@@ -395,7 +452,7 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
     } else {
         match current_outcome {
             Some(o) if is_synced(o) => (true, None),
-            Some(o) if o.action == "no-upstream" => (
+            Some(o) if matches!(o.action.as_str(), "no-upstream" | "pushed") => (
                 false,
                 Some("no upstream configured for current branch".to_string()),
             ),
@@ -434,7 +491,12 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
     };
 
     if !json {
-        if !current_branch_pruned && current_outcome.is_none_or(|o| o.action == "no-upstream") {
+        // A current branch offered a decision was already listed with it.
+        let current_listed = current_outcome.is_some_and(|o| o.group == report::Group::Gone);
+        if !current_branch_pruned
+            && !current_listed
+            && current_outcome.is_none_or(|o| o.action == "no-upstream")
+        {
             crate::output::info("No upstream configured for current branch, skipping sync.");
         }
         let any_work = any_branch_action_taken(&branch_outcomes);
@@ -510,6 +572,7 @@ fn any_branch_action_taken(outcomes: &[BranchOutcome]) -> bool {
                 | "rebased"
                 | "deleted"
                 | "deletion-candidate"
+                | "pushed"
         )
     })
 }
@@ -885,6 +948,8 @@ fn gone_branch_status(
     let candidate = match crate::git::content_merged_into(remote, branch)? {
         Some(merged_at) => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: merged_detail(&merged_at, remote),
             warn: false,
             recommended: Choice::Delete,
@@ -893,6 +958,8 @@ fn gone_branch_status(
         },
         None => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: format!("not merged into {remote}"),
             warn: true,
             recommended: Choice::Later,
@@ -958,6 +1025,8 @@ fn unpushed_branch_status(
     let candidate = match merged {
         Some(merged) => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: match unpushed {
                 Unpushed::Commits(_) => format!("{merged}, incl. {unpushed_detail}"),
                 _ => merged,
@@ -969,6 +1038,8 @@ fn unpushed_branch_status(
         },
         None => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             bulk_delete_blocker: Some(match default_branch.remote.as_deref() {
                 Some(remote) => format!("remote deleted and {unpushed_detail} not in {remote}"),
                 None => format!("remote deleted and {unpushed_detail}"),
@@ -997,6 +1068,8 @@ fn pruned_branch_status(
     let candidate = match merged_at {
         Some((remote, Ok(Some(merged_at)))) => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: merged_detail(&merged_at, remote),
             warn: false,
             recommended: Choice::Delete,
@@ -1005,6 +1078,8 @@ fn pruned_branch_status(
         },
         Some((remote, Ok(None))) => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: format!("not merged into {remote}"),
             warn: true,
             recommended: Choice::Later,
@@ -1013,6 +1088,8 @@ fn pruned_branch_status(
         },
         _ => Candidate {
             branch: branch.to_string(),
+            kind: CandidateKind::RemoteGone,
+            choices: REMOTE_GONE_CHOICES,
             detail: "remote deleted".to_string(),
             warn: false,
             recommended: Choice::Later,
@@ -1021,6 +1098,81 @@ fn pruned_branch_status(
         },
     };
     deletable_unless_dirty(branch, worktrees, candidate)
+}
+
+/// Offer a branch without upstream to be pushed, deleted or kept local.
+/// Only one whose commits already landed in the default branch is
+/// preselected for deletion; one without commits of its own (e.g. just
+/// created) or with commits that exist nowhere else is left for the user to
+/// decide. Deleting is not offered when its worktree has uncommitted changes.
+fn no_upstream_candidate(
+    branch: &str,
+    worktrees: &[crate::git::WorktreeEntry],
+    default_branch: &DefaultBranch,
+) -> Result<Candidate, String> {
+    let dirty = match worktrees
+        .iter()
+        .find(|wt| wt.branch.as_deref() == Some(branch))
+    {
+        Some(wt) => !crate::git::is_worktree_clean(
+            wt.path.to_str().ok_or("worktree path is not valid UTF-8")?,
+        )?,
+        None => false,
+    };
+    let (detail, warn, recommended, unpushed) = match default_branch.remote.as_deref() {
+        Some(remote) => match crate::git::content_merged_into(remote, branch)? {
+            Some(crate::git::MergedAt::Contained) => (
+                "no commits of its own".to_string(),
+                false,
+                Choice::Later,
+                Unpushed::None,
+            ),
+            Some(merged_at) => (
+                merged_detail(&merged_at, remote),
+                false,
+                Choice::Delete,
+                Unpushed::None,
+            ),
+            None => {
+                let n = crate::git::count_commits_not_in(&[remote], branch)?;
+                let plural = if n == 1 { "" } else { "s" };
+                (
+                    format!("{n} commit{plural} not in {remote}"),
+                    true,
+                    Choice::Later,
+                    Unpushed::Commits(n),
+                )
+            }
+        },
+        None => (
+            "never pushed".to_string(),
+            false,
+            Choice::Later,
+            Unpushed::Unknown,
+        ),
+    };
+    let (detail, recommended, choices) = if dirty {
+        (
+            format!("{detail}, uncommitted changes"),
+            match recommended {
+                Choice::Delete => Choice::Later,
+                other => other,
+            },
+            NO_UPSTREAM_DIRTY_CHOICES,
+        )
+    } else {
+        (detail, recommended, NO_UPSTREAM_CHOICES)
+    };
+    Ok(Candidate {
+        branch: branch.to_string(),
+        kind: CandidateKind::NoUpstream,
+        choices,
+        detail,
+        warn,
+        recommended,
+        bulk_delete_blocker: None,
+        unpushed,
+    })
 }
 
 /// A branch checked out in a worktree with uncommitted changes is never a
@@ -1104,34 +1256,34 @@ struct PruneMode<'a> {
 /// candidates without acting; otherwise let the user pick an action per
 /// branch in the chooser, or, without a terminal for it, leave them all as
 /// they are.
+///
+/// All `candidates` are of the same kind. `--delete-pruned` only concerns
+/// branches whose remote is gone; branches without upstream are then left
+/// to `--delete`/`--keep`/`--push`, without prompting.
 fn resolve_pruned_deletions(
     candidates: &[Candidate],
     current_wt: &Option<std::path::PathBuf>,
     worktrees: &[crate::git::WorktreeEntry],
     main_wt_path: &str,
-    mode: PruneMode<'_>,
+    mode: &PruneMode<'_>,
     column: usize,
 ) -> Result<Vec<BranchOutcome>, String> {
-    if candidates.is_empty() {
+    let Some(kind) = candidates.first().map(|c| c.kind) else {
         return Ok(Vec::new());
-    }
-
-    let as_candidates = || {
-        candidates
-            .iter()
-            .map(BranchOutcome::deletion_candidate)
-            .collect()
     };
+    let title = kind.title();
+
+    let as_candidates = || candidates.iter().map(BranchOutcome::candidate).collect();
 
     if mode.dry_run {
         if !mode.json {
-            report::print_preview(candidates, column);
-            report::print_note("dry run: showing the preselected actions; nothing was deleted");
+            report::print_preview(title, candidates, column);
+            report::print_note("dry run: showing the preselected actions; nothing was changed");
         }
         return Ok(as_candidates());
     }
 
-    if mode.delete_pruned {
+    if mode.delete_pruned && kind == CandidateKind::RemoteGone {
         let (blocked, deletable): (Vec<&Candidate>, Vec<&Candidate>) = candidates
             .iter()
             .partition(|c| c.bulk_delete_blocker.is_some());
@@ -1175,9 +1327,9 @@ fn resolve_pruned_deletions(
         apply_choice(candidate, choice, current_wt, worktrees, main_wt_path)
     };
 
-    if mode.apply_recommended || !mode.decisions.is_empty() {
+    if mode.apply_recommended || !mode.decisions.is_empty() || mode.delete_pruned {
         if !mode.json {
-            report::print_title("Remote gone");
+            report::print_title(title);
         }
         let detail_column = report::detail_column(candidates);
         let mut kept = 0;
@@ -1204,7 +1356,7 @@ fn resolve_pruned_deletions(
                 match choice {
                     Some(_) => decision_outcome(candidate, &row, DecidedBy::Flag),
                     // Nobody decided: still a candidate for the next run.
-                    None => BranchOutcome::deletion_candidate(candidate),
+                    None => BranchOutcome::candidate(candidate),
                 }
             })
             .collect();
@@ -1218,11 +1370,11 @@ fn resolve_pruned_deletions(
         return Ok(as_candidates());
     }
 
-    let chosen = sync_chooser::resolve(candidates, column, apply);
+    let chosen = sync_chooser::resolve(title, candidates, column, apply);
     let Some(rows) = chosen else {
         // Without a terminal nobody can answer a prompt: leave every branch
         // as it is and say how to resolve them.
-        report::print_title("Remote gone");
+        report::print_title(title);
         let detail_column = report::detail_column(candidates);
         for candidate in candidates {
             for line in
@@ -1231,9 +1383,14 @@ fn resolve_pruned_deletions(
                 eprintln!("{line}");
             }
         }
-        report::print_note(
-            "no terminal to choose in; run sync in one, or pass --apply-recommended or --delete-pruned",
-        );
+        report::print_note(match kind {
+            CandidateKind::RemoteGone => {
+                "no terminal to choose in; run sync in one, or pass --apply-recommended or --delete-pruned"
+            }
+            CandidateKind::NoUpstream => {
+                "no terminal to choose in; run sync in one, or pass --push, --delete or --keep <branch>"
+            }
+        });
         return Ok(candidates.iter().map(BranchOutcome::left_as_is).collect());
     };
     let kept = rows.iter().filter(|r| **r == DecisionRow::Kept).count();
@@ -1245,8 +1402,9 @@ fn resolve_pruned_deletions(
         .collect())
 }
 
-/// Delete a branch whose remote is gone, keep it and stop tracking the
-/// missing upstream so it isn't offered again, or leave it to ask again.
+/// Push a branch, delete it, keep it so it isn't offered again (no longer
+/// tracking a deleted upstream, and marked as kept local), or leave it to
+/// ask again.
 fn apply_choice(
     candidate: &Candidate,
     choice: Choice,
@@ -1255,24 +1413,74 @@ fn apply_choice(
     main_wt_path: &str,
 ) -> DecisionRow {
     let branch = candidate.branch.as_str();
+    if !candidate.choices.contains(&choice) {
+        return DecisionRow::Failed(match (choice, candidate.kind) {
+            (Choice::Push, CandidateKind::RemoteGone) => format!(
+                "not pushed: its remote branch was deleted; keep it and push it with git push -u origin {branch}"
+            ),
+            _ => format!(
+                "not {}: its worktree has uncommitted changes",
+                past_tense(choice)
+            ),
+        });
+    }
     match choice {
+        Choice::Push => match push_new_branch(branch) {
+            Ok(()) => DecisionRow::Pushed,
+            Err(e) => DecisionRow::Failed(format!("could not push: {e}")),
+        },
         Choice::Delete => match delete_pruned_branch(branch, current_wt, worktrees, main_wt_path) {
             Ok(()) => DecisionRow::Deleted,
             Err(e) => DecisionRow::Failed(e),
         },
-        Choice::Keep => match crate::git::unset_upstream(branch) {
-            Ok(()) => DecisionRow::Kept,
-            Err(e) => DecisionRow::Failed(format!("could not unset upstream: {e}")),
-        },
+        Choice::Keep => {
+            let kept = match candidate.kind {
+                CandidateKind::RemoteGone => crate::git::unset_upstream(branch)
+                    .map_err(|e| format!("could not unset upstream: {e}")),
+                CandidateKind::NoUpstream => Ok(()),
+            }
+            // Once it has no upstream, it would otherwise be offered to be
+            // pushed next time.
+            .and_then(|()| {
+                crate::git::mark_kept_local(branch)
+                    .map_err(|e| format!("could not mark as kept local: {e}"))
+            });
+            match kept {
+                Ok(()) => DecisionRow::Kept,
+                Err(e) => DecisionRow::Failed(e),
+            }
+        }
         Choice::Later => DecisionRow::Left,
     }
 }
 
+fn past_tense(choice: Choice) -> &'static str {
+    match choice {
+        Choice::Push => "pushed",
+        Choice::Delete => "deleted",
+        Choice::Keep => "kept",
+        Choice::Later => "left",
+    }
+}
+
+/// Push a branch that has no upstream, setting the pushed branch as its
+/// upstream: to its push remote if one is configured, else to `origin`.
+fn push_new_branch(branch: &str) -> Result<(), String> {
+    let mut target = crate::git::push_target(branch)?
+        .ok_or("no remote to push to (no origin, and no remote.pushDefault set)")?;
+    target.set_upstream = true;
+    crate::git::push_branch(branch, &target, None)
+}
+
 fn print_kept_note(kept: usize) {
     if kept > 0 {
-        let plural = if kept == 1 { "" } else { "es" };
+        let (plural, them) = if kept == 1 {
+            ("", "it")
+        } else {
+            ("es", "them")
+        };
         report::print_note(&format!(
-            "kept {kept} branch{plural}; stopped tracking the deleted upstream so sync won't ask again"
+            "kept {kept} branch{plural}; sync won't ask about {them} again"
         ));
     }
 }
@@ -1286,6 +1494,7 @@ fn decision_outcome(
     let outcome = match row {
         DecisionRow::Deleted => BranchOutcome::deleted(candidate),
         DecisionRow::Kept => BranchOutcome::kept(candidate),
+        DecisionRow::Pushed => BranchOutcome::pushed(candidate),
         DecisionRow::Failed(e) => BranchOutcome::failed(&candidate.branch, e),
         DecisionRow::Left | DecisionRow::Choice(_) | DecisionRow::Applying(_) => {
             BranchOutcome::left_as_is(candidate)

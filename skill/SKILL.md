@@ -103,7 +103,13 @@ and finds local branches whose remote was deleted.
   Deleting a branch with `unpushedCommits` loses those commits: say so before deleting.
   `--delete-pruned` deletes all except ones that may hold unique work; only use it when
   the user asked for it.
-- Names in `data.ignoredDecisions` weren't up for deletion and were left alone.
+- Branches without upstream (never pushed) are reported as `action: "no-upstream"` with
+  `detail`, `recommended` and `choices` (`push`, `delete`, `keep`, `later`). Show them to the
+  user and apply their pick: `--push <branch>` pushes it and sets its upstream,
+  `--delete <branch>` deletes it, `--keep <branch>` keeps it local and stops sync from
+  asking. Pushing publishes the branch: only push when the user asked for it. One with
+  `reason: "kept local"` was already decided; leave it alone.
+- Names in `data.ignoredDecisions` weren't up for a decision and were left alone.
 - Result: `data.branches[]` (`branch`, `action`, `reason`); report every branch with a
   `reason`. `data.currentBranch.behindBase` means the current branch is behind the branch
   it is based on; suggest `git mate update`.

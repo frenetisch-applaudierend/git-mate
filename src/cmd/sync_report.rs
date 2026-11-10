@@ -17,7 +17,8 @@ pub enum Group {
     Updated,
     /// Skipped or failed for a reason the user should look at.
     Attention,
-    /// Remote gone and offered for deletion (deleted, kept or candidate).
+    /// Offered a decision: remote gone, or never pushed (deleted, kept,
+    /// pushed or candidate).
     Gone,
     /// Up to date or without upstream: only counted.
     Quiet,
@@ -75,10 +76,10 @@ pub struct BranchOutcome {
     /// A deletion candidate's detail, e.g. "merged in #1156".
     #[serde(rename = "detail", skip_serializing_if = "Option::is_none")]
     candidate_detail: Option<String>,
-    /// The action the chooser would preselect for a deletion candidate.
+    /// The action the chooser would preselect for a candidate.
     #[serde(skip_serializing_if = "Option::is_none")]
     recommended: Option<Choice>,
-    /// The actions a deletion candidate can be resolved with.
+    /// The actions a candidate can be resolved with.
     #[serde(skip_serializing_if = "Option::is_none")]
     choices: Option<&'static [Choice]>,
     /// A remote-gone branch's commits that were never pushed: a count, or
@@ -140,6 +141,17 @@ impl BranchOutcome {
             None,
             Group::Quiet,
             "no upstream".to_string(),
+        )
+    }
+
+    /// Without upstream, and kept that way when sync offered to push it.
+    pub fn kept_local(branch: &str) -> Self {
+        Self::new(
+            branch,
+            "no-upstream",
+            Some("kept local"),
+            Group::Quiet,
+            "kept local".to_string(),
         )
     }
 
@@ -260,7 +272,7 @@ impl BranchOutcome {
         )
     }
 
-    /// A branch whose remote is gone, resolved with `action` (or not yet).
+    /// A candidate, resolved with `action` (or not yet).
     fn gone(candidate: &Candidate, action: &str, reason: &str) -> Self {
         let mut outcome = Self::new(
             &candidate.branch,
@@ -273,27 +285,42 @@ impl BranchOutcome {
         outcome.with_unpushed(candidate.unpushed)
     }
 
-    pub fn deletion_candidate(candidate: &Candidate) -> Self {
-        let mut outcome = Self::gone(candidate, "deletion-candidate", "remote deleted");
+    /// Not decided on yet: `deletion-candidate` for a branch whose remote
+    /// is gone, `no-upstream` for one that was never pushed.
+    pub fn candidate(candidate: &Candidate) -> Self {
+        let action = match candidate.kind {
+            CandidateKind::RemoteGone => "deletion-candidate",
+            CandidateKind::NoUpstream => "no-upstream",
+        };
+        let mut outcome = Self::gone(candidate, action, candidate.kind.reason());
         outcome.recommended = Some(candidate.recommended);
-        outcome.choices = Some(&Choice::ALL);
+        outcome.choices = Some(candidate.choices);
         outcome
     }
 
     pub fn deleted(candidate: &Candidate) -> Self {
-        Self::gone(candidate, "deleted", "remote deleted")
+        Self::gone(candidate, "deleted", candidate.kind.reason())
     }
 
-    /// Kept, and its deleted upstream no longer tracked.
+    /// Kept, and not offered again: its deleted upstream is no longer
+    /// tracked, or it is marked as kept local.
     pub fn kept(candidate: &Candidate) -> Self {
-        Self::gone(candidate, "kept", "upstream unset")
+        let reason = match candidate.kind {
+            CandidateKind::RemoteGone => "upstream unset",
+            CandidateKind::NoUpstream => "kept local",
+        };
+        Self::gone(candidate, "kept", reason)
     }
 
-    /// Remote gone, but nobody decided (the chooser was cancelled, or there
-    /// was no terminal to ask in): nothing changed, so the next sync asks
-    /// again.
+    /// Pushed, with the pushed branch set as its upstream.
+    pub fn pushed(candidate: &Candidate) -> Self {
+        Self::gone(candidate, "pushed", "pushed; upstream set")
+    }
+
+    /// Nobody decided (the chooser was cancelled, or there was no terminal
+    /// to ask in): nothing changed, so the next sync asks again.
     pub fn left_as_is(candidate: &Candidate) -> Self {
-        Self::gone(candidate, "left-as-is", "remote deleted")
+        Self::gone(candidate, "left-as-is", candidate.kind.reason())
     }
 
     /// Remote gone, and left alone by `--delete-pruned` for `reason`.
@@ -302,9 +329,12 @@ impl BranchOutcome {
     }
 }
 
-/// A branch whose remote is gone and that is offered for deletion.
+/// A branch offered a decision: its remote is gone, or it was never pushed.
 pub struct Candidate {
     pub branch: String,
+    pub kind: CandidateKind,
+    /// The actions it can be resolved with, in the chooser's order.
+    pub choices: &'static [Choice],
     /// Why it is safe (or what to watch out for), e.g. "merged in #1156".
     pub detail: String,
     /// Show `detail` as a warning rather than dimmed context.
@@ -318,6 +348,33 @@ pub struct Candidate {
     pub unpushed: Unpushed,
 }
 
+/// Why a branch is offered a decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CandidateKind {
+    /// Its upstream branch was deleted from the remote.
+    RemoteGone,
+    /// It has no upstream: it was never pushed (or pushed without `-u`).
+    NoUpstream,
+}
+
+impl CandidateKind {
+    /// The `reason` reported for it under `--json`.
+    fn reason(self) -> &'static str {
+        match self {
+            CandidateKind::RemoteGone => "remote deleted",
+            CandidateKind::NoUpstream => "no upstream",
+        }
+    }
+
+    /// The title of its section in the report and the chooser.
+    pub fn title(self) -> &'static str {
+        match self {
+            CandidateKind::RemoteGone => "Remote gone",
+            CandidateKind::NoUpstream => "No upstream",
+        }
+    }
+}
+
 /// Whether a remote-gone branch has commits that were never pushed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Unpushed {
@@ -328,33 +385,45 @@ pub enum Unpushed {
     Unknown,
 }
 
-/// What to do with a branch whose remote is gone.
+/// What to do with a branch whose remote is gone or that has no upstream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Choice {
+    /// Push it and set the pushed branch as its upstream.
+    Push,
     Delete,
-    /// Keep it and stop tracking the deleted upstream, so it is not offered
-    /// again.
+    /// Keep it and stop tracking the deleted upstream (or mark it as kept
+    /// local), so it is not offered again.
     Keep,
     /// Leave it as it is, so the next sync asks again.
     Later,
 }
 
+/// The choices for a branch whose remote is gone.
+pub const REMOTE_GONE_CHOICES: &[Choice] = &[Choice::Delete, Choice::Keep, Choice::Later];
+/// The choices for a branch without upstream.
+pub const NO_UPSTREAM_CHOICES: &[Choice] =
+    &[Choice::Push, Choice::Delete, Choice::Keep, Choice::Later];
+/// The choices for a branch without upstream whose worktree has
+/// uncommitted changes, which deleting it would throw away.
+pub const NO_UPSTREAM_DIRTY_CHOICES: &[Choice] = &[Choice::Push, Choice::Keep, Choice::Later];
+
 impl Choice {
-    const ALL: [Choice; 3] = [Choice::Delete, Choice::Keep, Choice::Later];
-
-    pub fn next(self) -> Self {
-        let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
+    /// The choice after this one in `choices`, wrapping around.
+    pub fn next(self, choices: &[Choice]) -> Self {
+        let i = choices.iter().position(|&c| c == self).unwrap_or(0);
+        choices[(i + 1) % choices.len()]
     }
 
-    pub fn previous(self) -> Self {
-        let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
-        Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
+    /// The choice before this one in `choices`, wrapping around.
+    pub fn previous(self, choices: &[Choice]) -> Self {
+        let i = choices.iter().position(|&c| c == self).unwrap_or(0);
+        choices[(i + choices.len() - 1) % choices.len()]
     }
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
+            Choice::Push => "push",
             Choice::Delete => "delete",
             Choice::Keep => "keep",
             Choice::Later => "ask later",
@@ -363,6 +432,7 @@ impl Choice {
 
     fn style(self) -> Style {
         match self {
+            Choice::Push => Style::new().green(),
             Choice::Delete => Style::new().red(),
             Choice::Keep => Style::new().magenta(),
             Choice::Later => Style::new(),
@@ -377,8 +447,10 @@ pub enum DecisionRow {
     Choice(Choice),
     Applying(Choice),
     Deleted,
-    /// Kept, and its deleted upstream no longer tracked.
+    /// Kept, and not offered again.
     Kept,
+    /// Pushed, and its upstream set.
+    Pushed,
     /// Left untouched: asked to, or the chooser was cancelled.
     Left,
     Failed(String),
@@ -426,6 +498,7 @@ pub fn decision_lines(
         ),
         DecisionRow::Deleted => (style("⌫").red(), format!("  {}", dim.apply_to("deleted"))),
         DecisionRow::Kept => (style("·").dim(), format!("  {}", dim.apply_to("kept"))),
+        DecisionRow::Pushed => (style("↑").green(), format!("  {}", dim.apply_to("pushed"))),
         DecisionRow::Left => (
             style("·").dim(),
             format!("  {}", dim.apply_to("left as is")),
@@ -555,10 +628,10 @@ fn appearance(outcome: &BranchOutcome) -> (StyledObject<&'static str>, Style) {
     }
 }
 
-/// Print the branches whose remote is gone as the chooser would offer them,
-/// each with its preselected action, without asking or acting on any.
-pub fn print_preview(candidates: &[Candidate], column: usize) {
-    print_title("Remote gone");
+/// Print candidates as the chooser would offer them, each with its
+/// preselected action, without asking or acting on any.
+pub fn print_preview(title: &str, candidates: &[Candidate], column: usize) {
+    print_title(title);
     let detail_column = detail_column(candidates);
     for candidate in candidates {
         let row = DecisionRow::Choice(candidate.recommended);
@@ -674,8 +747,9 @@ pub fn print_summary(outcomes: &[BranchOutcome]) {
         return;
     }
 
-    let order: [(&str, &str, Style); 15] = [
+    let order: [(&str, &str, Style); 16] = [
         ("deleted", "deleted", Style::new().red()),
+        ("pushed", "pushed", Style::new().green()),
         // Deletion candidates are only reported under --dry-run, by the
         // action the chooser would preselect.
         ("would-delete", "would be deleted", Style::new().red()),

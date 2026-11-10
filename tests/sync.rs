@@ -1848,3 +1848,170 @@ fn branch_named_by_delete_and_keep_fails() {
     common::assert_json_error_code(&output, "error");
     assert!(setup.local_branch_exists("feature/merged"));
 }
+
+// --- branches without upstream ---
+
+/// `feature/landed` (never pushed, but squash-merged into main as #7),
+/// `feature/local` (one commit that exists nowhere else) and `feature/empty`
+/// (no commits of its own), none with an upstream.
+fn local_only_branches(setup: &common::RepoWithRemote) {
+    setup.local_git(&["checkout", "-q", "-b", "feature/landed"]);
+    commit_file(setup.local_path(), "landed.txt", "l", "landed work");
+    setup.local_git(&["checkout", "-q", "main"]);
+    setup.local_git(&["merge", "-q", "--squash", "feature/landed"]);
+    setup.local_git(&["commit", "-q", "-m", "Landed work (#7)"]);
+    setup.local_git(&["push", "-q", "origin", "main"]);
+
+    setup.local_git(&["checkout", "-q", "-b", "feature/local"]);
+    commit_file(setup.local_path(), "local.txt", "x", "local work");
+    setup.local_git(&["checkout", "-q", "main"]);
+
+    setup.local_git(&["branch", "feature/empty"]);
+}
+
+#[test]
+fn branches_without_upstream_are_offered_a_decision() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+
+    let data = sync_json(setup.local_path(), &[]);
+    let choices = serde_json::json!(["push", "delete", "keep", "later"]);
+
+    let landed = assert_action(&data, "feature/landed", "no-upstream");
+    assert_eq!(landed["recommended"], "delete");
+    assert_eq!(landed["detail"], "merged in #7");
+    assert_eq!(landed["choices"], choices);
+    assert!(landed.get("unpushedCommits").is_none());
+
+    let local = assert_action(&data, "feature/local", "no-upstream");
+    assert_eq!(local["recommended"], "later");
+    assert_eq!(local["unpushedCommits"], 1);
+    assert_eq!(local["choices"], choices);
+
+    let empty = assert_action(&data, "feature/empty", "no-upstream");
+    assert_eq!(empty["recommended"], "later");
+    assert_eq!(empty["detail"], "no commits of its own");
+
+    // Nothing was acted on.
+    for branch in ["feature/landed", "feature/local", "feature/empty"] {
+        assert!(setup.local_branch_exists(branch));
+        assert!(!tracks_upstream(&setup, branch));
+    }
+}
+
+#[test]
+fn push_pushes_a_branch_without_upstream_and_tracks_it() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+
+    let data = sync_json(setup.local_path(), &["--push", "feature/local"]);
+    let pushed = assert_action(&data, "feature/local", "pushed");
+    assert_eq!(pushed["decidedBy"], "flag");
+    assert!(tracks_upstream(&setup, "feature/local"));
+    assert!(setup.remote_tracking_exists("origin/feature/local"));
+
+    // Next time it is synced like any other branch.
+    let data = sync_json(setup.local_path(), &[]);
+    assert_action(&data, "feature/local", "up-to-date");
+}
+
+#[test]
+fn keep_marks_a_branch_without_upstream_as_local() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+
+    let data = sync_json(setup.local_path(), &["--keep", "feature/local"]);
+    assert_eq!(
+        assert_action(&data, "feature/local", "kept")["decidedBy"],
+        "flag"
+    );
+
+    let data = sync_json(setup.local_path(), &[]);
+    let local = assert_action(&data, "feature/local", "no-upstream");
+    assert_eq!(reason(local), "kept local");
+    assert!(local.get("choices").is_none());
+    assert!(!tracks_upstream(&setup, "feature/local"));
+}
+
+#[test]
+fn apply_recommended_deletes_merged_branches_without_upstream() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+
+    let data = sync_json(setup.local_path(), &["--apply-recommended"]);
+    assert_action(&data, "feature/landed", "deleted");
+    assert_action(&data, "feature/local", "left-as-is");
+    assert_action(&data, "feature/empty", "left-as-is");
+
+    assert!(!setup.local_branch_exists("feature/landed"));
+    assert!(setup.local_branch_exists("feature/local"));
+    assert!(setup.local_branch_exists("feature/empty"));
+}
+
+#[test]
+fn dirty_branch_without_upstream_cannot_be_deleted() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+    setup.local_git(&["checkout", "-q", "feature/local"]);
+    std::fs::write(setup.local_path().join("local.txt"), "changed").unwrap();
+
+    let data = sync_json(setup.local_path(), &[]);
+    let local = assert_action(&data, "feature/local", "no-upstream");
+    assert_eq!(
+        local["choices"],
+        serde_json::json!(["push", "keep", "later"])
+    );
+    assert_eq!(data["currentBranch"]["pulled"], false);
+
+    let data = sync_json(setup.local_path(), &["--delete", "feature/local"]);
+    assert_action(&data, "feature/local", "failed");
+    assert!(setup.local_branch_exists("feature/local"));
+    assert_eq!(setup.local_current_branch(), "feature/local");
+}
+
+#[test]
+fn kept_branch_whose_remote_is_gone_is_not_offered_to_push() {
+    let setup = common::RepoWithRemote::new();
+    merged_and_unmerged_gone(&setup);
+
+    let data = sync_json(setup.local_path(), &["--keep", "feature/unmerged"]);
+    assert_action(&data, "feature/unmerged", "kept");
+
+    let data = sync_json(setup.local_path(), &[]);
+    let unmerged = assert_action(&data, "feature/unmerged", "no-upstream");
+    assert_eq!(reason(unmerged), "kept local");
+}
+
+#[test]
+fn default_branch_without_upstream_is_not_offered() {
+    let setup = common::RepoWithRemote::new();
+    setup.local_git(&["branch", "--unset-upstream", "main"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    let main = assert_action(&data, "main", "no-upstream");
+    assert!(main.get("choices").is_none());
+}
+
+#[test]
+fn branch_named_by_push_and_delete_fails() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+
+    let output = common::git_mate()
+        .args([
+            "--json",
+            "sync",
+            "--push",
+            "feature/local",
+            "--delete",
+            "feature/local",
+        ])
+        .current_dir(setup.local_path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error_code(&output, "error");
+    assert!(!tracks_upstream(&setup, "feature/local"));
+}
