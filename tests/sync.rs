@@ -1940,8 +1940,8 @@ fn apply_recommended_deletes_merged_branches_without_upstream() {
 
     let data = sync_json(setup.local_path(), &["--apply-recommended"]);
     assert_action(&data, "feature/landed", "deleted");
-    assert_action(&data, "feature/local", "left-as-is");
-    assert_action(&data, "feature/empty", "left-as-is");
+    assert_action(&data, "feature/local", "no-upstream");
+    assert_action(&data, "feature/empty", "no-upstream");
 
     assert!(!setup.local_branch_exists("feature/landed"));
     assert!(setup.local_branch_exists("feature/local"));
@@ -2014,4 +2014,16 @@ fn branch_named_by_push_and_delete_fails() {
         .clone();
     common::assert_json_error_code(&output, "error");
     assert!(!tracks_upstream(&setup, "feature/local"));
+}
+
+#[test]
+fn pushed_current_branch_counts_as_synced() {
+    let setup = common::RepoWithRemote::new();
+    local_only_branches(&setup);
+    setup.local_git(&["checkout", "-q", "feature/local"]);
+
+    let data = sync_json(setup.local_path(), &["--push", "feature/local"]);
+    assert_action(&data, "feature/local", "pushed");
+    assert_eq!(data["currentBranch"]["pulled"], true);
+    assert!(data["currentBranch"].get("pullSkippedReason").is_none());
 }

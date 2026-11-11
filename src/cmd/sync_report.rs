@@ -317,10 +317,17 @@ impl BranchOutcome {
         Self::gone(candidate, "pushed", "pushed; upstream set")
     }
 
-    /// Nobody decided (the chooser was cancelled, or there was no terminal
-    /// to ask in): nothing changed, so the next sync asks again.
+    /// Nobody decided (the chooser was cancelled, "Later" was picked, or
+    /// there was no terminal to ask in): nothing changed, so the next sync
+    /// asks again. A branch without upstream is then still just that, as it
+    /// is reported when it isn't offered at all (e.g. under `--json`).
     pub fn left_as_is(candidate: &Candidate) -> Self {
-        Self::gone(candidate, "left-as-is", candidate.kind.reason())
+        match candidate.kind {
+            CandidateKind::RemoteGone => {
+                Self::gone(candidate, "left-as-is", candidate.kind.reason())
+            }
+            CandidateKind::NoUpstream => Self::candidate(candidate),
+        }
     }
 
     /// Remote gone, and left alone by `--delete-pruned` for `reason`.
@@ -901,5 +908,46 @@ impl Drop for Progress {
         if let Some(ticker) = self.ticker.take() {
             let _ = ticker.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BranchOutcome, Candidate, CandidateKind, Choice, NO_UPSTREAM_CHOICES, REMOTE_GONE_CHOICES,
+        Unpushed,
+    };
+
+    fn candidate(kind: CandidateKind) -> Candidate {
+        Candidate {
+            branch: "feature/x".to_string(),
+            kind,
+            choices: match kind {
+                CandidateKind::RemoteGone => REMOTE_GONE_CHOICES,
+                CandidateKind::NoUpstream => NO_UPSTREAM_CHOICES,
+            },
+            detail: String::new(),
+            warn: false,
+            recommended: Choice::Later,
+            bulk_delete_blocker: None,
+            unpushed: Unpushed::None,
+        }
+    }
+
+    #[test]
+    fn undecided_remote_gone_branch_is_left_as_is() {
+        let outcome = BranchOutcome::left_as_is(&candidate(CandidateKind::RemoteGone));
+        assert_eq!(outcome.action, "left-as-is");
+    }
+
+    /// Cancelling the chooser, picking "Later" and having no terminal all
+    /// report it as `--json` does, where it is never offered.
+    #[test]
+    fn undecided_no_upstream_branch_is_reported_as_no_upstream() {
+        let candidate = candidate(CandidateKind::NoUpstream);
+        let outcome = BranchOutcome::left_as_is(&candidate);
+        let unoffered = BranchOutcome::candidate(&candidate);
+        assert_eq!(outcome.action, "no-upstream");
+        assert_eq!(outcome.reason, unoffered.reason);
     }
 }
