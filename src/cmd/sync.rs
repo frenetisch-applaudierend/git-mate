@@ -452,7 +452,7 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
     } else {
         match current_outcome {
             Some(o) if is_synced(o) => (true, None),
-            Some(o) if matches!(o.action.as_str(), "no-upstream" | "pushed") => (
+            Some(o) if o.action == "no-upstream" => (
                 false,
                 Some("no upstream configured for current branch".to_string()),
             ),
@@ -549,11 +549,11 @@ fn print_behind_base(branch: &str, behind: &BehindBase) {
 }
 
 /// Whether a branch is in line with its upstream after this run (or, under
-/// `--dry-run`, would be).
+/// `--dry-run`, would be). A branch pushed by sync is: it is its upstream.
 fn is_synced(outcome: &BranchOutcome) -> bool {
     matches!(
         outcome.action.as_str(),
-        "up-to-date" | "fast-forwarded" | "reset-to-upstream" | "merged" | "rebased"
+        "up-to-date" | "fast-forwarded" | "reset-to-upstream" | "merged" | "rebased" | "pushed"
     )
 }
 
