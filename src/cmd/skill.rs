@@ -39,7 +39,7 @@ pub enum SkillCommand {
 
 #[derive(clap::Args)]
 pub struct InstallArgs {
-    /// Install into the current repository's .claude/skills instead of ~/.claude/skills
+    /// Install into the current worktree's .claude/skills instead of ~/.claude/skills
     #[arg(long, conflicts_with = "dir")]
     pub project: bool,
     /// Install into this skills directory (the skill goes into <DIR>/git-mate/SKILL.md)
@@ -73,6 +73,9 @@ pub fn run(args: SkillArgs) -> Result<(), crate::output::CommandError> {
 fn install(args: InstallArgs) -> Result<(), String> {
     let skills_dir = match (args.dir, args.project) {
         (Some(dir), _) => dir,
+        // The current worktree: where Claude Code runs and the skill gets
+        // committed. The first `git worktree list` entry may be another
+        // branch's checkout, or a bare repository.
         (None, true) => crate::git::current_worktree_root()?
             .join(".claude")
             .join("skills"),

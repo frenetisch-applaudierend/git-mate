@@ -107,3 +107,46 @@ fn install_dir_writes_into_given_skills_directory() {
     assert_is_stub(&read_skill(&skills.path().join("git-mate/SKILL.md")));
     assert!(!home.path().join(".claude").exists());
 }
+
+#[test]
+fn install_project_from_linked_worktree_writes_into_that_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let home = tempfile::tempdir().unwrap();
+    let wt_root = tempfile::tempdir().unwrap();
+    let wt = wt_root.path().join("linked");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feature/x",
+        wt.to_str().unwrap(),
+    ]);
+
+    install(home.path(), &["--project"], &wt);
+
+    assert_is_stub(&read_skill(&wt.join(".claude/skills/git-mate/SKILL.md")));
+    assert!(!repo.path().join(".claude").exists());
+}
+
+#[test]
+fn install_project_in_worktree_of_bare_repo_writes_into_that_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let home = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let bare = root.path().join("repo.git");
+    let wt = root.path().join("main");
+    repo.git(&["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+    let status = std::process::Command::new("git")
+        .args(["-C", bare.to_str().unwrap(), "worktree", "add", "-q"])
+        .arg(&wt)
+        .arg("HEAD")
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    install(home.path(), &["--project"], &wt);
+
+    assert_is_stub(&read_skill(&wt.join(".claude/skills/git-mate/SKILL.md")));
+    assert!(!bare.join(".claude").exists());
+}
