@@ -2015,3 +2015,53 @@ fn branch_named_by_push_and_delete_fails() {
     common::assert_json_error_code(&output, "error");
     assert!(!tracks_upstream(&setup, "feature/local"));
 }
+
+fn two_days_ago() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    now - 2 * 24 * 60 * 60
+}
+
+#[test]
+fn stale_branch_without_commits_of_its_own_is_recommended_for_deletion() {
+    let setup = common::RepoWithRemote::new();
+    common::git_at(
+        setup.local_path(),
+        two_days_ago(),
+        &["branch", "feature/stale"],
+    );
+    setup.local_git(&["branch", "feature/fresh"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    let stale = assert_action(&data, "feature/stale", "no-upstream");
+    assert_eq!(stale["recommended"], "delete");
+    assert_eq!(
+        stale["detail"],
+        "no commits of its own, untouched for 2 days"
+    );
+    let fresh = assert_action(&data, "feature/fresh", "no-upstream");
+    assert_eq!(fresh["recommended"], "later");
+
+    let data = sync_json(setup.local_path(), &["--apply-recommended"]);
+    assert_action(&data, "feature/stale", "deleted");
+    assert!(!setup.local_branch_exists("feature/stale"));
+    assert!(setup.local_branch_exists("feature/fresh"));
+}
+
+#[test]
+fn stale_current_branch_without_commits_is_not_recommended_for_deletion() {
+    let setup = common::RepoWithRemote::new();
+    common::git_at(
+        setup.local_path(),
+        two_days_ago(),
+        &["branch", "feature/stale"],
+    );
+    setup.local_git(&["checkout", "-q", "feature/stale"]);
+
+    let data = sync_json(setup.local_path(), &[]);
+    let stale = assert_action(&data, "feature/stale", "no-upstream");
+    assert_eq!(stale["recommended"], "later");
+    assert_eq!(stale["detail"], "no commits of its own");
+}

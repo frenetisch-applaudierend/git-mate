@@ -51,8 +51,9 @@ stop tracking their deleted upstream, so they aren't offered again.
 Local branches without an upstream (never pushed, or pushed without -u) are listed
 next, each with an action to choose: push it (setting the pushed branch as its
 upstream), delete it, keep it local (sync stops asking about it), or ask again next
-time. One whose commits are already in the default branch starts out as delete, the
-others as ask later; one whose worktree has uncommitted changes can't be deleted.
+time. One whose commits are already in the default branch starts out as delete, as
+does one without commits of its own that hasn't moved for a day (unless it is the
+current branch); the others start out as ask later; one whose worktree has uncommitted changes can't be deleted.
 --push <branch>, --delete <branch> and --keep <branch> decide for them without the
 chooser, and --apply-recommended applies the preselected action to the others. Under
 --json, they are reported as `no-upstream` with `detail`, `recommended` and `choices`.
@@ -289,7 +290,8 @@ pub fn sync(args: SyncArgs) -> Result<SyncData, String> {
             } else if kept_local.contains(branch) {
                 BranchOutcome::kept_local(branch)
             } else {
-                match no_upstream_candidate(branch, &worktrees, &default_branch) {
+                let is_current = current_branch.as_deref() == Some(branch.as_str());
+                match no_upstream_candidate(branch, is_current, &worktrees, &default_branch) {
                     Ok(candidate) => {
                         local_candidates.push(candidate);
                         continue;
@@ -1100,13 +1102,20 @@ fn pruned_branch_status(
     deletable_unless_dirty(branch, worktrees, candidate)
 }
 
+/// How long a branch without commits of its own must have sat unchanged
+/// before sync suggests deleting it: long enough that it isn't one just
+/// created to start work on.
+const STALE_EMPTY_BRANCH_SECONDS: u64 = 24 * 60 * 60;
+
 /// Offer a branch without upstream to be pushed, deleted or kept local.
-/// Only one whose commits already landed in the default branch is
-/// preselected for deletion; one without commits of its own (e.g. just
-/// created) or with commits that exist nowhere else is left for the user to
-/// decide. Deleting is not offered when its worktree has uncommitted changes.
+/// Preselected for deletion: one whose commits already landed in the default
+/// branch, and one without commits of its own that hasn't moved for a day
+/// (unless sync runs from it). One just created, or with commits that exist
+/// nowhere else, is left for the user to decide. Deleting is not offered
+/// when its worktree has uncommitted changes.
 fn no_upstream_candidate(
     branch: &str,
+    is_current: bool,
     worktrees: &[crate::git::WorktreeEntry],
     default_branch: &DefaultBranch,
 ) -> Result<Candidate, String> {
@@ -1121,12 +1130,16 @@ fn no_upstream_candidate(
     };
     let (detail, warn, recommended, unpushed) = match default_branch.remote.as_deref() {
         Some(remote) => match crate::git::content_merged_into(remote, branch)? {
-            Some(crate::git::MergedAt::Contained) => (
-                "no commits of its own".to_string(),
-                false,
-                Choice::Later,
-                Unpushed::None,
-            ),
+            Some(crate::git::MergedAt::Contained) => {
+                let idle = idle_seconds(crate::git::branch_last_moved(branch));
+                let stale = !is_current && idle.is_none_or(|s| s >= STALE_EMPTY_BRANCH_SECONDS);
+                let detail = match idle {
+                    Some(s) if stale => format!("no commits of its own, untouched for {}", days(s)),
+                    _ => "no commits of its own".to_string(),
+                };
+                let recommended = if stale { Choice::Delete } else { Choice::Later };
+                (detail, false, recommended, Unpushed::None)
+            }
             Some(merged_at) => (
                 merged_detail(&merged_at, remote),
                 false,
@@ -1173,6 +1186,23 @@ fn no_upstream_candidate(
         bulk_delete_blocker: None,
         unpushed,
     })
+}
+
+/// Seconds since `moved_at` (unix time); `None` when unknown.
+fn idle_seconds(moved_at: Option<u64>) -> Option<u64> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    moved_at.map(|t| now.saturating_sub(t))
+}
+
+/// `seconds` as whole days, e.g. "3 days".
+fn days(seconds: u64) -> String {
+    match (seconds / (24 * 60 * 60)).max(1) {
+        1 => "1 day".to_string(),
+        n => format!("{n} days"),
+    }
 }
 
 /// A branch checked out in a worktree with uncommitted changes is never a

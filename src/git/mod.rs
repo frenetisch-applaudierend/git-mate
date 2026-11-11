@@ -10,7 +10,7 @@ mod run;
 mod worktree;
 
 pub use base::{
-    Base, BaseSource, DeletedBranch, Detection, behind, behind_base, branch_ref,
+    Base, BaseSource, DeletedBranch, Detection, behind, behind_base, branch_last_moved, branch_ref,
     default_base_branch, detect_base,
 };
 pub use branch::{

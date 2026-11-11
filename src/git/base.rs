@@ -338,6 +338,15 @@ fn switched_from(branch: &str, created: u64) -> Option<String> {
         })
 }
 
+/// When `branch` last moved (was created, committed to, reset, ...), as unix
+/// time, from the newest entry of its reflog. `None` when it has none: they
+/// expired (after 90 days by default), or were never written.
+pub fn branch_last_moved(branch: &str) -> Option<u64> {
+    reflog(&format!("refs/heads/{branch}"))?
+        .first()
+        .map(|entry| entry.time)
+}
+
 struct ReflogEntry {
     /// Unix time.
     time: u64,
