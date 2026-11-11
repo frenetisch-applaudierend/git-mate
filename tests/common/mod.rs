@@ -303,8 +303,6 @@ pub fn parse_single_json(stdout: &[u8]) -> serde_json::Value {
     serde_json::from_str(&text).unwrap()
 }
 
-/// Asserts that a failed `--json` run reported an error mentioning each of
-/// `needles`.
 /// Assert `stdout` is an error envelope with `code`, and return its `data`.
 pub fn assert_json_error_code(stdout: &[u8], code: &str) -> serde_json::Value {
     let json = parse_single_json(stdout);
@@ -313,6 +311,8 @@ pub fn assert_json_error_code(stdout: &[u8], code: &str) -> serde_json::Value {
     json["data"].clone()
 }
 
+/// Asserts that a failed `--json` run reported an error mentioning each of
+/// `needles`.
 pub fn assert_json_error(stdout: &[u8], needles: &[&str]) {
     let json = parse_single_json(stdout);
     assert_eq!(json["ok"], false);
