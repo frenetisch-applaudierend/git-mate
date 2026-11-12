@@ -27,7 +27,9 @@ pub use refs::{
     commit_exists, commit_summary, count_commits, count_commits_not_in, is_ancestor, resolve_ref,
     update_ref, update_ref_from,
 };
-pub use remote::{fetch, fetch_all, list_remote_tracking_refs, list_remotes};
+pub use remote::{
+    fetch, fetch_all, list_remote_tracking_refs, list_remotes, ls_remote, remote_urls,
+};
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
     OperationTarget, WorktreeEntry, add_worktree, branch_being_rebased, current_worktree_root,

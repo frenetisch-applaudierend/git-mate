@@ -1,4 +1,5 @@
 pub mod checkout;
+mod checkout_pr;
 mod confirm;
 pub mod finish;
 pub mod init;

@@ -20,6 +20,10 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
     retrying with `--force`.
   - `branch_exists`, `branch_not_found`, `invalid_branch_name`, `default_branch`: report
     and ask; don't guess another name.
+  - `pull_request_branch_not_found`: the pull request comes from a fork (or its branch
+    was deleted); git-mate can't check it out. Tell the user. The other pull request
+    errors (`remote_not_found`, `pull_request_not_found`, `ambiguous_pull_request_branch`):
+    report and ask.
   - `stash_reapply_failed`: the command succeeded, but the carried-over changes are still
     in the stash. Tell the user.
 - **git-mate never prompts you.** With `--json` (or without a terminal) every question is
@@ -44,6 +48,7 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
 | know which branches exist, where they are checked out and their state | `git mate overview --json` |
 | start work on a new branch | `git mate new <branch> --json` |
 | switch to an existing (local or remote) branch | `git mate checkout <branch> --json` |
+| check out the branch of a GitHub pull request | `git mate checkout <pull-request-url> --json` |
 | move a branch into / out of a linked worktree | `git mate checkout [<branch>] -w` / `-m` |
 | bring all local branches up to date with the remote | `git mate sync --json` |
 | rebase a branch (or a stack) onto the branch it is based on | `git mate update --json` |
@@ -75,10 +80,12 @@ Creates the branch from the default branch (fetching first) and switches to it.
 - Result: `data.branch`, `data.path`, `data.worktree` (`main`/`linked`). `cd` to
   `data.path`.
 
-### `checkout <branch>` (alias `co`)
+### `checkout <branch | pull-request-url>` (alias `co`)
 
 Switches to an existing branch, fetching if it isn't known locally. If it is already
 checked out somewhere, it just reports that worktree (`data.action: "navigated"`).
+Given a GitHub pull request URL, it checks out the pull request's branch (not for pull
+requests from forks); `data.branch` is the branch, `data.pullRequest` the pull request.
 
 - `-w` / `-m` make sure it ends up in a linked / the main worktree, moving it if needed.
   Without a branch name they relocate the current branch with its uncommitted changes.

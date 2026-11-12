@@ -1192,3 +1192,156 @@ fn json_default_branch_in_linked_worktree_is_default_branch() {
     );
     assert_eq!(repo.current_branch(), "feature/x");
 }
+
+const PR_REMOTE_URL: &str = "https://github.com/acme/widget.git";
+
+/// A clone whose `origin` claims to be `remote_url` on GitHub while git is
+/// redirected to the local bare repo via `url.<base>.insteadOf`.
+fn repo_posing_as_github(remote_url: &str) -> common::RepoWithRemote {
+    let repo = common::RepoWithRemote::new();
+    let bare = repo.bare_path().to_str().unwrap().to_string();
+    repo.local_git(&["config", &format!("url.{bare}.insteadOf"), remote_url]);
+    repo.local_git(&["remote", "set-url", "origin", remote_url]);
+    repo
+}
+
+/// Publish `commit` as the head of pull request `number` on the bare remote.
+fn open_pull_request(repo: &common::RepoWithRemote, number: u32, commit: &str) {
+    common::git(
+        repo.bare_path(),
+        &["update-ref", &format!("refs/pull/{number}/head"), commit],
+    );
+}
+
+fn remote_tip(repo: &common::RepoWithRemote, branch: &str) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", &format!("refs/heads/{branch}")])
+        .current_dir(repo.bare_path())
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+const PR_URL: &str = "https://github.com/acme/widget/pull/7";
+
+#[test]
+fn checkout_pull_request_url_checks_out_its_branch() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+    repo.push_branch_to_remote("feature/login");
+    open_pull_request(&repo, 7, &remote_tip(&repo, "feature/login"));
+
+    let data = checkout_json(repo.local_path(), &format!("{PR_URL}/files"));
+
+    assert_eq!(repo.local_current_branch(), "feature/login");
+    assert_eq!(data["branch"], "feature/login");
+    assert_eq!(data["fetched"], true);
+    assert_eq!(data["pullRequest"]["number"], 7);
+    assert_eq!(data["pullRequest"]["url"], format!("{PR_URL}/files"));
+    assert_eq!(data["pullRequest"]["remote"], "origin");
+}
+
+#[test]
+fn checkout_pull_request_matches_an_scp_like_remote_url() {
+    let repo = repo_posing_as_github("git@github.com:acme/widget.git");
+    repo.push_branch_to_remote("feature/login");
+    open_pull_request(&repo, 7, &remote_tip(&repo, "feature/login"));
+
+    let data = checkout_json(repo.local_path(), PR_URL);
+
+    assert_eq!(data["branch"], "feature/login");
+    assert_eq!(repo.local_current_branch(), "feature/login");
+}
+
+#[test]
+fn checkout_pull_request_does_not_fetch_an_up_to_date_branch() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+    repo.push_branch_to_remote("feature/login");
+    open_pull_request(&repo, 7, &remote_tip(&repo, "feature/login"));
+    repo.local_fetch();
+
+    let data = checkout_json(repo.local_path(), PR_URL);
+
+    assert_eq!(data["fetched"], false);
+    assert_eq!(repo.local_current_branch(), "feature/login");
+}
+
+#[test]
+fn checkout_pull_request_fetches_a_branch_behind_the_pull_request() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+    repo.push_branch_to_remote("feature/login");
+    repo.local_fetch();
+    repo.push_commit_to_remote_branch("feature/login", "newer");
+    let head = remote_tip(&repo, "feature/login");
+    open_pull_request(&repo, 7, &head);
+
+    let data = checkout_json(repo.local_path(), PR_URL);
+
+    assert_eq!(data["fetched"], true);
+    assert_eq!(repo.branch_tip("origin/feature/login"), head);
+    assert_eq!(repo.local_head_commit(), head);
+}
+
+#[test]
+fn checkout_pull_request_from_a_fork_is_rejected() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+    // A head commit no branch on the remote points to, as for a fork.
+    repo.push_branch_to_remote("fork-work");
+    open_pull_request(&repo, 7, &remote_tip(&repo, "fork-work"));
+    repo.delete_remote_branch("fork-work");
+
+    let output = checkout_json_err(repo.local_path(), &[PR_URL]);
+
+    let data = common::assert_json_error_code(&output, "pull_request_branch_not_found");
+    assert_eq!(data["number"], 7);
+    assert_eq!(data["remote"], "origin");
+    assert_eq!(repo.local_current_branch(), "main");
+}
+
+#[test]
+fn checkout_pull_request_that_does_not_exist_fails() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+
+    let output = checkout_json_err(repo.local_path(), &[PR_URL]);
+
+    let data = common::assert_json_error_code(&output, "pull_request_not_found");
+    assert_eq!(data["number"], 7);
+    assert_eq!(repo.local_current_branch(), "main");
+}
+
+#[test]
+fn checkout_pull_request_of_another_repository_fails() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+
+    let output = checkout_json_err(repo.local_path(), &["https://github.com/acme/other/pull/7"]);
+
+    common::assert_json_error_code(&output, "remote_not_found");
+}
+
+#[test]
+fn checkout_pull_request_with_several_branches_at_its_head_fails() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+    repo.push_branch_to_remote("feature/a");
+    common::git(repo.bare_path(), &["branch", "feature/b", "feature/a"]);
+    open_pull_request(&repo, 7, &remote_tip(&repo, "feature/a"));
+
+    let output = checkout_json_err(repo.local_path(), &[PR_URL]);
+
+    let data = common::assert_json_error_code(&output, "ambiguous_pull_request_branch");
+    assert_eq!(
+        data["branches"],
+        serde_json::json!(["feature/a", "feature/b"])
+    );
+    assert_eq!(repo.local_current_branch(), "main");
+}
+
+#[test]
+fn checkout_rejects_a_url_that_is_not_a_pull_request() {
+    let repo = repo_posing_as_github(PR_REMOTE_URL);
+
+    let output = checkout_json_err(
+        repo.local_path(),
+        &["https://github.com/acme/widget/issues/7"],
+    );
+
+    common::assert_json_error_code(&output, "invalid_pull_request_url");
+}

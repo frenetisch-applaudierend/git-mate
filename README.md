@@ -53,11 +53,18 @@ git mate new feature/login -w --from .       # branch off the current branch, ta
 git mate new feature/login -w --start-fresh  # leave uncommitted changes behind
 ```
 
-### `git mate checkout <branch>` (alias: `co`)
+### `git mate checkout <branch | pull-request-url>` (alias: `co`)
 
 Checks out an existing branch — local or remote. If the branch is not known locally (neither as a
 local branch nor as a remote-tracking branch), the remotes are fetched first, so a branch someone just
 pushed can be checked out right away.
+
+Given the URL of a GitHub pull request (`https://github.com/<owner>/<repo>/pull/<number>`, with or
+without a trailing `/files`, `/commits`, ...), it checks out the branch the pull request was opened
+from. The remote pointing to that repository is asked which of its branches is at the pull request's
+head and fetched if its copy is missing or behind; nothing but git is needed, and GitHub Enterprise
+hosts work too. Pull requests opened from a fork are not supported: their branch is not on the
+remote, which is also what happens when a pull request's branch has been deleted.
 
 Without `-m` or `-w`, this follows `mate.defaultBranchMode` for branches that are not checked out yet.
 If the branch is already checked out in any worktree, it navigates there instead. The default branch
@@ -84,7 +91,7 @@ The default branch is only allowed in the main worktree, so `-w` rejects it.
 
 With `--json`, `git mate checkout` prints a single JSON document on stdout describing the result
 (`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — `stashed`
-and `fetched`).
+and `fetched`, plus `pullRequest` with `number`, `url` and `remote` when given a pull request URL).
 
 ```bash
 git mate checkout feature/login                    # follow default placement, or jump to where it's already checked out
@@ -95,6 +102,8 @@ git mate checkout feature/login -w                 # ensure the branch is in a l
 git mate checkout feature/login -m                 # ensure the branch is in the main worktree
 git mate checkout feature/login -m --take-changes  # bring changes along from a linked worktree you're not in
 git mate checkout feature/login -w --start-fresh   # leave uncommitted changes in the main worktree
+git mate checkout https://github.com/acme/widget/pull/123     # check out the branch of a pull request
+git mate checkout https://github.com/acme/widget/pull/123 -w  # ... in a linked worktree
 ```
 
 ### `git mate finish [<branch>]`
@@ -252,6 +261,11 @@ On failure, `error.code` tells what went wrong, and `data` (when present) gives 
 | `uncommitted_changes` | Uncommitted changes are in the way | `path` (the worktree), `retryWith` (flags that resolve it, in place of `--take-changes`/`--start-fresh` if given; empty: commit or stash first) |
 | `unpushed_commits` | `finish` would lose unpushed commits | `branch`, `retryWith` |
 | `branch_not_found` | The branch doesn't exist (`checkout` also looked on the remotes) | `branch` |
+| `invalid_pull_request_url` | `checkout` was given a URL that is not a pull request URL | |
+| `remote_not_found` | No remote points to the pull request's repository | `number`, `url` |
+| `pull_request_not_found` | The pull request doesn't exist on the remote | `number`, `url`, `remote` |
+| `pull_request_branch_not_found` | No branch on the remote is at the pull request's head: it was opened from a fork, or its branch was deleted | `number`, `url`, `remote` |
+| `ambiguous_pull_request_branch` | Several branches on the remote are at the pull request's head | `number`, `url`, `remote`, `branches` |
 | `branch_exists` | `new` was given a branch that already exists | `branch` |
 | `invalid_branch_name` | Not a valid branch name | `branch` |
 | `default_branch` | Not possible with the default branch (`finish` it, or put it in a linked worktree) | `branch` |

@@ -1,5 +1,6 @@
 #[derive(clap::Args)]
 pub struct CheckoutArgs {
+    /// Branch to check out, or the URL of a GitHub pull request to check out its branch
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::branch_completer))]
     pub branch: Option<String>,
     #[arg(
@@ -67,8 +68,12 @@ struct CheckoutData {
     action: &'static str,
     /// Uncommitted changes were stashed and reapplied at the destination.
     stashed: bool,
-    /// The remotes were fetched because the branch was not known locally.
+    /// The remotes were fetched because the branch was not known locally, or
+    /// the pull request's remote because its branch was missing or behind.
     fetched: bool,
+    /// The pull request the branch was resolved from, when given a URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pull_request: Option<crate::cmd::checkout_pr::PullRequestData>,
 }
 
 impl CheckoutData {
@@ -85,13 +90,23 @@ impl CheckoutData {
             action,
             stashed: false,
             fetched: false,
+            pull_request: None,
         }
     }
 }
 
 pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
-    let branch = resolve_branch(&args)?;
-    let fetched = fetch_if_unknown(&branch)?;
+    let (branch, fetched, pull_request) = match args.branch.as_deref() {
+        Some(arg) if crate::cmd::checkout_pr::is_url(arg) => {
+            let pr = crate::cmd::checkout_pr::resolve(arg)?;
+            (pr.branch, pr.fetched, Some(pr.data))
+        }
+        _ => {
+            let branch = resolve_branch(&args)?;
+            let fetched = fetch_if_unknown(&branch)?;
+            (branch, fetched, None)
+        }
+    };
     prune_missing_worktree(&branch)?;
     let changes = Changes::from_flags(args.take_changes, args.start_fresh);
     let mut data = if args.main_worktree || args.linked_worktree {
@@ -108,6 +123,7 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
         default_checkout(&branch)
     }?;
     data.fetched = fetched;
+    data.pull_request = pull_request;
     if crate::output::json_mode() {
         crate::output::emit_json_success("checkout", data);
     }
