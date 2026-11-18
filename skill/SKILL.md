@@ -22,8 +22,8 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
     and ask; don't guess another name.
   - `pull_request_branch_not_found`: the pull request comes from a fork (or its branch
     was deleted); git-mate can't check it out. Tell the user. The other pull request
-    errors (`remote_not_found`, `pull_request_not_found`, `ambiguous_pull_request_branch`):
-    report and ask.
+    errors (`invalid_pull_request_url`, `remote_not_found`, `pull_request_not_found`,
+    `ambiguous_pull_request_branch`): report and ask.
   - `stash_reapply_failed`: the command succeeded, but the carried-over changes are still
     in the stash. Tell the user.
 - **git-mate never prompts you.** With `--json` (or without a terminal) every question is
