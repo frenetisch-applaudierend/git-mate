@@ -1345,3 +1345,100 @@ fn checkout_rejects_a_url_that_is_not_a_pull_request() {
 
     common::assert_json_error_code(&output, "invalid_pull_request_url");
 }
+
+#[test]
+fn checkout_finish_removes_linked_worktree_of_previous_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/done");
+
+    let (_proto_guard, proto_path) = common::proto_file();
+    let output = common::git_mate()
+        .args(["--json", "checkout", "main", "--finish"])
+        .env("GIT_MATE_PROTO", &proto_path)
+        .current_dir(&wt_path)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::parse_single_json(&output)["data"].clone();
+
+    assert_eq!(data["branch"], "main");
+    assert_eq!(data["finished"]["branch"], "feature/done");
+    assert_eq!(data["finished"]["worktree"], "linked");
+    assert!(!wt_path.exists(), "linked worktree should be removed");
+    assert!(!repo.branch_exists("feature/done"));
+    let proto = std::fs::read_to_string(&proto_path).unwrap();
+    assert_eq!(
+        proto.lines().filter(|l| l.starts_with("CD:")).count(),
+        1,
+        "only the checkout should change directory, got: {proto:?}"
+    );
+}
+
+#[test]
+fn checkout_finish_deletes_previous_branch_in_main_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-b", "feature/done"]);
+    repo.git(&["branch", "feature/next"]);
+
+    let data = checkout_json_ok(repo.path(), &["feature/next", "--finish"]);
+
+    assert_eq!(data["finished"]["branch"], "feature/done");
+    assert_eq!(repo.current_branch(), "feature/next");
+    assert!(!repo.branch_exists("feature/done"));
+}
+
+#[test]
+fn checkout_finish_keeps_the_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["branch", "feature/next"]);
+
+    let data = checkout_json_ok(repo.path(), &["feature/next", "--finish"]);
+
+    assert!(data.get("finished").is_none());
+    assert_eq!(repo.current_branch(), "feature/next");
+    assert!(repo.branch_exists("main"));
+}
+
+#[test]
+fn checkout_finish_refuses_the_branch_being_checked_out() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["checkout", "-b", "feature/current"]);
+
+    let output = checkout_json_err(repo.path(), &["-w", "--finish"]);
+
+    common::assert_json_error_code(&output, "finish_current_branch");
+    assert_eq!(repo.current_branch(), "feature/current");
+}
+
+#[test]
+fn checkout_finish_with_uncommitted_changes_checks_out_nothing() {
+    let (repo, wt_root) = repo_with_tracked_file();
+    let wt_path = create_linked_worktree(&repo, &wt_root, "feature/dirty");
+    std::fs::write(wt_path.join("tracked.txt"), "changed\n").unwrap();
+    repo.git(&["branch", "feature/next"]);
+
+    let output = checkout_json_err(&wt_path, &["feature/next", "--finish"]);
+
+    common::assert_json_error_code(&output, "uncommitted_changes");
+    assert!(wt_path.exists());
+    assert!(repo.branch_exists("feature/dirty"));
+    assert_eq!(repo.current_branch(), "main");
+}
+
+#[test]
+fn checkout_finish_with_unpushed_commits_checks_out_nothing() {
+    let repo = common::RepoWithRemote::new();
+    repo.local_git(&["checkout", "-b", "feature/x"]);
+    repo.local_git(&["commit", "--allow-empty", "-m", "local only"]);
+
+    let output = checkout_json_err(repo.local_path(), &["main", "--finish"]);
+
+    common::assert_json_error_code(&output, "unpushed_commits");
+    assert_eq!(repo.local_current_branch(), "feature/x");
+}

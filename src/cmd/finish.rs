@@ -12,7 +12,7 @@ pub struct FinishArgs {
 /// What `finish` did, reported in `--json` mode.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FinishData {
+pub(crate) struct FinishData {
     branch: String,
     /// "main" or "linked" if the branch was checked out, else absent.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,11 +33,6 @@ struct FinishData {
 pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
-    let main_wt_path = main_wt
-        .path
-        .to_str()
-        .ok_or("main worktree path is not valid UTF-8")?
-        .to_string();
     let cwd = std::env::current_dir()
         .map_err(|e| format!("could not determine current directory: {e}"))?;
 
@@ -88,12 +83,92 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
         return Ok(());
     }
 
-    if !args.force && crate::git::has_unpushed_commits(&main_wt_path, &target_branch)? {
+    let data = finish_branch(&target_branch, args.force, true)?;
+    if crate::output::json_mode() {
+        crate::output::emit_json_success("finish", data);
+    }
+    Ok(())
+}
+
+/// Fail if finishing `branch` without `--force` would lose work: commits that
+/// exist on no remote, or uncommitted changes in its linked worktree.
+pub(crate) fn ensure_finishable(branch: &str) -> Result<(), crate::output::CommandError> {
+    let worktrees = crate::git::list_worktrees()?;
+    let main_wt = worktrees.first().ok_or("no worktrees found")?;
+    let main_wt_path = main_wt
+        .path
+        .to_str()
+        .ok_or("main worktree path is not valid UTF-8")?;
+    ensure_no_unpushed_commits(main_wt_path, branch)?;
+    if let Some(wt) = worktrees
+        .iter()
+        .skip(1)
+        .find(|wt| wt.branch.as_deref() == Some(branch))
+    {
+        ensure_clean_linked_worktree(wt, branch)?;
+    }
+    Ok(())
+}
+
+fn ensure_no_unpushed_commits(
+    main_wt_path: &str,
+    branch: &str,
+) -> Result<(), crate::output::CommandError> {
+    if crate::git::has_unpushed_commits(main_wt_path, branch)? {
         return Err(crate::output::CommandError::with_data(
-            format!("branch '{target_branch}' has unpushed commits; use --force to delete anyway"),
+            format!("branch '{branch}' has unpushed commits; use --force to delete anyway"),
             "unpushed_commits",
-            serde_json::json!({ "branch": target_branch, "retryWith": ["--force"] }),
+            serde_json::json!({ "branch": branch, "retryWith": ["--force"] }),
         ));
+    }
+    Ok(())
+}
+
+fn ensure_clean_linked_worktree(
+    wt: &crate::git::WorktreeEntry,
+    branch: &str,
+) -> Result<(), crate::output::CommandError> {
+    if !wt.path.exists() {
+        return Ok(());
+    }
+    let path = wt.path.to_str().ok_or("worktree path is not valid UTF-8")?;
+    if !crate::git::is_worktree_clean(path)? {
+        return Err(crate::output::CommandError::uncommitted_changes(
+            format!(
+                "worktree for '{branch}' at {} has uncommitted changes; use --force to discard them",
+                crate::output::display_path(&wt.path)
+            ),
+            &wt.path,
+            &["--force"],
+        ));
+    }
+    Ok(())
+}
+
+/// Finish an existing `branch`: remove its linked worktree or switch the main
+/// worktree away from it, then delete it. With `navigate`, the shell is sent
+/// to the main worktree when it was inside the removed worktree.
+pub(crate) fn finish_branch(
+    target_branch: &str,
+    force: bool,
+    navigate: bool,
+) -> Result<FinishData, crate::output::CommandError> {
+    let worktrees = crate::git::list_worktrees()?;
+    let main_wt = worktrees.first().ok_or("no worktrees found")?;
+    let main_wt_path = main_wt
+        .path
+        .to_str()
+        .ok_or("main worktree path is not valid UTF-8")?
+        .to_string();
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("could not determine current directory: {e}"))?;
+    let target_wt = worktrees
+        .iter()
+        .find(|wt| wt.branch.as_deref() == Some(target_branch));
+    let target_branch = target_branch.to_string();
+
+    if !force {
+        ensure_no_unpushed_commits(&main_wt_path, &target_branch)?;
     }
 
     let mut data = FinishData {
@@ -114,7 +189,7 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
                     &target_branch,
                 ));
             }
-            if args.force {
+            if force {
                 crate::git::checkout_force_in(&main_wt_path, &default)?;
             } else {
                 crate::git::checkout_in(&main_wt_path, &default)?;
@@ -131,18 +206,10 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
         Some(wt) => {
             let in_this_wt = cwd.starts_with(&wt.path);
             if wt.path.exists() {
-                let path = wt.path.to_str().ok_or("worktree path is not valid UTF-8")?;
-                if !args.force && !crate::git::is_worktree_clean(path)? {
-                    return Err(crate::output::CommandError::uncommitted_changes(
-                        format!(
-                            "worktree for '{target_branch}' at {} has uncommitted changes; use --force to discard them",
-                            crate::output::display_path(&wt.path)
-                        ),
-                        &wt.path,
-                        &["--force"],
-                    ));
+                if !force {
+                    ensure_clean_linked_worktree(wt, &target_branch)?;
                 }
-                crate::git::remove_worktree(&wt.path, args.force)?;
+                crate::git::remove_worktree(&wt.path, force)?;
             } else {
                 // Its directory was deleted without git; drop the stale entry.
                 crate::git::prune_worktrees()?;
@@ -157,7 +224,7 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
             ));
             data.worktree = Some("linked");
             data.path = Some(wt.path.clone());
-            if in_this_wt {
+            if navigate && in_this_wt {
                 let canonical = std::fs::canonicalize(&main_wt.path)
                     .map_err(|e| format!("could not canonicalize path: {e}"))?;
                 crate::shell_protocol::emit_cd(&canonical);
@@ -175,11 +242,7 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
     if target_wt.is_some() {
         crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
     }
-
-    if crate::output::json_mode() {
-        crate::output::emit_json_success("finish", data);
-    }
-    Ok(())
+    Ok(data)
 }
 
 /// The branch of the worktree the command was started in, which no longer

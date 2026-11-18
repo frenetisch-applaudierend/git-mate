@@ -29,6 +29,11 @@ pub struct CheckoutArgs {
         help = "Leave uncommitted changes in the main worktree when relocating the branch out of it (local config files are still copied)"
     )]
     pub start_fresh: bool,
+    #[arg(
+        long,
+        help = "Finish the current branch after checking out the new one, unless it is the default branch"
+    )]
+    pub finish: bool,
 }
 
 /// What to do with uncommitted changes in the worktree a branch is relocated
@@ -74,6 +79,9 @@ struct CheckoutData {
     /// The pull request the branch was resolved from, when given a URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pull_request: Option<crate::cmd::checkout_pr::PullRequestData>,
+    /// The previously current branch finished because of `--finish`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finished: Option<crate::cmd::finish::FinishData>,
 }
 
 impl CheckoutData {
@@ -91,6 +99,7 @@ impl CheckoutData {
             stashed: false,
             fetched: false,
             pull_request: None,
+            finished: None,
         }
     }
 }
@@ -106,6 +115,11 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
             let fetched = fetch_if_unknown(&branch)?;
             (branch, fetched, None)
         }
+    };
+    let to_finish = if args.finish {
+        branch_to_finish(&branch)?
+    } else {
+        None
     };
     prune_missing_worktree(&branch)?;
     let changes = Changes::from_flags(args.take_changes, args.start_fresh);
@@ -124,10 +138,35 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
     }?;
     data.fetched = fetched;
     data.pull_request = pull_request;
+    if let Some(previous) = to_finish {
+        data.finished = Some(crate::cmd::finish::finish_branch(&previous, false, false)?);
+    }
     if crate::output::json_mode() {
         crate::output::emit_json_success("checkout", data);
     }
     Ok(())
+}
+
+/// The branch `--finish` finishes once `branch` is checked out: the current
+/// branch, unless it is the default branch (or there is none). Fails up front
+/// when finishing it would lose work, so nothing is checked out in that case.
+fn branch_to_finish(branch: &str) -> Result<Option<String>, crate::output::CommandError> {
+    if crate::cwd::vanished().is_some() {
+        return Ok(None);
+    }
+    let current = crate::git::current_branch()?;
+    if current == "HEAD" || current == crate::git::detect_default_branch(false)? {
+        return Ok(None);
+    }
+    if current == branch {
+        return Err(crate::output::CommandError::branch(
+            format!("cannot use --finish when checking out the current branch {branch}"),
+            "finish_current_branch",
+            branch,
+        ));
+    }
+    crate::cmd::finish::ensure_finishable(&current)?;
+    Ok(Some(current))
 }
 
 fn resolve_checkout_target(
@@ -243,6 +282,7 @@ fn default_checkout(branch: &str) -> Result<CheckoutData, crate::output::Command
             linked_worktree: false,
             take_changes: false,
             start_fresh: false,
+            finish: false,
         },
         branch,
     )?;

@@ -89,9 +89,14 @@ overwriting files that already exist there.
 
 The default branch is only allowed in the main worktree, so `-w` rejects it.
 
+`--finish` finishes the branch you were on once the checkout succeeded, as `git mate finish` would,
+unless it is the default branch. It checks first that finishing it loses nothing (no unpushed commits,
+no uncommitted changes in its linked worktree) and otherwise fails before checking anything out.
+
 With `--json`, `git mate checkout` prints a single JSON document on stdout describing the result
 (`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — `stashed`
-and `fetched`, plus `pullRequest` with `number`, `url` and `remote` when given a pull request URL).
+and `fetched`, plus `pullRequest` with `number`, `url` and `remote` when given a pull request URL, and
+`finished`, shaped like the output of `git mate finish`, when `--finish` finished a branch).
 
 ```bash
 git mate checkout feature/login                    # follow default placement, or jump to where it's already checked out
@@ -104,6 +109,7 @@ git mate checkout feature/login -m --take-changes  # bring changes along from a 
 git mate checkout feature/login -w --start-fresh   # leave uncommitted changes in the main worktree
 git mate checkout https://github.com/acme/widget/pull/123     # check out the branch of a pull request
 git mate checkout https://github.com/acme/widget/pull/123 -w  # ... in a linked worktree
+git mate checkout main --finish                    # go back to the default branch and finish the one you were on
 ```
 
 ### `git mate finish [<branch>]`

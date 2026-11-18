@@ -18,8 +18,8 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
     only with the user's explicit consent.
   - `unpushed_commits`: `finish` would delete commits that exist nowhere else. Ask before
     retrying with `--force`.
-  - `branch_exists`, `branch_not_found`, `invalid_branch_name`, `default_branch`: report
-    and ask; don't guess another name.
+  - `branch_exists`, `branch_not_found`, `invalid_branch_name`, `default_branch`,
+    `finish_current_branch`: report and ask; don't guess another name.
   - `pull_request_branch_not_found`: the pull request comes from a fork (or its branch
     was deleted); git-mate can't check it out. Tell the user. The other pull request
     errors (`invalid_pull_request_url`, `remote_not_found`, `pull_request_not_found`,
@@ -91,6 +91,11 @@ requests from forks); `data.branch` is the branch, `data.pullRequest` the pull r
   Without a branch name they relocate the current branch with its uncommitted changes.
 - `--take-changes` / `--start-fresh` as for `new`, when moving a branch out of another
   worktree that has uncommitted changes.
+- `--finish` also finishes the branch you were on (not the default branch) after the
+  checkout, reported in `data.finished` like `finish`'s result. It fails before checking
+  anything out with `unpushed_commits` or `uncommitted_changes` (no `--force` here; run
+  `finish` separately if the user agrees), or `finish_current_branch` when checking out
+  the current branch. Only use it when the user is done with the current branch.
 - Result: `data.path`, `data.action` (`navigated`, `switched`, `created`, `moved`),
   `data.stashed`. `cd` to `data.path`.
 
