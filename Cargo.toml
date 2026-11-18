@@ -5,7 +5,6 @@ edition = "2024"
 description = "A focused Git CLI extension for branch and sync workflows"
 license = "MIT"
 repository = "https://github.com/frenetisch-applaudierend/git-mate"
-homepage = "https://github.com/frenetisch-applaudierend/git-mate"
 readme = "README.md"
 keywords = ["git", "cli", "workflow", "branch"]
 categories = ["command-line-utilities", "development-tools"]
