@@ -1431,3 +1431,50 @@ fn json_existing_branch_is_branch_exists() {
     assert_eq!(repo.current_branch(), "main");
     assert_eq!(repo.head_commit(), head);
 }
+
+#[test]
+fn changes_config_ask_requires_a_decision_for_the_current_worktree() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    std::fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+    repo.git(&["add", "tracked.txt"]);
+    repo.git(&["commit", "-m", "add tracked file"]);
+    std::fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+    repo.git(&["config", "mate.new.changes", "ask"]);
+
+    // `auto` would take them from the current worktree; `ask` asks.
+    let output = common::git_mate()
+        .args(["--json", "new", "feat/asked", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(
+        data["retryWith"],
+        serde_json::json!(["--take-changes", "--start-fresh"])
+    );
+    assert!(!repo.branch_exists("feat/asked"));
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+        "changed\n"
+    );
+}
+
+#[test]
+fn changes_config_ask_needs_no_decision_without_changes() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["config", "mate.new.changes", "ask"]);
+
+    common::git_mate()
+        .args(["--json", "new", "feat/clean", "-w", "--from", "main"])
+        .current_dir(repo.path())
+        .assert()
+        .success();
+    assert!(repo.branch_exists("feat/clean"));
+}

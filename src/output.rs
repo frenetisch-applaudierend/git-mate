@@ -97,6 +97,16 @@ impl CommandError {
         )
     }
 
+    /// `setting` is `ask`, but there is nobody to ask: the command refuses
+    /// before changing anything until one of `retry_with` decides.
+    pub fn decision_required(message: String, setting: &str, retry_with: &[&str]) -> Self {
+        Self::with_data(
+            message,
+            "decision_required",
+            serde_json::json!({ "setting": setting, "retryWith": retry_with }),
+        )
+    }
+
     /// An error about `branch`, e.g. `branch_not_found`.
     pub fn branch(message: String, code: &'static str, branch: &str) -> Self {
         Self::with_data(message, code, serde_json::json!({ "branch": branch }))

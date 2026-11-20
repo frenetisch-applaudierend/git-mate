@@ -32,7 +32,7 @@ pub struct CheckoutArgs {
     #[arg(
         long,
         conflicts_with = "no_finish",
-        help = "Finish the current branch after checking out the new one, unless it is the default branch [default: mate.checkout.finish, else false]"
+        help = "Finish the current branch after checking out the new one, unless it is the default branch [default: mate.checkout.finish (`true`, `false` or `ask`), else false]"
     )]
     pub finish: bool,
     #[arg(
@@ -50,6 +50,8 @@ enum Finish {
     Explicit,
     /// Turned on by `mate.checkout.finish`.
     Configured,
+    /// `mate.checkout.finish` is `ask`.
+    Ask,
 }
 
 impl Finish {
@@ -61,12 +63,17 @@ impl Finish {
         if no_finish {
             return Ok(Self::Off);
         }
-        Ok(
-            match crate::git::config::read_bool("mate.checkout.finish")? {
-                Some(true) => Self::Configured,
-                _ => Self::Off,
-            },
-        )
+        let Some(value) = crate::git::config::read_string("mate.checkout.finish") else {
+            return Ok(Self::Off);
+        };
+        match value.to_ascii_lowercase().as_str() {
+            "ask" => Ok(Self::Ask),
+            "true" | "yes" | "on" | "1" => Ok(Self::Configured),
+            "false" | "no" | "off" | "0" => Ok(Self::Off),
+            _ => Err(format!(
+                "invalid value for mate.checkout.finish: {value:?}; expected \"ask\", \"true\" or \"false\""
+            )),
+        }
     }
 }
 
@@ -192,6 +199,7 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
 /// when finishing it would lose work, so nothing is checked out in that case.
 /// Checking out the current branch itself only fails with an explicit
 /// `--finish`; with `mate.checkout.finish` there is just nothing to finish.
+/// With `ask`, the user decides, or the checkout is refused when nobody can.
 fn branch_to_finish(
     branch: &str,
     mode: Finish,
@@ -204,7 +212,7 @@ fn branch_to_finish(
         return Ok(None);
     }
     if current == branch {
-        if mode == Finish::Configured {
+        if mode != Finish::Explicit {
             return Ok(None);
         }
         return Err(crate::output::CommandError::branch(
@@ -213,8 +221,27 @@ fn branch_to_finish(
             branch,
         ));
     }
+    if mode == Finish::Ask && !ask_to_finish(&current, branch)? {
+        return Ok(None);
+    }
     crate::cmd::finish::ensure_finishable(&current, &KEEP_BRANCH)?;
     Ok(Some(current))
+}
+
+fn ask_to_finish(current: &str, branch: &str) -> Result<bool, crate::output::CommandError> {
+    if !super::confirm::can_ask() {
+        return Err(crate::output::CommandError::decision_required(
+            format!(
+                "mate.checkout.finish is ask: retry with --finish to finish {current} after checking out {branch}, or --no-finish to keep it"
+            ),
+            "mate.checkout.finish",
+            &["--finish", "--no-finish"],
+        ));
+    }
+    Ok(super::confirm::confirm(
+        &format!("Finish {current} after checking out {branch}?"),
+        false,
+    ) == Some(true))
 }
 
 fn resolve_checkout_target(

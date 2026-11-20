@@ -34,7 +34,8 @@ unless you choose explicitly:
 - `--start-fresh` starts from the committed state and leaves uncommitted changes where they are
 
 Set `mate.new.changes` to `take` or `startFresh` to make either choice the default (`auto`, the default,
-is the behavior described above). The flags override the config.
+is the behavior described above), or to `ask` to be asked whenever the starting point has uncommitted
+changes, even in your current worktree. The flags override the config.
 
 Ignored local config files (such as `.env.local`) are copied from the starting point's worktree into the
 new branch's worktree, whichever option you choose. Use `--no-copy-config` (or set
@@ -92,7 +93,8 @@ The default branch is only allowed in the main worktree, so `-w` rejects it.
 `--finish` finishes the branch you were on once the checkout succeeded, as `git mate finish` would,
 unless it is the default branch. It checks first that finishing it loses nothing (no unpushed commits,
 no uncommitted changes in its linked worktree) and otherwise fails before checking anything out.
-Set `mate.checkout.finish = true` to make this the default; `--no-finish` then keeps the branch.
+Set `mate.checkout.finish = true` to make this the default; `--no-finish` then keeps the branch. With
+`mate.checkout.finish = ask`, `checkout` asks whether to finish the branch you are leaving.
 
 With `--json`, `git mate checkout` prints a single JSON document on stdout describing the result
 (`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — `stashed`
@@ -276,6 +278,8 @@ On failure, `error.code` tells what went wrong, and `data` (when present) gives 
 | `branch_exists` | `new` was given a branch that already exists | `branch` |
 | `invalid_branch_name` | Not a valid branch name | `branch` |
 | `default_branch` | Not possible with the default branch (`finish` it, or put it in a linked worktree) | `branch` |
+| `decision_required` | A setting (or flag) is `ask`, but there is nobody to ask (`--json`, or no terminal); nothing was changed | `setting`, `retryWith` (flags that decide) |
+| `finish_current_branch` | `checkout --finish` was asked to check out the branch it would finish | `branch` |
 | `stash_reapply_failed` | `new` succeeded, but carried-over changes could not be reapplied; they are kept in the stash | the command's usual result |
 | `unsupported` | `--json` isn't supported by this command | |
 | `error` | Anything else | |
@@ -340,10 +344,10 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.worktreeRoot` | path | Root directory for linked worktrees |
 | `mate.defaultBranchMode` | `main` / `linked` | Default target for `git mate new` and `git mate checkout` |
 | `mate.new.from` | `default` / `current` / any ref | Starting point for `git mate new` when `--from` is omitted (default: `default`) |
-| `mate.new.changes` | `auto` / `take` / `startFresh` | What `git mate new` does with uncommitted changes when neither `--take-changes` nor `--start-fresh` is given (default: `auto`) |
+| `mate.new.changes` | `auto` / `take` / `startFresh` / `ask` | What `git mate new` does with uncommitted changes when neither `--take-changes` nor `--start-fresh` is given (default: `auto`) |
 | `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
 | `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
-| `mate.checkout.finish` | boolean | Finish the previous branch after `git mate checkout`, as with `--finish` (default: `false`) |
+| `mate.checkout.finish` | `true` / `false` / `ask` | Finish the previous branch after `git mate checkout`, as with `--finish` (default: `false`) |
 | `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
 | `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when `--strategy` (or `--rebase` / `--merge`) is omitted (default: `rebase`) |
 | `mate.update.stack` | `ask` / `true` / `false` | Whether `git mate update` also updates the branches a branch is stacked on when they are behind (default: `ask`) |

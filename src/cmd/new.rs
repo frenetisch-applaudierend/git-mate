@@ -57,24 +57,65 @@ enum Changes {
 
 impl Changes {
     /// `--take-changes` and `--start-fresh` win, then `mate.new.changes`.
-    fn resolve(take_changes: bool, start_fresh: bool) -> Result<Self, String> {
+    /// `None` means `ask`.
+    fn resolve(take_changes: bool, start_fresh: bool) -> Result<Option<Self>, String> {
         if take_changes {
-            return Ok(Self::Take);
+            return Ok(Some(Self::Take));
         }
         if start_fresh {
-            return Ok(Self::StartFresh);
+            return Ok(Some(Self::StartFresh));
         }
         let Some(value) = crate::git::config::read_string("mate.new.changes") else {
-            return Ok(Self::Default);
+            return Ok(Some(Self::Default));
         };
         match value.to_ascii_lowercase().as_str() {
-            "auto" => Ok(Self::Default),
-            "take" => Ok(Self::Take),
-            "startfresh" => Ok(Self::StartFresh),
+            "auto" => Ok(Some(Self::Default)),
+            "take" => Ok(Some(Self::Take)),
+            "startfresh" => Ok(Some(Self::StartFresh)),
+            "ask" => Ok(None),
             _ => Err(format!(
-                "invalid value for mate.new.changes: {value:?}; expected \"auto\", \"take\" or \"startFresh\""
+                "invalid value for mate.new.changes: {value:?}; expected \"auto\", \"take\", \"startFresh\" or \"ask\""
             )),
         }
+    }
+
+    /// For `mate.new.changes = ask`: ask whether to take the uncommitted
+    /// changes in the starting point's worktree, or refuse when nobody can
+    /// answer. Without such changes to decide on, the default applies.
+    fn ask(
+        source_worktree: Option<&crate::git::WorktreeEntry>,
+        target: crate::git::OperationTarget,
+        main_worktree: &std::path::Path,
+        branch: &str,
+    ) -> Result<Self, crate::output::CommandError> {
+        let Some(source) = source_worktree else {
+            return Ok(Self::Default);
+        };
+        // Creating the branch in place in the main worktree keeps its
+        // changes either way.
+        let in_place =
+            target == crate::git::OperationTarget::MainWorktree && source.path == main_worktree;
+        if in_place || is_clean(&source.path)? {
+            return Ok(Self::Default);
+        }
+        if !super::confirm::can_ask() {
+            return Err(crate::output::CommandError::uncommitted_changes(
+                format!(
+                    "mate.new.changes is ask and {} has uncommitted changes; retry with --take-changes to bring them into {branch} or --start-fresh to leave them there",
+                    crate::output::display_path(&source.path)
+                ),
+                &source.path,
+                &["--take-changes", "--start-fresh"],
+            ));
+        }
+        let take = super::confirm::confirm(
+            &format!(
+                "Bring the uncommitted changes in {} into {branch}?",
+                crate::output::display_path(&source.path)
+            ),
+            true,
+        ) == Some(true);
+        Ok(if take { Self::Take } else { Self::StartFresh })
     }
 }
 
@@ -146,6 +187,15 @@ pub fn run(args: NewArgs) -> Result<(), crate::output::CommandError> {
         .as_deref()
         .and_then(|branch| crate::git::worktree_for_branch(branch, &worktrees));
     let source_is_current = source_worktree.is_some_and(|wt| canonical(&wt.path) == current_root);
+    let changes = match changes {
+        Some(changes) => changes,
+        None => Changes::ask(
+            source_worktree,
+            target,
+            &worktrees.first().ok_or("no worktrees found")?.path,
+            &args.branch,
+        )?,
+    };
 
     let created = match target {
         crate::git::OperationTarget::LinkedWorktree => create_worktree(

@@ -1485,3 +1485,37 @@ fn checkout_finish_config_ignores_relocating_the_current_branch() {
     assert_eq!(data["action"], "moved");
     assert!(repo.branch_exists("feature/current"));
 }
+
+#[test]
+fn checkout_finish_config_ask_requires_a_decision() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.checkout.finish", "ask"]);
+    repo.git(&["checkout", "-b", "feature/current"]);
+    repo.git(&["branch", "feature/next"]);
+
+    let output = checkout_json_err(repo.path(), &["feature/next"]);
+
+    let data = common::assert_json_error_code(&output, "decision_required");
+    assert_eq!(data["setting"], "mate.checkout.finish");
+    assert_eq!(
+        data["retryWith"],
+        serde_json::json!(["--finish", "--no-finish"])
+    );
+    assert_eq!(repo.current_branch(), "feature/current");
+
+    let data = checkout_json_ok(repo.path(), &["feature/next", "--no-finish"]);
+    assert!(data.get("finished").is_none());
+    assert!(repo.branch_exists("feature/current"));
+}
+
+#[test]
+fn checkout_finish_config_ask_needs_no_decision_on_the_default_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.checkout.finish", "ask"]);
+    repo.git(&["branch", "feature/next"]);
+
+    let data = checkout_json_ok(repo.path(), &["feature/next"]);
+
+    assert!(data.get("finished").is_none());
+    assert_eq!(repo.current_branch(), "feature/next");
+}

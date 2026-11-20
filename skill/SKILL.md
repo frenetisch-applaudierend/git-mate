@@ -24,6 +24,8 @@ stays on one branch: status, diff, log, add, commit, stash, push of the current 
     was deleted); git-mate can't check it out. Tell the user. The other pull request
     errors (`invalid_pull_request_url`, `remote_not_found`, `pull_request_not_found`,
     `ambiguous_pull_request_branch`): report and ask.
+  - `decision_required`: a setting of the user's (`data.setting`) is `ask`, and you can't
+    be asked. Nothing changed. Ask the user, then retry with one of `data.retryWith`.
   - `stash_reapply_failed`: the command succeeded, but the carried-over changes are still
     in the stash. Tell the user.
 - **git-mate never prompts you.** With `--json` (or without a terminal) every question is
@@ -97,8 +99,9 @@ requests from forks); `data.branch` is the branch, `data.pullRequest` the pull r
   `finish` separately if the user agrees), or `finish_current_branch` when checking out
   the current branch. Only use it when the user is done with the current branch.
 - The user may have set `mate.checkout.finish`, which finishes the current branch on
-  every checkout. When they want to keep it, pass `--no-finish`; a refusal above then
-  lists `--no-finish` in `retryWith`. Ask before retrying with it.
+  every checkout (`true`) or needs a decision (`ask`, `decision_required`). When they
+  want to keep it, pass `--no-finish`; a refusal above then lists `--no-finish` in
+  `retryWith`. Ask before retrying with it.
 - Result: `data.path`, `data.action` (`navigated`, `switched`, `created`, `moved`),
   `data.stashed`. `cd` to `data.path`.
 
