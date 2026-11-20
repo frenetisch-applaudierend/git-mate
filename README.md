@@ -213,10 +213,10 @@ Branches that aren't checked out are updated without touching any worktree (reba
 uses `git replay`, Git 2.44+).
 
 **Stacks.** When a branch you name is stacked on branches of which one is behind its own
-base (say `foo` on `bar`, and `main` moved on), `update` leaves those alone and reports
-the base as behind (`parentBehind` in `--json`). `--stack` updates them first. Set
-`mate.update.stack` to `true` to always do so, or to `ask` to be asked each time;
-`--no-stack` overrides either.
+base (say `foo` on `bar`, and `main` moved on), `update` asks whether to update those
+first. `--stack` does so without asking, `--no-stack` never does and reports the base as
+behind (`parentBehind` in `--json`). Set `mate.update.stack` to `true` or `false` to decide
+once for all runs.
 
 **Pushing.** `--push` pushes each updated (or already up-to-date) branch afterwards when
 that is a fast-forward or creates the remote branch. It pushes where `git push` would: to
@@ -351,7 +351,7 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.checkout.finish` | `true` / `false` / `ask` | Finish the previous branch after `git mate checkout`, as with `--finish` (default: `false`) |
 | `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
 | `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when `--strategy` (or `--rebase` / `--merge`) is omitted (default: `rebase`) |
-| `mate.update.stack` | `ask` / `true` / `false` | Whether `git mate update` also updates the branches a branch is stacked on when they are behind (default: `false`) |
+| `mate.update.stack` | `ask` / `true` / `false` | Whether `git mate update` also updates the branches a branch is stacked on when they are behind (default: `ask`) |
 | `mate.update.push` | `false` / `ff` / `ask` / `force` | Whether and how `git mate update` pushes afterwards (default: `false`) |
 | `mate.update.sync` | boolean | Run `git mate sync` before `git mate update` (default: `false`) |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |

@@ -140,14 +140,20 @@ they are stacked on; detected from the commit graph). Conflict-free or not at al
 - No arguments: the current branch. `--all`: every branch, stacks in order.
 - `--merge` merges the base in instead of rebasing. `--onto <branch>` overrides the base.
 - `--dry-run` previews. `--sync` runs `sync` first.
-- `--stack` also updates branches the named branch is stacked on; without it, a parent
-  that is behind is only reported (`parentBehind`), unless the user set
-  `mate.update.stack` (`true`, or `ask`: then `decision_required`; `--no-stack` keeps
-  the stack out).
+- Stacks: by default (`mate.update.stack` unset or `ask`) update refuses with
+  `decision_required` when a branch you update is stacked on a branch that is behind its
+  own base, and with `--sync` whenever it is stacked at all. Decide up front instead of
+  waiting for the refusal: pass `--stack` to update the branches below it too (the user
+  asked to update the stack, or wants the branch fully up to date with the default
+  branch), or `--no-stack` to update only the named branches (the user asked for just
+  this branch); a parent left behind is then reported as `parentBehind`. If it isn't
+  clear which, run with `--dry-run` first (it never needs a decision; `parentBehind`
+  shows what is behind) and ask the user.
 - `--push` pushes afterwards when that is a fast-forward or creates the remote branch. A
   rebased branch that was pushed before then reports `push: "needs-force-push"`.
   `--push=force` force-pushes (with lease). Only use `--push=force` when the user asked
-  for a force-push.
+  for a force-push. If the user set `mate.update.push = ask`, every run needs one of
+  `--push=ff`, `--push=force` or `--no-push`; pass `--no-push` unless they asked to push.
 - Result: `data` lists one entry per branch: `branch`, `action` (`rebased`, `merged`,
   `up-to-date`, `skipped`, `failed`), `base`, `reason`/`hint` when skipped or failed,
   `stashKept: true` when uncommitted changes could not be reapplied and remain in the
