@@ -27,9 +27,10 @@ worktree are stashed and reapplied. Branches that aren't checked out are updated
 touching any worktree (rebasing them needs Git 2.44 or newer).
 
 When a named branch is stacked on a branch that is itself behind its own base, update
-asks whether to update that branch first (and so on down the stack). Pass --stack to do
-so without asking, or --no-stack to only update the named branches and report the base
-as behind. Without a terminal to ask on, update refuses until one of them decides.
+only updates the named branch and reports the base as behind. Pass --stack to update
+that branch first too (and so on down the stack), or set mate.update.stack to `true`, or
+to `ask` to be asked each time (without a terminal to ask on, update then refuses until
+--stack or --no-stack decides).
 
 Pass --push to push every updated (or already up-to-date) branch afterwards, if that is
 a fast-forward or creates the remote branch. Branches go where `git push` would push them
@@ -80,7 +81,7 @@ pub struct UpdateArgs {
     #[arg(
         long,
         conflicts_with = "no_stack",
-        help = "Also update the branches a branch is stacked on when they are behind, without asking [default: mate.update.stack, else ask]"
+        help = "Also update the branches a branch is stacked on when they are behind, without asking [default: mate.update.stack, else false]"
     )]
     pub stack: bool,
     #[arg(
@@ -336,7 +337,7 @@ pub(crate) fn configured_strategy() -> Result<Strategy, String> {
     }
 }
 
-/// `--stack` and `--no-stack` win, then `mate.update.stack`, then ask.
+/// `--stack` and `--no-stack` win, then `mate.update.stack`, then never.
 fn stack_mode(args: &UpdateArgs) -> Result<StackMode, String> {
     if args.stack {
         return Ok(StackMode::Always);
@@ -345,7 +346,7 @@ fn stack_mode(args: &UpdateArgs) -> Result<StackMode, String> {
         return Ok(StackMode::Never);
     }
     let Some(value) = crate::git::config::read_string("mate.update.stack") else {
-        return Ok(StackMode::Ask);
+        return Ok(StackMode::Never);
     };
     match value.to_ascii_lowercase().as_str() {
         "ask" => Ok(StackMode::Ask),

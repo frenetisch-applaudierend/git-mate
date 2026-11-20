@@ -710,9 +710,22 @@ fn stack_behind_main() -> common::RepoWithoutRemote {
 }
 
 #[test]
-fn without_terminal_parent_behind_requires_a_decision() {
+fn by_default_parent_behind_is_reported_not_updated() {
     let repo = stack_behind_main();
     let dir = repo.path();
+    let bar_before = tip(dir, "bar");
+
+    let data = update_json(dir, &["foo"]);
+    assert_eq!(data["branches"].as_array().unwrap().len(), 1);
+    assert_eq!(entry(&data, "foo")["parentBehind"]["branch"], "bar");
+    assert_eq!(tip(dir, "bar"), bar_before);
+}
+
+#[test]
+fn stack_config_ask_without_terminal_requires_a_decision() {
+    let repo = stack_behind_main();
+    let dir = repo.path();
+    repo.git(&["config", "mate.update.stack", "ask"]);
     let bar_before = tip(dir, "bar");
     let foo_before = tip(dir, "foo");
 
@@ -745,6 +758,7 @@ fn no_stack_reports_parent_behind() {
 #[test]
 fn dry_run_reports_parent_behind_without_a_decision() {
     let repo = stack_behind_main();
+    repo.git(&["config", "mate.update.stack", "ask"]);
 
     let data = update_json(repo.path(), &["foo", "--dry-run"]);
     assert_eq!(entry(&data, "foo")["parentBehind"]["branch"], "bar");
@@ -1312,7 +1326,7 @@ fn merged_parent_deleted_by_sync_is_still_dropped() {
     let dir = setup.local_path();
     delete_branch_on_next_ref_update(dir, "bar");
 
-    let data = update_json(dir, &["--sync", "--no-stack", "foo"]);
+    let data = update_json(dir, &["--sync", "foo"]);
     assert!(!setup.local_branch_exists("bar"), "the hook deleted bar");
     let foo = entry(&data, "foo");
     assert_eq!(foo["base"], "main");
