@@ -140,8 +140,9 @@ they are stacked on; detected from the commit graph). Conflict-free or not at al
 - No arguments: the current branch. `--all`: every branch, stacks in order.
 - `--merge` merges the base in instead of rebasing. `--onto <branch>` overrides the base.
 - `--dry-run` previews. `--sync` runs `sync` first.
-- `--stack` also updates branches the named branch is stacked on; without it, a parent
-  that is behind is only reported (`parentBehind`).
+- `--stack` also updates branches the named branch is stacked on; `--no-stack` only
+  reports a parent that is behind (`parentBehind`). Without either (or
+  `mate.update.stack`), update refuses with `decision_required` when it matters.
 - `--push` pushes afterwards when that is a fast-forward or creates the remote branch. A
   rebased branch that was pushed before then reports `push: "needs-force-push"`.
   `--push=force` force-pushes (with lease). Only use `--push=force` when the user asked

@@ -28,15 +28,16 @@ touching any worktree (rebasing them needs Git 2.44 or newer).
 
 When a named branch is stacked on a branch that is itself behind its own base, update
 asks whether to update that branch first (and so on down the stack). Pass --stack to do
-so without asking, or --no-stack to only update the named branches. Without a terminal
-to ask on, the stack is left alone and the report says the base is behind.
+so without asking, or --no-stack to only update the named branches and report the base
+as behind. Without a terminal to ask on, update refuses until one of them decides.
 
 Pass --push to push every updated (or already up-to-date) branch afterwards, if that is
 a fast-forward or creates the remote branch. Branches go where `git push` would push them
 (branch.<name>.pushRemote, else remote.pushDefault, else the upstream); an already
 merged branch whose upstream was deleted is not pushed. A branch whose rebase rewrote commits that were
-already pushed is listed as needing a force-push. --push=ask asks before each force-push,
-and --push=force force-pushes without asking. A force-push only goes through if the
+already pushed is listed as needing a force-push. --push=ask asks before each force-push
+(without a terminal, update refuses to run until --push=ff, --push=force or --no-push
+decides), and --push=force force-pushes without asking. A force-push only goes through if the
 remote branch is still where the last fetch saw it (--force-with-lease).
 
 Pass --sync to run `git mate sync` first, bringing the base branches up to date with their
@@ -163,16 +164,32 @@ fn local_branch_tips() -> Result<Vec<(String, String)>, String> {
         .collect()
 }
 
-pub fn run(args: UpdateArgs) -> Result<(), String> {
+pub fn run(args: UpdateArgs) -> Result<(), crate::output::CommandError> {
     let strategy = strategy(&args)?;
     let stack = stack_mode(&args)?;
     let push = push_mode(&args)?;
     let dry_run = args.dry_run;
+    let sync_first = sync_enabled(&args)?;
+    // Without anybody to ask, `ask` needs the answer up front, before
+    // anything changes. Whether a force-push will be needed is only known
+    // after rebasing, so that decision is required regardless. Which stacked
+    // parents are behind is only known after a sync, so with a sync first it
+    // is required whenever a branch to update is stacked at all.
+    if !dry_run && !super::confirm::can_ask() {
+        if push == Some(PushMode::Ask) {
+            return Err(push_decision_required());
+        }
+        if stack == StackMode::Ask && sync_first && !args.all && has_stacked_target(&args)? {
+            return Err(stack_decision_required(
+                "a branch to update is stacked on another branch, which may be behind after syncing".to_string(),
+            ));
+        }
+    }
 
     // Sync may delete branches (whose remote is gone, e.g. after being
     // merged). Remember where they were, so a branch stacked on one that was
     // merged still drops its commits.
-    let tips_before_sync = if sync_enabled(&args)? {
+    let tips_before_sync = if sync_first {
         Some(local_branch_tips()?)
     } else {
         None
@@ -374,16 +391,63 @@ fn sync_enabled(args: &UpdateArgs) -> Result<bool, String> {
     Ok(crate::git::config::read_bool("mate.update.sync")?.unwrap_or(false))
 }
 
+/// Whether a branch to update is stacked on a branch that isn't updated
+/// along with it, as things are now.
+fn has_stacked_target(args: &UpdateArgs) -> Result<bool, String> {
+    if args.onto.is_some() {
+        return Ok(true);
+    }
+    let default_branch = crate::git::default_base_branch()?;
+    let local_branches = crate::git::list_local_branches_with_upstream()?
+        .into_iter()
+        .map(|(branch, _)| branch)
+        .collect::<Vec<_>>();
+    let branches = Branches {
+        default: &default_branch,
+        local: &local_branches,
+        deleted: &[],
+    };
+    let targets = targets(args, &default_branch, &local_branches)?;
+    for target in &targets {
+        if let Ok(Detection::Found(base)) = branches.detect_base(target)
+            && base.source == BaseSource::Stacked
+            && !targets.contains(&base.branch)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn push_decision_required() -> crate::output::CommandError {
+    crate::output::CommandError::decision_required(
+        "push mode is ask, but there is nobody to ask before a force-push; retry with --push=ff, --push=force or --no-push".to_string(),
+        "mate.update.push",
+        &["--push=ff", "--push=force", "--no-push"],
+    )
+}
+
+fn stack_decision_required(reason: String) -> crate::output::CommandError {
+    crate::output::CommandError::decision_required(
+        format!(
+            "{reason}; retry with --stack to update the branches it is stacked on too, or --no-stack to leave them"
+        ),
+        "mate.update.stack",
+        &["--stack", "--no-stack"],
+    )
+}
+
 /// For every planned branch stacked on branches of which one is behind its
 /// own base, plan the branches down to that one too (asking first in `Ask`
-/// mode), or else note on the planned branch which base is behind.
+/// mode, or refusing when nobody can answer), or else note on the planned
+/// branch which base is behind.
 fn add_stacked_parents(
     plans: &mut Vec<Plan>,
     stack: StackMode,
     strategy: Strategy,
     dry_run: bool,
     branches: &Branches,
-) -> Result<(), String> {
+) -> Result<(), crate::output::CommandError> {
     for i in 0..plans.len() {
         let (chain, behind) = stack_below(&plans[i], plans, strategy, branches)?;
         let Some(behind) = behind else {
@@ -393,6 +457,12 @@ fn add_stacked_parents(
             StackMode::Always => true,
             StackMode::Never => false,
             StackMode::Ask if dry_run => false,
+            StackMode::Ask if !super::confirm::can_ask() => {
+                return Err(stack_decision_required(format!(
+                    "{} is stacked on {}, which is behind {}",
+                    plans[i].branch, behind.branch, behind.base
+                )));
+            }
             StackMode::Ask => {
                 let names: Vec<&str> = chain.iter().map(|p| p.branch.as_str()).collect();
                 super::confirm::confirm(

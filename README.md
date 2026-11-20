@@ -214,8 +214,9 @@ uses `git replay`, Git 2.44+).
 
 **Stacks.** When a branch you name is stacked on branches of which one is behind its own
 base (say `foo` on `bar`, and `main` moved on), `update` asks whether to update those
-first. `--stack` does so without asking, `--no-stack` never does; without a terminal the
-stack is left alone and reported (`parentBehind` in `--json`).
+first. `--stack` does so without asking, `--no-stack` never does and reports the base as
+behind (`parentBehind` in `--json`). Set `mate.update.stack` to `true` or `false` to decide
+once for all runs.
 
 **Pushing.** `--push` pushes each updated (or already up-to-date) branch afterwards when
 that is a fast-forward or creates the remote branch. It pushes where `git push` would: to
@@ -354,3 +355,10 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.update.push` | `false` / `ff` / `ask` / `force` | Whether and how `git mate update` pushes afterwards (default: `false`) |
 | `mate.update.sync` | boolean | Run `git mate sync` before `git mate update` (default: `false`) |
 | `mate.shellIntegration` | `false` / `true` / `force` | Control the `git()` shell wrapper (default: `false`) |
+
+Wherever a setting takes `ask`, git-mate asks on the terminal when the question comes up. Without
+a terminal to ask on (or with `--json`), it refuses before changing anything whenever the question
+could come up, with `decision_required` (`uncommitted_changes` for `mate.new.changes`) and the
+flags that decide in `retryWith`. For `mate.update.push` that is every run that pushes, since whether
+a force-push is needed is only known after rebasing; for `mate.update.stack` with `--sync`, every
+run that updates a stacked branch. `--dry-run` never needs a decision.

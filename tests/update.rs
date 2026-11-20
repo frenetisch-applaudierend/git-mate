@@ -76,6 +76,20 @@ fn update_error(dir: &Path, args: &[&str], needles: &[&str]) {
     common::assert_json_error(&output, needles);
 }
 
+/// The `data` of a `decision_required` refusal.
+fn update_decision_required(dir: &Path, args: &[&str]) -> serde_json::Value {
+    let output = common::git_mate()
+        .args(["--json", "update"])
+        .args(args)
+        .current_dir(dir)
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error_code(&output, "decision_required")
+}
+
 fn entry<'a>(data: &'a serde_json::Value, branch: &str) -> &'a serde_json::Value {
     data["branches"]
         .as_array()
@@ -696,12 +710,29 @@ fn stack_behind_main() -> common::RepoWithoutRemote {
 }
 
 #[test]
-fn without_terminal_parent_behind_is_reported_not_updated() {
+fn without_terminal_parent_behind_requires_a_decision() {
+    let repo = stack_behind_main();
+    let dir = repo.path();
+    let bar_before = tip(dir, "bar");
+    let foo_before = tip(dir, "foo");
+
+    let data = update_decision_required(dir, &["foo"]);
+    assert_eq!(data["setting"], "mate.update.stack");
+    assert_eq!(
+        data["retryWith"],
+        serde_json::json!(["--stack", "--no-stack"])
+    );
+    assert_eq!(tip(dir, "bar"), bar_before);
+    assert_eq!(tip(dir, "foo"), foo_before);
+}
+
+#[test]
+fn no_stack_reports_parent_behind() {
     let repo = stack_behind_main();
     let dir = repo.path();
     let bar_before = tip(dir, "bar");
 
-    let data = update_json(dir, &["foo"]);
+    let data = update_json(dir, &["foo", "--no-stack"]);
     assert_eq!(data["branches"].as_array().unwrap().len(), 1);
     let foo = entry(&data, "foo");
     assert_eq!(foo["action"], "up-to-date");
@@ -709,6 +740,35 @@ fn without_terminal_parent_behind_is_reported_not_updated() {
     assert_eq!(foo["parentBehind"]["base"], "main");
     assert_eq!(foo["parentBehind"]["behind"], 1);
     assert_eq!(tip(dir, "bar"), bar_before);
+}
+
+#[test]
+fn dry_run_reports_parent_behind_without_a_decision() {
+    let repo = stack_behind_main();
+
+    let data = update_json(repo.path(), &["foo", "--dry-run"]);
+    assert_eq!(entry(&data, "foo")["parentBehind"]["branch"], "bar");
+}
+
+#[test]
+fn stack_config_ask_requires_a_decision_before_syncing() {
+    // bar is not behind main yet, but could be after the sync.
+    let repo = stack();
+    let dir = repo.path();
+    repo.git(&["config", "mate.update.stack", "ask"]);
+    let foo_before = tip(dir, "foo");
+
+    let data = update_decision_required(dir, &["foo", "--sync"]);
+    assert_eq!(data["setting"], "mate.update.stack");
+    assert_eq!(tip(dir, "foo"), foo_before);
+}
+
+#[test]
+fn sync_without_stacked_branches_needs_no_stack_decision() {
+    let repo = behind_main();
+
+    let data = update_json(repo.path(), &["--sync"]);
+    assert_eq!(data["branches"][0]["action"], "rebased");
 }
 
 #[test]
@@ -832,13 +892,40 @@ fn push_does_not_force_by_default() {
 }
 
 #[test]
-fn push_ask_without_terminal_does_not_force() {
+fn push_ask_without_terminal_requires_a_decision_up_front() {
     let setup = remote_feature_behind_main(true);
+    let dir = setup.local_path();
     let remote_before = remote_tip(&setup, "feature");
+    let local_before = tip(dir, "feature");
 
-    let data = update_json(setup.local_path(), &["--push=ask"]);
-    assert_eq!(entry(&data, "feature")["push"], "needs-force-push");
+    let data = update_decision_required(dir, &["--push=ask"]);
+    assert_eq!(data["setting"], "mate.update.push");
+    assert_eq!(
+        data["retryWith"],
+        serde_json::json!(["--push=ff", "--push=force", "--no-push"])
+    );
+    assert_eq!(tip(dir, "feature"), local_before);
     assert_eq!(remote_tip(&setup, "feature"), remote_before);
+}
+
+#[test]
+fn push_config_ask_requires_a_decision_even_without_force_push() {
+    let setup = remote_feature_behind_main(false);
+    setup.local_git(&["config", "mate.update.push", "ask"]);
+
+    let data = update_decision_required(setup.local_path(), &[]);
+    assert_eq!(data["setting"], "mate.update.push");
+
+    let data = update_json(setup.local_path(), &["--push=ff"]);
+    assert_eq!(entry(&data, "feature")["action"], "rebased");
+}
+
+#[test]
+fn push_ask_dry_run_needs_no_decision() {
+    let setup = remote_feature_behind_main(true);
+
+    let data = update_json(setup.local_path(), &["--push=ask", "--dry-run"]);
+    assert_eq!(entry(&data, "feature")["push"], "needs-force-push");
 }
 
 #[test]
@@ -1225,7 +1312,7 @@ fn merged_parent_deleted_by_sync_is_still_dropped() {
     let dir = setup.local_path();
     delete_branch_on_next_ref_update(dir, "bar");
 
-    let data = update_json(dir, &["--sync", "foo"]);
+    let data = update_json(dir, &["--sync", "--no-stack", "foo"]);
     assert!(!setup.local_branch_exists("bar"), "the hook deleted bar");
     let foo = entry(&data, "foo");
     assert_eq!(foo["base"], "main");
