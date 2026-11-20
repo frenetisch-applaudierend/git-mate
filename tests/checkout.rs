@@ -1425,7 +1425,8 @@ fn checkout_finish_with_uncommitted_changes_checks_out_nothing() {
 
     let output = checkout_json_err(&wt_path, &["feature/next", "--finish"]);
 
-    common::assert_json_error_code(&output, "uncommitted_changes");
+    let data = common::assert_json_error_code(&output, "uncommitted_changes");
+    assert_eq!(data["retryWith"], serde_json::json!(["--no-finish"]));
     assert!(wt_path.exists());
     assert!(repo.branch_exists("feature/dirty"));
     assert_eq!(repo.current_branch(), "main");
@@ -1439,6 +1440,48 @@ fn checkout_finish_with_unpushed_commits_checks_out_nothing() {
 
     let output = checkout_json_err(repo.local_path(), &["main", "--finish"]);
 
-    common::assert_json_error_code(&output, "unpushed_commits");
+    let data = common::assert_json_error_code(&output, "unpushed_commits");
+    assert_eq!(data["retryWith"], serde_json::json!(["--no-finish"]));
     assert_eq!(repo.local_current_branch(), "feature/x");
+}
+
+#[test]
+fn checkout_finish_config_finishes_previous_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.checkout.finish", "true"]);
+    repo.git(&["checkout", "-b", "feature/done"]);
+    repo.git(&["branch", "feature/next"]);
+
+    let data = checkout_json_ok(repo.path(), &["feature/next"]);
+
+    assert_eq!(data["finished"]["branch"], "feature/done");
+    assert!(!repo.branch_exists("feature/done"));
+}
+
+#[test]
+fn checkout_no_finish_overrides_config() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["config", "mate.checkout.finish", "true"]);
+    repo.git(&["checkout", "-b", "feature/kept"]);
+    repo.git(&["branch", "feature/next"]);
+
+    let data = checkout_json_ok(repo.path(), &["feature/next", "--no-finish"]);
+
+    assert!(data.get("finished").is_none());
+    assert!(repo.branch_exists("feature/kept"));
+}
+
+#[test]
+fn checkout_finish_config_ignores_relocating_the_current_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_root = TempDir::new().unwrap();
+    configure_worktree_root(&repo, &wt_root);
+    repo.git(&["config", "mate.checkout.finish", "true"]);
+    repo.git(&["checkout", "-b", "feature/current"]);
+
+    let data = checkout_json_ok(repo.path(), &["-w"]);
+
+    assert!(data.get("finished").is_none());
+    assert_eq!(data["action"], "moved");
+    assert!(repo.branch_exists("feature/current"));
 }

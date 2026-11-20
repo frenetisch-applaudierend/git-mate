@@ -31,10 +31,51 @@ pub struct CheckoutArgs {
     pub start_fresh: bool,
     #[arg(
         long,
-        help = "Finish the current branch after checking out the new one, unless it is the default branch"
+        conflicts_with = "no_finish",
+        help = "Finish the current branch after checking out the new one, unless it is the default branch [default: mate.checkout.finish, else false]"
     )]
     pub finish: bool,
+    #[arg(
+        long,
+        help = "Keep the current branch, even if mate.checkout.finish is set"
+    )]
+    pub no_finish: bool,
 }
+
+/// Whether to finish the current branch after the checkout.
+#[derive(Clone, Copy, PartialEq)]
+enum Finish {
+    Off,
+    /// Asked for with `--finish`.
+    Explicit,
+    /// Turned on by `mate.checkout.finish`.
+    Configured,
+}
+
+impl Finish {
+    /// `--finish` and `--no-finish` win, then `mate.checkout.finish`.
+    fn resolve(finish: bool, no_finish: bool) -> Result<Self, String> {
+        if finish {
+            return Ok(Self::Explicit);
+        }
+        if no_finish {
+            return Ok(Self::Off);
+        }
+        Ok(
+            match crate::git::config::read_bool("mate.checkout.finish")? {
+                Some(true) => Self::Configured,
+                _ => Self::Off,
+            },
+        )
+    }
+}
+
+/// Retrying without finishing is how to get past a refusal from checkout.
+const KEEP_BRANCH: crate::cmd::finish::Remedy = crate::cmd::finish::Remedy {
+    flag: "--no-finish",
+    unpushed_hint: "use --no-finish to keep it, or finish it with --force separately",
+    uncommitted_hint: "use --no-finish to keep the branch, or commit or discard them first",
+};
 
 /// What to do with uncommitted changes in the worktree a branch is relocated
 /// out of.
@@ -116,10 +157,9 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
             (branch, fetched, None)
         }
     };
-    let to_finish = if args.finish {
-        branch_to_finish(&branch)?
-    } else {
-        None
+    let to_finish = match Finish::resolve(args.finish, args.no_finish)? {
+        Finish::Off => None,
+        mode => branch_to_finish(&branch, mode)?,
     };
     prune_missing_worktree(&branch)?;
     let changes = Changes::from_flags(args.take_changes, args.start_fresh);
@@ -150,7 +190,12 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
 /// The branch `--finish` finishes once `branch` is checked out: the current
 /// branch, unless it is the default branch (or there is none). Fails up front
 /// when finishing it would lose work, so nothing is checked out in that case.
-fn branch_to_finish(branch: &str) -> Result<Option<String>, crate::output::CommandError> {
+/// Checking out the current branch itself only fails with an explicit
+/// `--finish`; with `mate.checkout.finish` there is just nothing to finish.
+fn branch_to_finish(
+    branch: &str,
+    mode: Finish,
+) -> Result<Option<String>, crate::output::CommandError> {
     if crate::cwd::vanished().is_some() {
         return Ok(None);
     }
@@ -159,13 +204,16 @@ fn branch_to_finish(branch: &str) -> Result<Option<String>, crate::output::Comma
         return Ok(None);
     }
     if current == branch {
+        if mode == Finish::Configured {
+            return Ok(None);
+        }
         return Err(crate::output::CommandError::branch(
             format!("cannot use --finish when checking out the current branch {branch}"),
             "finish_current_branch",
             branch,
         ));
     }
-    crate::cmd::finish::ensure_finishable(&current)?;
+    crate::cmd::finish::ensure_finishable(&current, &KEEP_BRANCH)?;
     Ok(Some(current))
 }
 
@@ -283,6 +331,7 @@ fn default_checkout(branch: &str) -> Result<CheckoutData, crate::output::Command
             take_changes: false,
             start_fresh: false,
             finish: false,
+            no_finish: false,
         },
         branch,
     )?;

@@ -96,6 +96,9 @@ requests from forks); `data.branch` is the branch, `data.pullRequest` the pull r
   anything out with `unpushed_commits` or `uncommitted_changes` (no `--force` here; run
   `finish` separately if the user agrees), or `finish_current_branch` when checking out
   the current branch. Only use it when the user is done with the current branch.
+- The user may have set `mate.checkout.finish`, which finishes the current branch on
+  every checkout. When they want to keep it, pass `--no-finish`; a refusal above then
+  lists `--no-finish` in `retryWith`. Ask before retrying with it.
 - Result: `data.path`, `data.action` (`navigated`, `switched`, `created`, `moved`),
   `data.stashed`. `cd` to `data.path`.
 

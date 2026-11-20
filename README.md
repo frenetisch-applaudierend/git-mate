@@ -92,6 +92,7 @@ The default branch is only allowed in the main worktree, so `-w` rejects it.
 `--finish` finishes the branch you were on once the checkout succeeded, as `git mate finish` would,
 unless it is the default branch. It checks first that finishing it loses nothing (no unpushed commits,
 no uncommitted changes in its linked worktree) and otherwise fails before checking anything out.
+Set `mate.checkout.finish = true` to make this the default; `--no-finish` then keeps the branch.
 
 With `--json`, `git mate checkout` prints a single JSON document on stdout describing the result
 (`branch`, `worktree`, `path`, `action` — `navigated`, `switched`, `created` or `moved` — `stashed`
@@ -342,6 +343,7 @@ git config mate.worktreeRoot "../worktrees"
 | `mate.new.changes` | `auto` / `take` / `startFresh` | What `git mate new` does with uncommitted changes when neither `--take-changes` nor `--start-fresh` is given (default: `auto`) |
 | `mate.new.copyConfig` | boolean | Copy ignored local config files into the new branch's worktree (default: `true`) |
 | `mate.new.fetch` | boolean | Fetch from `origin` before `git mate new` branches from a remote ref, tag or commit (default: `true`) |
+| `mate.checkout.finish` | boolean | Finish the previous branch after `git mate checkout`, as with `--finish` (default: `false`) |
 | `mate.sync.diverged` | `merge` / `rebase` / `skip` | How `git mate sync` handles branches that diverged from their upstream when `--diverged` is omitted (default: `merge`) |
 | `mate.update.strategy` | `rebase` / `merge` | How `git mate update` brings in the base when `--strategy` (or `--rebase` / `--merge`) is omitted (default: `rebase`) |
 | `mate.update.stack` | `ask` / `true` / `false` | Whether `git mate update` also updates the branches a branch is stacked on when they are behind (default: `ask`) |

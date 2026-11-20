@@ -90,22 +90,39 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
     Ok(())
 }
 
+/// How a caller lets the user get past a refusal to finish: the flag to retry
+/// with and what to tell them about it, per refusal.
+pub(crate) struct Remedy {
+    pub flag: &'static str,
+    pub unpushed_hint: &'static str,
+    pub uncommitted_hint: &'static str,
+}
+
+const FORCE: Remedy = Remedy {
+    flag: "--force",
+    unpushed_hint: "use --force to delete anyway",
+    uncommitted_hint: "use --force to discard them",
+};
+
 /// Fail if finishing `branch` without `--force` would lose work: commits that
 /// exist on no remote, or uncommitted changes in its linked worktree.
-pub(crate) fn ensure_finishable(branch: &str) -> Result<(), crate::output::CommandError> {
+pub(crate) fn ensure_finishable(
+    branch: &str,
+    remedy: &Remedy,
+) -> Result<(), crate::output::CommandError> {
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
     let main_wt_path = main_wt
         .path
         .to_str()
         .ok_or("main worktree path is not valid UTF-8")?;
-    ensure_no_unpushed_commits(main_wt_path, branch)?;
+    ensure_no_unpushed_commits(main_wt_path, branch, remedy)?;
     if let Some(wt) = worktrees
         .iter()
         .skip(1)
         .find(|wt| wt.branch.as_deref() == Some(branch))
     {
-        ensure_clean_linked_worktree(wt, branch)?;
+        ensure_clean_linked_worktree(wt, branch, remedy)?;
     }
     Ok(())
 }
@@ -113,12 +130,16 @@ pub(crate) fn ensure_finishable(branch: &str) -> Result<(), crate::output::Comma
 fn ensure_no_unpushed_commits(
     main_wt_path: &str,
     branch: &str,
+    remedy: &Remedy,
 ) -> Result<(), crate::output::CommandError> {
     if crate::git::has_unpushed_commits(main_wt_path, branch)? {
         return Err(crate::output::CommandError::with_data(
-            format!("branch '{branch}' has unpushed commits; use --force to delete anyway"),
+            format!(
+                "branch '{branch}' has unpushed commits; {}",
+                remedy.unpushed_hint
+            ),
             "unpushed_commits",
-            serde_json::json!({ "branch": branch, "retryWith": ["--force"] }),
+            serde_json::json!({ "branch": branch, "retryWith": [remedy.flag] }),
         ));
     }
     Ok(())
@@ -127,6 +148,7 @@ fn ensure_no_unpushed_commits(
 fn ensure_clean_linked_worktree(
     wt: &crate::git::WorktreeEntry,
     branch: &str,
+    remedy: &Remedy,
 ) -> Result<(), crate::output::CommandError> {
     if !wt.path.exists() {
         return Ok(());
@@ -135,11 +157,12 @@ fn ensure_clean_linked_worktree(
     if !crate::git::is_worktree_clean(path)? {
         return Err(crate::output::CommandError::uncommitted_changes(
             format!(
-                "worktree for '{branch}' at {} has uncommitted changes; use --force to discard them",
-                crate::output::display_path(&wt.path)
+                "worktree for '{branch}' at {} has uncommitted changes; {}",
+                crate::output::display_path(&wt.path),
+                remedy.uncommitted_hint
             ),
             &wt.path,
-            &["--force"],
+            &[remedy.flag],
         ));
     }
     Ok(())
@@ -168,7 +191,7 @@ pub(crate) fn finish_branch(
     let target_branch = target_branch.to_string();
 
     if !force {
-        ensure_no_unpushed_commits(&main_wt_path, &target_branch)?;
+        ensure_no_unpushed_commits(&main_wt_path, &target_branch, &FORCE)?;
     }
 
     let mut data = FinishData {
@@ -207,7 +230,7 @@ pub(crate) fn finish_branch(
             let in_this_wt = cwd.starts_with(&wt.path);
             if wt.path.exists() {
                 if !force {
-                    ensure_clean_linked_worktree(wt, &target_branch)?;
+                    ensure_clean_linked_worktree(wt, &target_branch, &FORCE)?;
                 }
                 crate::git::remove_worktree(&wt.path, force)?;
             } else {
