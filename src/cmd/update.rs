@@ -36,8 +36,9 @@ a fast-forward or creates the remote branch. Branches go where `git push` would 
 (branch.<name>.pushRemote, else remote.pushDefault, else the upstream); an already
 merged branch whose upstream was deleted is not pushed. A branch whose rebase rewrote commits that were
 already pushed is listed as needing a force-push. --push=ask asks before each force-push
-(without a terminal, update refuses to run until --push=ff, --push=force or --no-push
-decides), and --push=force force-pushes without asking. A force-push only goes through if the
+(without a terminal, update refuses to run when a branch would need one, or with --sync
+at all, until --push=ff, --push=force or --no-push decides), and --push=force
+force-pushes without asking. A force-push only goes through if the
 remote branch is still where the last fetch saw it (--force-with-lease).
 
 Pass --sync to run `git mate sync` first, bringing the base branches up to date with their
@@ -132,6 +133,7 @@ struct UpdateData {
 }
 
 /// A branch to update and its base, detected before anything changed.
+#[derive(Clone)]
 struct Plan {
     branch: String,
     detection: Result<Detection, String>,
@@ -171,15 +173,18 @@ pub fn run(args: UpdateArgs) -> Result<(), crate::output::CommandError> {
     let dry_run = args.dry_run;
     let sync_first = sync_enabled(&args)?;
     // Without anybody to ask, `ask` needs the answer up front, before
-    // anything changes. Whether a force-push will be needed is only known
-    // after rebasing, so that decision is required regardless. Which stacked
-    // parents are behind is only known after a sync, so with a sync first it
-    // is required whenever a branch to update is stacked at all.
-    if !dry_run && !super::confirm::can_ask() {
+    // anything changes. Which stacked parents are behind, and which branches
+    // will need a force-push, is only known after a sync, so with a sync
+    // first the push decision is required regardless, and the stack decision
+    // whenever a branch to update is stacked at all.
+    let must_decide = !dry_run && !super::confirm::can_ask();
+    if must_decide && sync_first {
         if push == Some(PushMode::Ask) {
-            return Err(push_decision_required());
+            return Err(push_decision_required(
+                "push mode is ask and update syncs first, so whether a force-push will be needed isn't known yet".to_string(),
+            ));
         }
-        if stack == StackMode::Ask && sync_first && !args.all && has_stacked_target(&args)? {
+        if stack == StackMode::Ask && !args.all && has_stacked_target(&args)? {
             return Err(stack_decision_required(
                 "a branch to update is stacked on another branch, which may be behind after syncing".to_string(),
             ));
@@ -246,11 +251,61 @@ pub fn run(args: UpdateArgs) -> Result<(), crate::output::CommandError> {
     }
 
     let worktrees = crate::git::list_worktrees()?;
+    if must_decide && push == Some(PushMode::Ask) {
+        // Predict, as --dry-run does, which branches would need a
+        // force-push; only those need the decision.
+        let predicted = execute(
+            plans.clone(),
+            &default_branch,
+            strategy,
+            &worktrees,
+            Some(PushMode::Ff),
+            true,
+        );
+        let force: Vec<&str> = predicted
+            .iter()
+            .filter(|outcome| outcome.push == Some("needs-force-push"))
+            .map(|outcome| outcome.branch.as_str())
+            .collect();
+        if !force.is_empty() {
+            return Err(push_decision_required(format!(
+                "push mode is ask and {} would need a force-push",
+                force.join(", ")
+            ))
+            .with_detail("needsForcePush", &force));
+        }
+    }
+    let outcomes = execute(plans, &default_branch, strategy, &worktrees, push, dry_run);
+
+    if crate::output::json_mode() {
+        crate::output::emit_json_success(
+            "update",
+            UpdateData {
+                dry_run,
+                sync,
+                branches: outcomes,
+            },
+        );
+    } else {
+        report::print(&outcomes);
+    }
+    Ok(())
+}
+
+/// Update the planned branches, bases first, and push them if asked to.
+fn execute(
+    plans: Vec<Plan>,
+    default_branch: &str,
+    strategy: Strategy,
+    worktrees: &[crate::git::WorktreeEntry],
+    push: Option<PushMode>,
+    dry_run: bool,
+) -> Vec<UpdateOutcome> {
     // Branches this run moved (or, under --dry-run, would move), so a
     // dry run can tell what would happen to the branches stacked on them.
     let mut moved = std::collections::HashSet::new();
     let mut outcomes = Vec::new();
-    for plan in stack_order(plans, &default_branch) {
+    for plan in stack_order(plans, default_branch) {
         let mut outcome = UpdateOutcome::new(&plan.branch, strategy, dry_run);
         outcome.parent_behind = plan.parent_behind;
         let mut outcome = match plan.detection {
@@ -260,7 +315,7 @@ pub fn run(args: UpdateArgs) -> Result<(), crate::output::CommandError> {
                     &plan.branch,
                     &base,
                     strategy,
-                    &worktrees,
+                    worktrees,
                     dry_run,
                     base_moved,
                 )
@@ -291,20 +346,7 @@ pub fn run(args: UpdateArgs) -> Result<(), crate::output::CommandError> {
         }
         outcomes.push(outcome);
     }
-
-    if crate::output::json_mode() {
-        crate::output::emit_json_success(
-            "update",
-            UpdateData {
-                dry_run,
-                sync,
-                branches: outcomes,
-            },
-        );
-    } else {
-        report::print(&outcomes);
-    }
-    Ok(())
+    outcomes
 }
 
 /// `--strategy`, `--rebase` and `--merge` win, then `mate.update.strategy`,
@@ -419,9 +461,9 @@ fn has_stacked_target(args: &UpdateArgs) -> Result<bool, String> {
     Ok(false)
 }
 
-fn push_decision_required() -> crate::output::CommandError {
+fn push_decision_required(reason: String) -> crate::output::CommandError {
     crate::output::CommandError::decision_required(
-        "push mode is ask, but there is nobody to ask before a force-push; retry with --push=ff, --push=force or --no-push".to_string(),
+        format!("{reason}; retry with --push=ff, --push=force or --no-push"),
         "mate.update.push",
         &["--push=ff", "--push=force", "--no-push"],
     )
@@ -448,6 +490,9 @@ fn add_stacked_parents(
     dry_run: bool,
     branches: &Branches,
 ) -> Result<(), crate::output::CommandError> {
+    // Without anybody to ask: every branch whose parent is behind, to refuse
+    // with all of them at once.
+    let mut undecided = Vec::new();
     for i in 0..plans.len() {
         let (chain, behind) = stack_below(&plans[i], plans, strategy, branches)?;
         let Some(behind) = behind else {
@@ -458,10 +503,8 @@ fn add_stacked_parents(
             StackMode::Never => false,
             StackMode::Ask if dry_run => false,
             StackMode::Ask if !super::confirm::can_ask() => {
-                return Err(stack_decision_required(format!(
-                    "{} is stacked on {}, which is behind {}",
-                    plans[i].branch, behind.branch, behind.base
-                )));
+                undecided.push((plans[i].branch.clone(), behind));
+                continue;
             }
             StackMode::Ask => {
                 let names: Vec<&str> = chain.iter().map(|p| p.branch.as_str()).collect();
@@ -485,7 +528,23 @@ fn add_stacked_parents(
             plans[i].parent_behind = Some(behind);
         }
     }
-    Ok(())
+    if undecided.is_empty() {
+        return Ok(());
+    }
+    let described: Vec<String> = undecided
+        .iter()
+        .map(|(branch, behind)| {
+            format!(
+                "{branch} is stacked on {}, which is behind {}",
+                behind.branch, behind.base
+            )
+        })
+        .collect();
+    let details: Vec<serde_json::Value> = undecided
+        .iter()
+        .map(|(branch, behind)| serde_json::json!({ "branch": branch, "parentBehind": behind }))
+        .collect();
+    Err(stack_decision_required(described.join("; ")).with_detail("branches", details))
 }
 
 /// The branches `plan`'s branch is stacked on, nearest first, down to the

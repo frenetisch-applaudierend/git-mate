@@ -37,6 +37,7 @@ pub struct Base {
     pub merged_parent: Option<String>,
 }
 
+#[derive(Clone)]
 pub enum Detection {
     Found(Base),
     /// Several branches could be the base; the graph can't tell which.

@@ -722,6 +722,13 @@ fn without_terminal_parent_behind_requires_a_decision() {
         data["retryWith"],
         serde_json::json!(["--stack", "--no-stack"])
     );
+    assert_eq!(
+        data["branches"],
+        serde_json::json!([{
+            "branch": "foo",
+            "parentBehind": { "branch": "bar", "base": "main", "behind": 1 }
+        }])
+    );
     assert_eq!(tip(dir, "bar"), bar_before);
     assert_eq!(tip(dir, "foo"), foo_before);
 }
@@ -900,6 +907,7 @@ fn push_ask_without_terminal_requires_a_decision_up_front() {
 
     let data = update_decision_required(dir, &["--push=ask"]);
     assert_eq!(data["setting"], "mate.update.push");
+    assert_eq!(data["needsForcePush"], serde_json::json!(["feature"]));
     assert_eq!(
         data["retryWith"],
         serde_json::json!(["--push=ff", "--push=force", "--no-push"])
@@ -909,15 +917,28 @@ fn push_ask_without_terminal_requires_a_decision_up_front() {
 }
 
 #[test]
-fn push_config_ask_requires_a_decision_even_without_force_push() {
+fn push_config_ask_needs_no_decision_without_force_push() {
     let setup = remote_feature_behind_main(false);
+    let dir = setup.local_path();
     setup.local_git(&["config", "mate.update.push", "ask"]);
 
-    let data = update_decision_required(setup.local_path(), &[]);
-    assert_eq!(data["setting"], "mate.update.push");
+    let data = update_json(dir, &[]);
+    let feature = entry(&data, "feature");
+    assert_eq!(feature["action"], "rebased");
+    assert_eq!(feature["push"], "pushed");
+    assert_eq!(remote_tip(&setup, "feature"), Some(tip(dir, "feature")));
+}
 
-    let data = update_json(setup.local_path(), &["--push=ff"]);
-    assert_eq!(entry(&data, "feature")["action"], "rebased");
+#[test]
+fn push_ask_with_sync_requires_a_decision_before_syncing() {
+    let setup = remote_feature_behind_main(false);
+    let dir = setup.local_path();
+    let before = tip(dir, "feature");
+
+    let data = update_decision_required(dir, &["--push=ask", "--sync"]);
+    assert_eq!(data["setting"], "mate.update.push");
+    assert!(data.get("needsForcePush").is_none());
+    assert_eq!(tip(dir, "feature"), before);
 }
 
 #[test]

@@ -279,7 +279,7 @@ On failure, `error.code` tells what went wrong, and `data` (when present) gives 
 | `branch_exists` | `new` was given a branch that already exists | `branch` |
 | `invalid_branch_name` | Not a valid branch name | `branch` |
 | `default_branch` | Not possible with the default branch (`finish` it, or put it in a linked worktree) | `branch` |
-| `decision_required` | A setting (or flag) is `ask`, but there is nobody to ask (`--json`, or no terminal); nothing was changed | `setting`, `retryWith` (flags that decide) |
+| `decision_required` | A setting (or flag) is `ask`, but there is nobody to ask (`--json`, or no terminal); nothing was changed | `setting`, `retryWith` (flags that decide); for `update`, `branches` (each `branch` with the `parentBehind` it is stacked on) or `needsForcePush` (branches that would need a force-push) when known |
 | `finish_current_branch` | `checkout --finish` was asked to check out the branch it would finish | `branch` |
 | `stash_reapply_failed` | `new` succeeded, but carried-over changes could not be reapplied; they are kept in the stash | the command's usual result |
 | `unsupported` | `--json` isn't supported by this command | |
@@ -359,6 +359,7 @@ git config mate.worktreeRoot "../worktrees"
 Wherever a setting takes `ask`, git-mate asks on the terminal when the question comes up. Without
 a terminal to ask on (or with `--json`), it refuses before changing anything whenever the question
 could come up, with `decision_required` (`uncommitted_changes` for `mate.new.changes`) and the
-flags that decide in `retryWith`. For `mate.update.push` that is every run that pushes, since whether
-a force-push is needed is only known after rebasing; for `mate.update.stack` with `--sync`, every
-run that updates a stacked branch. `--dry-run` never needs a decision.
+flags that decide in `retryWith`. For `mate.update.push`, that is when a branch would need a
+force-push (predicted as `--dry-run` does). With `--sync`, what the sync changes isn't known
+beforehand, so `mate.update.push` then always needs a decision, and `mate.update.stack` whenever a
+branch to update is stacked. `--dry-run` never needs a decision.

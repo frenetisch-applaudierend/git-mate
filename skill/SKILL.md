@@ -147,13 +147,16 @@ they are stacked on; detected from the commit graph). Conflict-free or not at al
   asked to update the stack, or wants the branch fully up to date with the default
   branch), or `--no-stack` to update only the named branches (the user asked for just
   this branch); a parent left behind is then reported as `parentBehind`. If it isn't
-  clear which, run with `--dry-run` first (it never needs a decision; `parentBehind`
-  shows what is behind) and ask the user.
+  clear which, just run it: the refusal changes nothing, and `data.branches` lists each
+  branch with the `parentBehind` it is stacked on. Show that to the user and retry with
+  their choice. (`--dry-run` shows the same without refusing.)
 - `--push` pushes afterwards when that is a fast-forward or creates the remote branch. A
   rebased branch that was pushed before then reports `push: "needs-force-push"`.
   `--push=force` force-pushes (with lease). Only use `--push=force` when the user asked
-  for a force-push. If the user set `mate.update.push = ask`, every run needs one of
-  `--push=ff`, `--push=force` or `--no-push`; pass `--no-push` unless they asked to push.
+  for a force-push. If the user set `mate.update.push = ask`, a run where a branch would
+  need a force-push (or any run with `--sync`) refuses with `decision_required`;
+  `data.needsForcePush` lists those branches. Ask the user: `--push=force` force-pushes
+  them, `--push=ff` pushes the rest and leaves them, `--no-push` pushes nothing.
 - Result: `data` lists one entry per branch: `branch`, `action` (`rebased`, `merged`,
   `up-to-date`, `skipped`, `failed`), `base`, `reason`/`hint` when skipped or failed,
   `stashKept: true` when uncommitted changes could not be reapplied and remain in the

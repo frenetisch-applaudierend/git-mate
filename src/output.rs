@@ -107,6 +107,19 @@ impl CommandError {
         )
     }
 
+    /// Add `key` to the error's `data`, e.g. details behind a
+    /// `decision_required`.
+    pub fn with_detail<T: serde::Serialize>(mut self, key: &str, value: T) -> Self {
+        let value = serde_json::to_value(value).expect("command data is always serializable");
+        match &mut self.data {
+            Some(serde_json::Value::Object(map)) => {
+                map.insert(key.to_string(), value);
+            }
+            _ => self.data = Some(serde_json::json!({ key: value })),
+        }
+        self
+    }
+
     /// An error about `branch`, e.g. `branch_not_found`.
     pub fn branch(message: String, code: &'static str, branch: &str) -> Self {
         Self::with_data(message, code, serde_json::json!({ "branch": branch }))
