@@ -120,25 +120,27 @@ git mate checkout main --finish                    # go back to the default bran
 You're done with a branch. Removes the worktree (if linked) or switches to the default branch (if in main worktree), then deletes the local branch ref.
 
 With `--json`, it prints a single JSON document on stdout (`branch`, plus `worktree` and `path` if the
-branch was checked out, `switchedTo` if the main worktree switched branches, and `mainWorktree`).
+branch was checked out, `switchedTo` if the main worktree switched branches, `abortedOperation` if
+`--force` aborted a rebase or the like, and `mainWorktree`).
 
-Without `--force`, `finish` refuses to delete a branch with unpushed commits or to remove a linked
-worktree with uncommitted changes. `--force` discards both.
+Without `--force`, `finish` refuses to delete a branch with unpushed commits, to remove a linked
+worktree with uncommitted changes, to switch the main worktree when local changes are in the way, or
+to touch a worktree while a rebase, merge or the like is in progress there. `--force` discards the
+changes and aborts the operation first (a branch being rebased is finished as it was before the
+rebase).
 
 `--all` cleans up everything at once: it finishes the branch of every linked worktree (removing
 worktrees with a detached HEAD too) and switches the main worktree to the default branch, finishing
 the branch it was on. Branches that aren't checked out anywhere are left alone, and so is the default
 branch: if it is checked out in a linked worktree, only that worktree is removed. Each worktree goes
-through the same checks as a single `finish`, and also isn't touched while a rebase, merge or the
-like is in progress there, or while its detached HEAD has commits no branch contains (`--force`
-overrides all of these). Whatever fails a check is skipped and the rest is still finished. With
+through the same checks as a single `finish`, and also isn't touched while its detached HEAD has
+commits no branch, remote-tracking branch or tag contains (`--force` overrides all of these). Whatever fails a check is skipped and the rest is still finished. With
 `--json`, `data` holds `finished` (one entry per worktree, shaped like a single `finish`, without
 `branch` for a detached HEAD, and with `branchKept: true` for the default branch), `skipped` (`branch`, `worktree`, `path`, and the `code`, `message` and
 `retryWith` a single `finish` would have failed with) and `mainWorktree`.
 
 `--dry-run` runs the same checks and reports what would be finished (or, with `--all`, skipped)
-without changing anything; `--json` output then carries `dryRun: true`. It can't tell in advance
-whether local changes in the main worktree would block the switch to the default branch.
+without changing anything; `--json` output then carries `dryRun: true`.
 
 If the worktree you are in was already removed (say, finished from another shell), `git mate finish`
 recognizes the vanished directory, finishes whatever is left of its branch and takes you to the main
@@ -287,7 +289,7 @@ On failure, `error.code` tells what went wrong, and `data` (when present) gives 
 |------|---------|--------|
 | `uncommitted_changes` | Uncommitted changes are in the way | `path` (the worktree), `retryWith` (flags that resolve it, in place of `--take-changes`/`--start-fresh` if given; empty: commit or stash first) |
 | `unpushed_commits` | `finish` would lose unpushed commits | `branch` (`path` for a detached HEAD under `--all`), `retryWith` |
-| `operation_in_progress` | `finish --all` skipped a worktree with a rebase, merge or the like in progress | `path`, `operation`, `retryWith` |
+| `operation_in_progress` | `finish` won't touch a worktree with a rebase, merge or the like in progress | `path`, `operation`, `retryWith` |
 | `branch_not_found` | The branch doesn't exist (`checkout` also looked on the remotes) | `branch` |
 | `invalid_pull_request_url` | `checkout` was given a URL that is not a pull request URL | |
 | `remote_not_found` | No remote points to the pull request's repository | `number`, `url` |

@@ -860,18 +860,7 @@ fn worktree_of(
     branch: &str,
     worktrees: &[crate::git::WorktreeEntry],
 ) -> Result<Option<String>, String> {
-    let entry = crate::git::worktree_for_branch(branch, worktrees).or_else(|| {
-        worktrees.iter().find(|wt| {
-            wt.branch.is_none()
-                && wt
-                    .path
-                    .to_str()
-                    .and_then(crate::git::branch_being_rebased)
-                    .as_deref()
-                    == Some(branch)
-        })
-    });
-    entry
+    crate::git::worktree_of_branch(branch, worktrees)
         .map(|wt| {
             wt.path
                 .to_str()

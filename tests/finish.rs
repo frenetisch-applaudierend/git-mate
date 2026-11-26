@@ -830,3 +830,171 @@ fn finish_all_dry_run_reports_without_changing_anything() {
         "a dry run must not move the shell"
     );
 }
+
+/// Commit a change to `conflict.txt` on the branch checked out in `dir`, and a
+/// conflicting one on a new branch `base` from where it started, then rebase
+/// onto `base`, which stops at the conflict.
+fn stop_rebase_at_conflict(dir: &std::path::Path, base: &str) {
+    let branch = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let branch = branch.trim();
+    common::git(dir, &["checkout", "-q", "-b", base]);
+    std::fs::write(dir.join("conflict.txt"), "base").unwrap();
+    common::git(dir, &["add", "conflict.txt"]);
+    common::git(dir, &["commit", "-q", "-m", "base side"]);
+    common::git(dir, &["checkout", "-q", branch]);
+    std::fs::write(dir.join("conflict.txt"), "branch").unwrap();
+    common::git(dir, &["add", "conflict.txt"]);
+    common::git(dir, &["commit", "-q", "-m", "branch side"]);
+    let status = std::process::Command::new("git")
+        .args(["rebase", base])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .current_dir(dir)
+        .output()
+        .unwrap()
+        .status;
+    assert!(!status.success(), "rebase should stop at the conflict");
+}
+
+fn rebase_in_progress(dir: &std::path::Path) -> bool {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--git-path", "rebase-merge"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    dir.join(String::from_utf8(out.stdout).unwrap().trim())
+        .exists()
+}
+
+#[test]
+fn finish_all_skips_a_worktree_mid_rebase_without_force() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/r"]);
+    let wt = container.join("feature/r");
+    stop_rebase_at_conflict(&wt, "base-r");
+
+    let data = finish_all_json(repo.path(), &[]);
+    assert_eq!(data["finished"], serde_json::json!([]), "{data}");
+    let skipped = &data["skipped"][0];
+    assert_eq!(skipped["branch"], "feature/r", "{data}");
+    assert_eq!(skipped["code"], "operation_in_progress");
+    assert_eq!(skipped["retryWith"], serde_json::json!(["--force"]));
+    assert!(rebase_in_progress(&wt));
+    assert!(repo.branch_exists("feature/r"));
+}
+
+#[test]
+fn finish_all_force_aborts_rebases_and_finishes_their_branches() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/r"]);
+    let wt = container.join("feature/r");
+    stop_rebase_at_conflict(&wt, "base-r");
+    repo.git(&["checkout", "-q", "-b", "feature/m"]);
+    stop_rebase_at_conflict(repo.path(), "base-m");
+
+    let dry = finish_all_json(repo.path(), &["--force", "--dry-run"]);
+    assert_eq!(dry["skipped"], serde_json::json!([]), "{dry}");
+    assert!(rebase_in_progress(&wt) && rebase_in_progress(repo.path()));
+    assert!(repo.branch_exists("feature/r") && repo.branch_exists("feature/m"));
+
+    let data = finish_all_json(repo.path(), &["--force"]);
+    assert_eq!(data["skipped"], serde_json::json!([]), "{data}");
+    for report in [&dry, &data] {
+        let finished = report["finished"].as_array().unwrap();
+        assert_eq!(finished.len(), 2, "{report}");
+        assert_eq!(finished[0]["branch"], "feature/r");
+        assert_eq!(finished[0]["worktree"], "linked");
+        assert_eq!(finished[0]["abortedOperation"], "rebase");
+        assert_eq!(finished[1]["branch"], "feature/m");
+        assert_eq!(finished[1]["worktree"], "main");
+        assert_eq!(finished[1]["abortedOperation"], "rebase");
+    }
+
+    assert!(!wt.exists());
+    assert!(!repo.branch_exists("feature/r"));
+    assert!(!repo.branch_exists("feature/m"));
+    assert_eq!(repo.current_branch(), "main");
+    assert!(
+        !rebase_in_progress(repo.path()),
+        "the rebase must be aborted"
+    );
+}
+
+#[test]
+fn finish_force_in_a_main_worktree_mid_rebase_aborts_it() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-q", "-b", "feature/m"]);
+    stop_rebase_at_conflict(repo.path(), "base-m");
+
+    let output = common::git_mate()
+        .args(["--json", "finish", "--force"])
+        .current_dir(repo.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::parse_single_json(&output)["data"].clone();
+    assert_eq!(data["branch"], "feature/m", "{data}");
+    assert_eq!(data["abortedOperation"], "rebase");
+    assert_eq!(repo.current_branch(), "main");
+    assert!(!rebase_in_progress(repo.path()));
+    assert!(!repo.branch_exists("feature/m"));
+}
+
+#[test]
+fn finish_all_keeps_a_detached_worktree_whose_commit_only_a_tag_holds() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&[]);
+    let detached = container.join("detached");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        detached.to_str().unwrap(),
+        "main",
+    ]);
+    common::git(
+        &detached,
+        &["commit", "-q", "--allow-empty", "-m", "tagged"],
+    );
+    common::git(&detached, &["tag", "v1"]);
+
+    let data = finish_all_json(repo.path(), &[]);
+    assert_eq!(data["skipped"], serde_json::json!([]), "{data}");
+    assert_eq!(data["finished"].as_array().unwrap().len(), 1, "{data}");
+    assert!(!detached.exists());
+}
+
+#[test]
+fn finish_dry_run_predicts_local_changes_blocking_the_switch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["checkout", "-q", "-b", "feature/m"]);
+    std::fs::write(repo.path().join("work.txt"), "committed").unwrap();
+    repo.git(&["add", "work.txt"]);
+    repo.git(&["commit", "-q", "-m", "add work.txt"]);
+
+    // A change the switch carries over doesn't block it.
+    std::fs::write(repo.path().join("unrelated.txt"), "new").unwrap();
+    let data = finish_all_json(repo.path(), &["--dry-run"]);
+    assert_eq!(data["skipped"], serde_json::json!([]), "{data}");
+
+    // One it would overwrite does, in a dry run as in a real one.
+    std::fs::write(repo.path().join("work.txt"), "modified").unwrap();
+    for args in [&["--dry-run"][..], &[]] {
+        let data = finish_all_json(repo.path(), args);
+        assert_eq!(data["finished"], serde_json::json!([]), "{data}");
+        assert_eq!(data["skipped"][0]["code"], "uncommitted_changes", "{data}");
+        assert_eq!(
+            data["skipped"][0]["retryWith"],
+            serde_json::json!(["--force"])
+        );
+    }
+    assert_eq!(repo.current_branch(), "feature/m");
+}

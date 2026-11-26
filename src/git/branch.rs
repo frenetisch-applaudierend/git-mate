@@ -17,6 +17,12 @@ pub fn checkout_force_in(path: &str, branch: &str) -> Result<(), String> {
     run(&["-C", path, "checkout", "--force", branch])
 }
 
+/// Whether `checkout_in(path, branch)` would go through: no local change in
+/// the worktree at `path` (untracked files included) is in the way.
+pub fn can_checkout_in(path: &str, branch: &str) -> bool {
+    run(&["-C", path, "read-tree", "-n", "-m", "-u", "HEAD", branch]).is_ok()
+}
+
 pub fn merge_ff_only_in(path: &str, refspec: &str) -> Result<(), String> {
     run(&["-C", path, "merge", "--ff-only", refspec])
 }
@@ -256,7 +262,8 @@ pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String>
 }
 
 /// Whether the detached HEAD of the worktree at `path` has commits that no
-/// branch or remote-tracking ref contains, which switching away would orphan.
+/// branch, remote-tracking ref or tag contains, which switching away would
+/// orphan.
 pub fn has_unreferenced_commits(path: &str) -> Result<bool, String> {
     run_output(&[
         "-C",
@@ -267,6 +274,7 @@ pub fn has_unreferenced_commits(path: &str) -> Result<bool, String> {
         "--not",
         "--branches",
         "--remotes",
+        "--tags",
     ])
     .map(|o| !o.trim().is_empty())
 }

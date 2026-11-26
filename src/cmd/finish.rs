@@ -52,6 +52,9 @@ pub(crate) struct FinishData {
     /// under `--all`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) branch_kept: bool,
+    /// The operation (e.g. "rebase") that `--force` aborted first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) aborted_operation: Option<&'static str>,
     /// Nothing was changed: this is what would have been done.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) dry_run: bool,
@@ -74,14 +77,17 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
     let target_branch = match (args.branch, crate::cwd::vanished()) {
         (Some(b), _) => b,
         (None, Some(gone)) => vanished_branch(gone, &worktrees)?,
+        // Mid-rebase, git lists the worktree as detached.
         (None, None) => current_wt
-            .and_then(|wt| wt.branch.clone())
+            .and_then(|wt| {
+                wt.branch
+                    .clone()
+                    .or_else(|| wt.path.to_str().and_then(crate::git::branch_being_rebased))
+            })
             .ok_or("could not determine current branch (detached HEAD?)")?,
     };
 
-    let target_wt = worktrees
-        .iter()
-        .find(|wt| wt.branch.as_deref() == Some(&target_branch));
+    let target_wt = crate::git::worktree_of_branch(&target_branch, &worktrees);
 
     if target_wt.is_none() && !crate::git::commit_exists(&format!("refs/heads/{target_branch}")) {
         let Some(gone) = crate::cwd::vanished() else {
@@ -108,6 +114,7 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
                     main_worktree: main_wt.path.clone(),
                     already_finished: true,
                     branch_kept: false,
+                    aborted_operation: None,
                     dry_run: args.dry_run,
                 },
             );
@@ -205,6 +212,38 @@ pub(super) fn ensure_clean_linked_worktree(
     Ok(())
 }
 
+/// Deal with a rebase, merge or the like left unfinished in `wt`: removing
+/// the worktree, or switching away, would abandon it. Refuse without `force`;
+/// with it, abort the operation (unless `dry_run`) and return its name.
+pub(super) fn settle_operation(
+    wt: &crate::git::WorktreeEntry,
+    FinishOptions { force, dry_run, .. }: FinishOptions,
+) -> Result<Option<&'static str>, crate::output::CommandError> {
+    if !wt.path.exists() {
+        return Ok(None);
+    }
+    let path = wt.path.to_str().ok_or("worktree path is not valid UTF-8")?;
+    let Some(operation) = crate::git::operation_in_progress(path) else {
+        return Ok(None);
+    };
+    let shown = crate::output::display_path(&wt.path);
+    if !force {
+        return Err(crate::output::CommandError::with_data(
+            format!("a {operation} is in progress in {shown}; finish or abort it, or use --force"),
+            "operation_in_progress",
+            serde_json::json!({ "path": wt.path, "operation": operation, "retryWith": ["--force"] }),
+        ));
+    }
+    if !dry_run {
+        crate::git::abort_operation(path, operation)?;
+    }
+    crate::output::success(&format!(
+        "{} the {operation} in {shown}",
+        if dry_run { "Would abort" } else { "Aborted" }
+    ));
+    Ok(Some(operation))
+}
+
 /// Finish an existing `branch`: remove its linked worktree or switch the main
 /// worktree away from it, then delete it.
 pub(crate) fn finish_branch(
@@ -226,10 +265,12 @@ pub(crate) fn finish_branch(
         .to_string();
     let cwd = std::env::current_dir()
         .map_err(|e| format!("could not determine current directory: {e}"))?;
-    let target_wt = worktrees
-        .iter()
-        .find(|wt| wt.branch.as_deref() == Some(target_branch));
+    let target_wt = crate::git::worktree_of_branch(target_branch, &worktrees);
     let target_branch = target_branch.to_string();
+    let aborted_operation = target_wt
+        .map(|wt| settle_operation(wt, options))
+        .transpose()?
+        .flatten();
 
     if !force {
         ensure_no_unpushed_commits(&main_wt_path, &target_branch, &FORCE)?;
@@ -243,6 +284,7 @@ pub(crate) fn finish_branch(
         main_worktree: main_wt.path.clone(),
         already_finished: false,
         branch_kept: false,
+        aborted_operation,
         dry_run,
     };
     match target_wt {
@@ -314,15 +356,27 @@ pub(crate) fn finish_branch(
 }
 
 /// Check out `default` in the main worktree at `path`, unless `dry_run`.
+/// Without `force`, refuse first if local changes are in the way.
 pub(super) fn switch_main_worktree(
     path: &str,
     default: &str,
     FinishOptions { force, dry_run, .. }: FinishOptions,
-) -> Result<(), String> {
+) -> Result<(), crate::output::CommandError> {
+    if !force && !crate::git::can_checkout_in(path, default) {
+        return Err(crate::output::CommandError::uncommitted_changes(
+            format!(
+                "local changes in the main worktree at {} are in the way of switching to {default}; {}",
+                crate::output::display_path(std::path::Path::new(path)),
+                FORCE.uncommitted_hint
+            ),
+            std::path::Path::new(path),
+            &[FORCE.flag],
+        ));
+    }
     match (dry_run, force) {
         (true, _) => Ok(()),
-        (false, true) => crate::git::checkout_force_in(path, default),
-        (false, false) => crate::git::checkout_in(path, default),
+        (false, true) => Ok(crate::git::checkout_force_in(path, default)?),
+        (false, false) => Ok(crate::git::checkout_in(path, default)?),
     }
 }
 
