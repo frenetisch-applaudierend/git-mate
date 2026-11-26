@@ -115,6 +115,7 @@ pub fn is_worktree_clean(path: &str) -> Result<bool, String> {
 /// The git operation left unfinished in the worktree at `path`, if any
 /// (e.g. a rebase stopped at a conflict).
 pub fn operation_in_progress(path: &str) -> Option<&'static str> {
+    // Each name is also the git command that aborts it.
     [
         ("rebase-merge", "rebase"),
         ("rebase-apply", "rebase"),
@@ -149,6 +150,25 @@ pub fn worktree_for_branch<'a>(
     worktrees
         .iter()
         .find(|wt| wt.branch.as_deref() == Some(branch))
+}
+
+/// The worktree `branch` is checked out in, or being rebased in.
+pub fn worktree_of_branch<'a>(
+    branch: &str,
+    worktrees: &'a [WorktreeEntry],
+) -> Option<&'a WorktreeEntry> {
+    worktree_for_branch(branch, worktrees).or_else(|| {
+        worktrees.iter().find(|wt| {
+            wt.branch.is_none()
+                && wt.path.to_str().and_then(branch_being_rebased).as_deref() == Some(branch)
+        })
+    })
+}
+
+/// Abort the `operation` (as named by [`operation_in_progress`]) left
+/// unfinished in the worktree at `path`, putting it back where it started.
+pub fn abort_operation(path: &str, operation: &str) -> Result<(), String> {
+    run(&["-C", path, operation, "--abort"])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

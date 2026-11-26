@@ -14,12 +14,12 @@ pub use base::{
     default_base_branch, detect_base,
 };
 pub use branch::{
-    Tracking, checkout, checkout_force_in, checkout_in, checkout_new_in, current_branch,
-    delete_branch_force_in, detect_default_branch, ensure_branch_allowed_in_linked_worktree,
-    has_unpushed_commits, has_unreferenced_commits, is_valid_branch_name, kept_local_branches,
-    list_branch_tips, list_branch_tracking, list_local_branches_with_upstream,
-    local_branch_for_ref, mark_kept_local, merge_ff_only_in, stash_pop_in, stash_push_in,
-    unset_upstream,
+    Tracking, can_checkout_in, checkout, checkout_force_in, checkout_in, checkout_new_in,
+    current_branch, delete_branch_force_in, detect_default_branch,
+    ensure_branch_allowed_in_linked_worktree, has_unpushed_commits, has_unreferenced_commits,
+    is_valid_branch_name, kept_local_branches, list_branch_tips, list_branch_tracking,
+    list_local_branches_with_upstream, local_branch_for_ref, mark_kept_local, merge_ff_only_in,
+    stash_pop_in, stash_push_in, unset_upstream,
 };
 pub use integrate::{Integration, Merge, Rebase, merge_into_branch, rebase_branch};
 pub use merge::{MergedAt, content_merged_into, patches_already_in, reset_hard_in};
@@ -33,8 +33,8 @@ pub use remote::{
 };
 pub use run::{is_verbose, set_verbose};
 pub use worktree::{
-    OperationTarget, WorktreeEntry, add_worktree, branch_being_rebased, current_worktree_root,
-    expand_tilde, find_main_worktree, is_main_worktree, is_worktree_clean, list_worktrees,
-    operation_in_progress, prune_worktrees, read_worktree_root, remove_worktree,
-    resolve_operation_target, worktree_for_branch, worktree_path,
+    OperationTarget, WorktreeEntry, abort_operation, add_worktree, branch_being_rebased,
+    current_worktree_root, expand_tilde, find_main_worktree, is_main_worktree, is_worktree_clean,
+    list_worktrees, operation_in_progress, prune_worktrees, read_worktree_root, remove_worktree,
+    resolve_operation_target, worktree_for_branch, worktree_of_branch, worktree_path,
 };

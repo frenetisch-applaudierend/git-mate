@@ -1,6 +1,6 @@
 use super::finish::{
     FORCE, FinishData, FinishOptions, ensure_clean_linked_worktree, finish_branch,
-    switch_main_worktree,
+    settle_operation, switch_main_worktree,
 };
 use crate::output::CommandError;
 
@@ -69,7 +69,7 @@ pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
                 let skipped = if dry_run { "Would skip" } else { "Skipped" };
                 crate::output::info(&format!("{skipped}: {}", e.message()));
                 data.skipped.push(Skipped {
-                    branch: wt.branch.clone(),
+                    branch: branch_of(wt),
                     worktree: kind,
                     path: wt.path.clone(),
                     code: e.code(),
@@ -79,24 +79,39 @@ pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
             }
         };
 
+    // Steps that don't go through `finish_branch` settle the operation here.
+    let settled = |wt, step: &dyn Fn() -> Result<FinishData, CommandError>| {
+        let aborted_operation = settle_operation(wt, options)?;
+        Ok(FinishData {
+            aborted_operation,
+            ..step()?
+        })
+    };
+
     for wt in worktrees.iter().skip(1) {
-        let result = ensure_no_operation(wt, force).and_then(|()| match &wt.branch {
+        let result = match branch_of(wt) {
             // The default branch is kept; only its worktree goes, so that the
             // main worktree can switch to it.
-            Some(branch) if *branch == default => {
-                remove_linked_worktree(wt, Some(branch), options, &main_wt.path)
-            }
-            Some(branch) => finish_branch(branch, options),
-            None => remove_linked_worktree(wt, None, options, &main_wt.path),
-        });
+            Some(branch) if branch == default => settled(wt, &|| {
+                remove_linked_worktree(wt, Some(&branch), options, &main_wt.path)
+            }),
+            Some(branch) => finish_branch(&branch, options),
+            None => settled(wt, &|| {
+                remove_linked_worktree(wt, None, options, &main_wt.path)
+            }),
+        };
         record(wt, "linked", result.map(Some));
     }
 
-    let result = ensure_no_operation(main_wt, force).and_then(|()| match &main_wt.branch {
-        Some(branch) if *branch == default => Ok(None),
-        Some(branch) => finish_branch(branch, options).map(Some),
-        None => switch_detached_main(main_wt, &default, options).map(Some),
-    });
+    // Already on the default branch, the main worktree is left as it is.
+    let result = match branch_of(main_wt) {
+        Some(branch) if branch == default => Ok(None),
+        Some(branch) => finish_branch(&branch, options).map(Some),
+        None => settled(main_wt, &|| {
+            switch_detached_main(main_wt, &default, options)
+        })
+        .map(Some),
+    };
     record(main_wt, "main", result);
 
     let left_cwd = data.finished.iter().any(|f| {
@@ -117,23 +132,12 @@ pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Refuse, without `force`, to touch a worktree in the middle of a rebase,
-/// merge or the like: removing it, or switching away, would abandon it.
-fn ensure_no_operation(wt: &crate::git::WorktreeEntry, force: bool) -> Result<(), CommandError> {
-    let Some(path) = wt.path.to_str() else {
-        return Err("worktree path is not valid UTF-8".into());
-    };
-    match crate::git::operation_in_progress(path) {
-        Some(operation) if !force && wt.path.exists() => Err(CommandError::with_data(
-            format!(
-                "a {operation} is in progress in {}; finish or abort it, or use --force",
-                crate::output::display_path(&wt.path)
-            ),
-            "operation_in_progress",
-            serde_json::json!({ "path": wt.path, "operation": operation, "retryWith": ["--force"] }),
-        )),
-        _ => Ok(()),
-    }
+/// The branch checked out in `wt`, or being rebased in it: mid-rebase, git
+/// lists the worktree as detached.
+fn branch_of(wt: &crate::git::WorktreeEntry) -> Option<String> {
+    wt.branch
+        .clone()
+        .or_else(|| wt.path.to_str().and_then(crate::git::branch_being_rebased))
 }
 
 /// Refuse, without `force`, to leave a detached HEAD whose commits nothing
@@ -197,6 +201,7 @@ fn remove_linked_worktree(
         main_worktree: main_path.to_path_buf(),
         already_finished: false,
         branch_kept: branch.is_some(),
+        aborted_operation: None,
         dry_run,
     })
 }
@@ -224,6 +229,7 @@ fn switch_detached_main(
         main_worktree: wt.path.clone(),
         already_finished: false,
         branch_kept: false,
+        aborted_operation: None,
         dry_run,
     })
 }
