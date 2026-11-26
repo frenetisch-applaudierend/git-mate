@@ -2,6 +2,7 @@ pub mod checkout;
 mod checkout_pr;
 mod confirm;
 pub mod finish;
+mod finish_all;
 pub mod init;
 pub mod new;
 pub mod overview;

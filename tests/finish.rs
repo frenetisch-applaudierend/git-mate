@@ -539,3 +539,220 @@ fn json_unknown_branch_is_branch_not_found() {
         "no-such-branch"
     );
 }
+
+fn finish_all_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
+    let output = common::git_mate()
+        .args(["--json", "finish", "--all"])
+        .args(args)
+        .current_dir(dir)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    common::parse_single_json(&output)["data"].clone()
+}
+
+#[test]
+fn finish_all_removes_linked_worktrees_and_switches_main_to_default() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/a", "feature/b"]);
+    repo.git(&["checkout", "-q", "-b", "feature/main"]);
+    let detached = container.join("detached");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        detached.to_str().unwrap(),
+        "main",
+    ]);
+    repo.git(&["branch", "loose"]);
+
+    let data = finish_all_json(repo.path(), &[]);
+    assert_eq!(data["finished"].as_array().unwrap().len(), 4, "{data}");
+    assert_eq!(data["skipped"], serde_json::json!([]));
+
+    assert_eq!(repo.current_branch(), "main");
+    for branch in ["feature/a", "feature/b", "feature/main"] {
+        assert!(!repo.branch_exists(branch), "{branch} should be deleted");
+    }
+    assert!(
+        repo.branch_exists("loose"),
+        "branches not checked out are kept"
+    );
+    assert!(!container.join("feature/a").exists());
+    assert!(!detached.exists());
+}
+
+#[test]
+fn finish_all_skips_what_fails_the_checks_and_finishes_the_rest() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/dirty", "feature/ok"]);
+    let dirty = container.join("feature/dirty");
+    std::fs::write(dirty.join("untracked.txt"), "dirty").unwrap();
+    // A detached main worktree with a commit no branch refers to.
+    repo.git(&["checkout", "-q", "--detach"]);
+    repo.git(&["commit", "-q", "--allow-empty", "-m", "orphan"]);
+
+    let data = finish_all_json(repo.path(), &[]);
+    assert_eq!(data["finished"].as_array().unwrap().len(), 1, "{data}");
+    assert_eq!(data["finished"][0]["branch"], "feature/ok");
+    let skipped = data["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 2, "{data}");
+    assert_eq!(skipped[0]["branch"], "feature/dirty");
+    assert_eq!(skipped[0]["code"], "uncommitted_changes");
+    assert_eq!(skipped[0]["retryWith"], serde_json::json!(["--force"]));
+    assert_eq!(skipped[1]["worktree"], "main");
+    assert_eq!(skipped[1]["code"], "unpushed_commits");
+
+    assert!(dirty.exists(), "dirty worktree must be kept");
+    assert!(repo.branch_exists("feature/dirty"));
+    assert!(!repo.branch_exists("feature/ok"));
+    assert_eq!(
+        repo.current_branch(),
+        "HEAD",
+        "main worktree stays detached"
+    );
+
+    let data = finish_all_json(repo.path(), &["--force"]);
+    assert_eq!(data["skipped"], serde_json::json!([]), "{data}");
+    assert!(!dirty.exists());
+    assert!(!repo.branch_exists("feature/dirty"));
+    assert_eq!(repo.current_branch(), "main");
+}
+
+#[test]
+fn finish_all_from_a_linked_worktree_moves_to_the_main_worktree() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/here"]);
+    let wt = container.join("feature/here");
+    let (_guard, proto) = common::proto_file();
+
+    common::git_mate()
+        .args(["finish", "--all"])
+        .env("GIT_MATE_PROTO", &proto)
+        .current_dir(&wt)
+        .assert()
+        .success();
+    assert!(!wt.exists());
+    let main = std::fs::canonicalize(repo.path()).unwrap();
+    let proto = std::fs::read_to_string(&proto).unwrap();
+    assert!(
+        proto.contains(&format!("CD:{}", main.display())),
+        "{proto:?}"
+    );
+}
+
+#[test]
+fn finish_all_with_nothing_to_finish_succeeds() {
+    let repo = common::RepoWithoutRemote::new();
+    let data = finish_all_json(repo.path(), &[]);
+    assert_eq!(data["finished"], serde_json::json!([]));
+    assert_eq!(data["skipped"], serde_json::json!([]));
+}
+
+#[test]
+fn finish_all_conflicts_with_a_branch() {
+    let repo = common::RepoWithoutRemote::new();
+    repo.git(&["branch", "feature/x"]);
+    common::git_mate()
+        .args(["finish", "--all", "feature/x"])
+        .current_dir(repo.path())
+        .assert()
+        .failure();
+    assert!(repo.branch_exists("feature/x"));
+}
+
+#[test]
+fn finish_dry_run_changes_nothing() {
+    let repo = common::RepoWithoutRemote::new();
+    let wt_path = repo.path().join("feature-dry-wt");
+    repo.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feature/linked",
+        wt_path.to_str().unwrap(),
+        "main",
+    ]);
+    repo.git(&["checkout", "-q", "-b", "feature/main"]);
+    repo.git(&["branch", "feature/loose"]);
+
+    for (branch, worktree) in [
+        ("feature/main", Some("main")),
+        ("feature/linked", Some("linked")),
+        ("feature/loose", None),
+    ] {
+        let output = common::git_mate()
+            .args(["--json", "finish", "--dry-run", branch])
+            .current_dir(repo.path())
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let data = common::parse_single_json(&output)["data"].clone();
+        assert_eq!(data["dryRun"], true, "{data}");
+        assert_eq!(data["branch"], branch);
+        assert_eq!(data["worktree"].as_str(), worktree);
+        assert!(repo.branch_exists(branch), "{branch} must be kept");
+    }
+    assert_eq!(repo.current_branch(), "feature/main");
+    assert!(wt_path.exists(), "worktree must be kept");
+}
+
+#[test]
+fn finish_dry_run_still_refuses_what_finish_would() {
+    let repo = common::RepoWithRemote::new();
+    repo.local_git(&["checkout", "-b", "feature/x"]);
+    repo.local_git(&["commit", "--allow-empty", "-m", "local only"]);
+
+    let output = common::git_mate()
+        .args(["--json", "finish", "--dry-run"])
+        .current_dir(repo.local_path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    common::assert_json_error_code(&output, "unpushed_commits");
+    assert!(repo.local_branch_exists("feature/x"));
+}
+
+#[test]
+fn finish_all_dry_run_reports_without_changing_anything() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&["feature/dirty", "feature/ok"]);
+    let dirty = container.join("feature/dirty");
+    std::fs::write(dirty.join("untracked.txt"), "dirty").unwrap();
+    repo.git(&["checkout", "-q", "-b", "feature/main"]);
+    let (_guard, proto) = common::proto_file();
+
+    let output = common::git_mate()
+        .args(["--json", "finish", "--all", "--dry-run"])
+        .env("GIT_MATE_PROTO", &proto)
+        .current_dir(container.join("feature/ok"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::parse_single_json(&output)["data"].clone();
+    assert_eq!(data["dryRun"], true);
+    let finished: Vec<_> = data["finished"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["branch"].as_str().unwrap())
+        .collect();
+    assert_eq!(finished, ["feature/ok", "feature/main"], "{data}");
+    assert_eq!(data["skipped"][0]["branch"], "feature/dirty");
+
+    for branch in ["feature/dirty", "feature/ok", "feature/main"] {
+        assert!(repo.branch_exists(branch), "{branch} must be kept");
+    }
+    assert!(container.join("feature/ok").exists());
+    assert_eq!(repo.current_branch(), "feature/main");
+    assert!(
+        std::fs::read_to_string(&proto).unwrap().is_empty(),
+        "a dry run must not move the shell"
+    );
+}

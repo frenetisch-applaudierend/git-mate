@@ -3,34 +3,60 @@ pub struct FinishArgs {
     /// Branch to finish (defaults to current branch)
     #[arg(add = clap_complete::engine::ArgValueCompleter::new(crate::complete::worktree_branch_completer))]
     pub branch: Option<String>,
+    /// Finish every linked worktree's branch and switch the main worktree to
+    /// the default branch, skipping whatever can't be finished
+    #[arg(long, conflicts_with = "branch")]
+    pub all: bool,
     /// Discard local changes: force removal of a linked worktree with modified
     /// or untracked files, or force the switch away in the main worktree
     #[arg(long, short = 'f')]
     pub force: bool,
+    /// Preview what would be finished without changing anything
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// How to finish a branch.
+#[derive(Clone, Copy)]
+pub(crate) struct FinishOptions {
+    /// Discard unpushed commits and local changes.
+    pub force: bool,
+    /// Send the shell to the main worktree if it was in the removed one.
+    pub navigate: bool,
+    /// Run the checks, but change nothing.
+    pub dry_run: bool,
 }
 
 /// What `finish` did, reported in `--json` mode.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FinishData {
-    branch: String,
+    /// Absent for a worktree with a detached HEAD (only under `--all`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) branch: Option<String>,
     /// "main" or "linked" if the branch was checked out, else absent.
     #[serde(skip_serializing_if = "Option::is_none")]
-    worktree: Option<&'static str>,
+    pub(super) worktree: Option<&'static str>,
     /// The worktree the branch was checked out in.
     #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<std::path::PathBuf>,
+    pub(super) path: Option<std::path::PathBuf>,
     /// The branch the main worktree switched to in its place.
     #[serde(skip_serializing_if = "Option::is_none")]
-    switched_to: Option<String>,
+    pub(super) switched_to: Option<String>,
     /// Where to continue: the removed worktree no longer exists.
-    main_worktree: std::path::PathBuf,
+    pub(super) main_worktree: std::path::PathBuf,
     /// The branch and its worktree were already gone; nothing was left to do.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
-    already_finished: bool,
+    pub(super) already_finished: bool,
+    /// Nothing was changed: this is what would have been done.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(super) dry_run: bool,
 }
 
 pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
+    if args.all {
+        return super::finish_all::run(args.force, args.dry_run);
+    }
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
     let cwd = std::env::current_dir()
@@ -71,19 +97,25 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
             crate::output::emit_json_success(
                 "finish",
                 FinishData {
-                    branch: target_branch,
+                    branch: Some(target_branch),
                     worktree: Some("linked"),
                     path: Some(gone.to_path_buf()),
                     switched_to: None,
                     main_worktree: main_wt.path.clone(),
                     already_finished: true,
+                    dry_run: args.dry_run,
                 },
             );
         }
         return Ok(());
     }
 
-    let data = finish_branch(&target_branch, args.force, true)?;
+    let options = FinishOptions {
+        force: args.force,
+        navigate: true,
+        dry_run: args.dry_run,
+    };
+    let data = finish_branch(&target_branch, options)?;
     if crate::output::json_mode() {
         crate::output::emit_json_success("finish", data);
     }
@@ -98,7 +130,7 @@ pub(crate) struct Remedy {
     pub uncommitted_hint: &'static str,
 }
 
-const FORCE: Remedy = Remedy {
+pub(super) const FORCE: Remedy = Remedy {
     flag: "--force",
     unpushed_hint: "use --force to delete anyway",
     uncommitted_hint: "use --force to discard them",
@@ -145,7 +177,7 @@ fn ensure_no_unpushed_commits(
     Ok(())
 }
 
-fn ensure_clean_linked_worktree(
+pub(super) fn ensure_clean_linked_worktree(
     wt: &crate::git::WorktreeEntry,
     branch: &str,
     remedy: &Remedy,
@@ -169,13 +201,17 @@ fn ensure_clean_linked_worktree(
 }
 
 /// Finish an existing `branch`: remove its linked worktree or switch the main
-/// worktree away from it, then delete it. With `navigate`, the shell is sent
-/// to the main worktree when it was inside the removed worktree.
+/// worktree away from it, then delete it.
 pub(crate) fn finish_branch(
     target_branch: &str,
-    force: bool,
-    navigate: bool,
+    options: FinishOptions,
 ) -> Result<FinishData, crate::output::CommandError> {
+    let FinishOptions {
+        force,
+        navigate,
+        dry_run,
+    } = options;
+    let would = if dry_run { "Would finish" } else { "Finished" };
     let worktrees = crate::git::list_worktrees()?;
     let main_wt = worktrees.first().ok_or("no worktrees found")?;
     let main_wt_path = main_wt
@@ -195,12 +231,13 @@ pub(crate) fn finish_branch(
     }
 
     let mut data = FinishData {
-        branch: target_branch.clone(),
+        branch: Some(target_branch.clone()),
         worktree: None,
         path: None,
         switched_to: None,
         main_worktree: main_wt.path.clone(),
         already_finished: false,
+        dry_run,
     };
     match target_wt {
         Some(wt) if wt.path == main_wt.path => {
@@ -212,13 +249,9 @@ pub(crate) fn finish_branch(
                     &target_branch,
                 ));
             }
-            if force {
-                crate::git::checkout_force_in(&main_wt_path, &default)?;
-            } else {
-                crate::git::checkout_in(&main_wt_path, &default)?;
-            }
+            switch_main_worktree(&main_wt_path, &default, options)?;
             crate::output::success(&format!(
-                "Finished {}, back on {}",
+                "{would} {}, back on {}",
                 console::style(&target_branch).bold(),
                 console::style(&default).cyan()
             ));
@@ -232,22 +265,25 @@ pub(crate) fn finish_branch(
                 if !force {
                     ensure_clean_linked_worktree(wt, &target_branch, &FORCE)?;
                 }
-                crate::git::remove_worktree(&wt.path, force)?;
-            } else {
+                if !dry_run {
+                    crate::git::remove_worktree(&wt.path, force)?;
+                }
+            } else if !dry_run {
                 // Its directory was deleted without git; drop the stale entry.
                 crate::git::prune_worktrees()?;
             }
-            if let Ok(root) = crate::git::read_worktree_root() {
+            if !dry_run && let Ok(root) = crate::git::read_worktree_root() {
                 crate::fs::remove_empty_parent_dirs(&wt.path, &root);
             }
             crate::output::success(&format!(
-                "Removed worktree for {} in {}",
+                "{} worktree for {} in {}",
+                if dry_run { "Would remove" } else { "Removed" },
                 console::style(&target_branch).bold(),
                 crate::output::display_path(&wt.path)
             ));
             data.worktree = Some("linked");
             data.path = Some(wt.path.clone());
-            if navigate && in_this_wt {
+            if navigate && in_this_wt && !dry_run {
                 let canonical = std::fs::canonicalize(&main_wt.path)
                     .map_err(|e| format!("could not canonicalize path: {e}"))?;
                 crate::shell_protocol::emit_cd(&canonical);
@@ -255,17 +291,33 @@ pub(crate) fn finish_branch(
         }
         None => {
             // Branch exists but is not checked out anywhere — delete it directly.
-            crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
+            if !dry_run {
+                crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
+            }
             crate::output::success(&format!(
-                "Deleted branch {}",
+                "{} branch {}",
+                if dry_run { "Would delete" } else { "Deleted" },
                 console::style(&target_branch).bold()
             ));
         }
     }
-    if target_wt.is_some() {
+    if target_wt.is_some() && !dry_run {
         crate::git::delete_branch_force_in(&main_wt_path, &target_branch)?;
     }
     Ok(data)
+}
+
+/// Check out `default` in the main worktree at `path`, unless `dry_run`.
+pub(super) fn switch_main_worktree(
+    path: &str,
+    default: &str,
+    FinishOptions { force, dry_run, .. }: FinishOptions,
+) -> Result<(), String> {
+    match (dry_run, force) {
+        (true, _) => Ok(()),
+        (false, true) => crate::git::checkout_force_in(path, default),
+        (false, false) => crate::git::checkout_in(path, default),
+    }
 }
 
 /// The branch of the worktree the command was started in, which no longer
