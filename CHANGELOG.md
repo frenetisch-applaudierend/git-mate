@@ -2,6 +2,118 @@
 
 All notable changes to `git-mate` are documented here.
 
+## [0.5.0] - 2026-11-26
+
+### Bug Fixes
+
+- **finish**: Abort unfinished rebases under --force and predict the main-worktree switch
+
+- **finish**: Keep --all working from a linked worktree and keep the default branch
+
+- **sync**: Report a pushed current branch as synced and undecided no-upstream branches as no-upstream
+
+- **sync**: Keep unpushedCommits on dirty-worktree skips and pin the field in tests
+
+- **sync**: Report an upstream that vanished mid-run as unresolved, not a raw git error
+
+- **sync**: Re-read a local upstream's tip after earlier branches moved it
+
+- **update**: Check the remote default branch too before skipping a gone upstream
+
+- **update**: Still push never-pushed branches whose upstream is preset
+
+- **update**: Address review findings on base detection, replay and push
+
+- **update**: Only trust the HEAD reflog entry written when a branch was created
+
+- **update**: Share the behind-base check and resolve bases as branches
+
+- **update**: Report a missing git replay or a rebase that cannot start as such
+
+- **update**: Never push onto a differently named upstream or force away foreign commits
+
+
+### Documentation
+
+- **skill**: Mention invalid_pull_request_url error code
+
+- **update**: List every --json field and where --push pushes
+
+
+### Features
+
+- **finish**: Add --all and --dry-run
+
+- **update**: Only require a push decision when a force-push is needed
+
+- **update**: Default mate.update.stack back to ask [**BREAKING**]
+
+- **update**: Default mate.update.stack to false [**BREAKING**]
+
+- **update**: Require a decision up front for ask without a terminal [**BREAKING**]
+
+- Add ask to mate.checkout.finish and mate.new.changes
+
+- **checkout**: Add mate.checkout.finish config key and --no-finish
+
+- **checkout**: Add --finish to finish the previous branch
+
+- **checkout**: Accept GitHub pull request URLs
+
+- **sync**: Offer to push, delete or keep branches without upstream
+
+- **overview**: Add overview command listing branches, worktrees and upstream state
+
+- **sync**: Add --delete and --keep to decide per branch without the chooser
+
+- **json**: Report specific error codes for failures that need a decision
+
+- **skill**: Add git mate skill and skill install for AI coding agents
+
+- **sync**: Report unpushed commits of remote-gone branches as a JSON field [**BREAKING**]
+
+- **sync**: Recommend deleting remote-gone branches whose unpushed commits are already merged
+
+- **sync**: Offer remote-gone branches with unpushed commits in the chooser
+
+- **update**: Add --strategy=rebase|merge
+
+- **sync**: Hint when the current branch is behind its base
+
+- **update**: Add --stack, --push and --sync
+
+- **update**: Add update command to rebase branches onto their base
+
+- **sync**: Drop automerge and --rebase, add --diverged=rebase [**BREAKING**]
+
+
+### Miscellaneous
+
+- Drop redundant package.homepage
+
+
+### Performance
+
+- **sync**: Read every branch and upstream tip with one for-each-ref
+
+- **update**: Only consider branches that share commits beyond the default branch
+
+
+### Refactoring
+
+- **sync**: Extract rebase and merge of a branch into git::integrate
+
+
+### Testing
+
+- Restore doc comment of assert_json_error
+
+- **skill**: Cover install --project from a linked worktree and a bare repository's worktree
+
+- **update**: Cover both commit orders when a branch merged its parent
+
+
+
 ## [0.4.0] - 2026-11-02
 
 ### Bug Fixes
