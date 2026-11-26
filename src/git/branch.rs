@@ -255,6 +255,22 @@ pub fn has_unpushed_commits(git_dir: &str, branch: &str) -> Result<bool, String>
     .unwrap_or(false))
 }
 
+/// Whether the detached HEAD of the worktree at `path` has commits that no
+/// branch or remote-tracking ref contains, which switching away would orphan.
+pub fn has_unreferenced_commits(path: &str) -> Result<bool, String> {
+    run_output(&[
+        "-C",
+        path,
+        "rev-list",
+        "-n1",
+        "HEAD",
+        "--not",
+        "--branches",
+        "--remotes",
+    ])
+    .map(|o| !o.trim().is_empty())
+}
+
 pub fn unset_upstream(branch: &str) -> Result<(), String> {
     run(&["branch", "--unset-upstream", branch])
 }

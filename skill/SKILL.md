@@ -172,3 +172,10 @@ worktree to the default branch, then deletes the local branch.
   Never pass `--force` without the user's explicit consent.
 - `data.path` is the worktree the branch was in. If it was linked, it no longer exists:
   if you were inside it, `cd` to `data.mainWorktree`.
+- `--all` finishes every worktree: each linked worktree's branch (and detached linked
+  worktrees), then switches the main worktree to the default branch. Only when the user
+  asks to clean up everything. It is best effort: worktrees that fail a check are listed
+  in `data.skipped` (each with `code`, `message`, `retryWith`) and the rest in
+  `data.finished`; the command still succeeds, so report what was skipped.
+- `--dry-run` runs the checks and reports the same result without changing anything
+  (`data.dryRun: true`); use it to show the user what `--all` would do before doing it.

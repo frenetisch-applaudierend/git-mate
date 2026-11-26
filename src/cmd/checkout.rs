@@ -186,7 +186,14 @@ pub fn run(args: CheckoutArgs) -> Result<(), crate::output::CommandError> {
     data.fetched = fetched;
     data.pull_request = pull_request;
     if let Some(previous) = to_finish {
-        data.finished = Some(crate::cmd::finish::finish_branch(&previous, false, false)?);
+        data.finished = Some(crate::cmd::finish::finish_branch(
+            &previous,
+            crate::cmd::finish::FinishOptions {
+                force: false,
+                navigate: false,
+                dry_run: false,
+            },
+        )?);
     }
     if crate::output::json_mode() {
         crate::output::emit_json_success("checkout", data);

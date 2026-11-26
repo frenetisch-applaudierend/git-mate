@@ -120,6 +120,18 @@ impl CommandError {
         self
     }
 
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub fn data(&self) -> Option<&serde_json::Value> {
+        self.data.as_ref()
+    }
+
     /// An error about `branch`, e.g. `branch_not_found`.
     pub fn branch(message: String, code: &'static str, branch: &str) -> Self {
         Self::with_data(message, code, serde_json::json!({ "branch": branch }))
