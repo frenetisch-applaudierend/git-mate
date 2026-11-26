@@ -41,7 +41,8 @@ struct Skipped {
 pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
     let options = FinishOptions {
         force,
-        navigate: true,
+        // The shell is sent to the main worktree once, at the end.
+        navigate: false,
         dry_run,
     };
     let worktrees = crate::git::list_worktrees()?;
@@ -49,6 +50,10 @@ pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
     let default = crate::git::detect_default_branch(false)?;
     let cwd = std::env::current_dir()
         .map_err(|e| format!("could not determine current directory: {e}"))?;
+    // Work from the main worktree: the one we are in may be removed, and the
+    // steps after that need a current directory inside the repository.
+    std::env::set_current_dir(&main_wt.path)
+        .map_err(|e| format!("could not enter the main worktree: {e}"))?;
 
     let mut data = FinishAllData {
         finished: Vec::new(),
@@ -76,8 +81,13 @@ pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
 
     for wt in worktrees.iter().skip(1) {
         let result = ensure_no_operation(wt, force).and_then(|()| match &wt.branch {
+            // The default branch is kept; only its worktree goes, so that the
+            // main worktree can switch to it.
+            Some(branch) if *branch == default => {
+                remove_linked_worktree(wt, Some(branch), options, &main_wt.path)
+            }
             Some(branch) => finish_branch(branch, options),
-            None => remove_detached(wt, options, &cwd, &main_wt.path),
+            None => remove_linked_worktree(wt, None, options, &main_wt.path),
         });
         record(wt, "linked", result.map(Some));
     }
@@ -88,6 +98,15 @@ pub fn run(force: bool, dry_run: bool) -> Result<(), CommandError> {
         None => switch_detached_main(main_wt, &default, options).map(Some),
     });
     record(main_wt, "main", result);
+
+    let left_cwd = data.finished.iter().any(|f| {
+        f.worktree == Some("linked") && f.path.as_deref().is_some_and(|p| cwd.starts_with(p))
+    });
+    if left_cwd && !dry_run {
+        let canonical = std::fs::canonicalize(&main_wt.path)
+            .map_err(|e| format!("could not canonicalize path: {e}"))?;
+        crate::shell_protocol::emit_cd(&canonical);
+    }
 
     if data.finished.is_empty() && data.skipped.is_empty() {
         crate::output::success("Nothing to finish");
@@ -137,17 +156,20 @@ fn ensure_no_orphaned_commits(
     Ok(())
 }
 
-/// Remove a linked worktree with a detached HEAD: there is no branch to delete.
-fn remove_detached(
+/// Remove a linked worktree without deleting a branch: one with a detached
+/// HEAD, or one with the default `branch` checked out.
+fn remove_linked_worktree(
     wt: &crate::git::WorktreeEntry,
+    branch: Option<&str>,
     FinishOptions { force, dry_run, .. }: FinishOptions,
-    cwd: &std::path::Path,
     main_path: &std::path::Path,
 ) -> Result<FinishData, CommandError> {
     if wt.path.exists() {
-        ensure_no_orphaned_commits(wt, force)?;
+        if branch.is_none() {
+            ensure_no_orphaned_commits(wt, force)?;
+        }
         if !force {
-            ensure_clean_linked_worktree(wt, "detached HEAD", &FORCE)?;
+            ensure_clean_linked_worktree(wt, branch.unwrap_or("detached HEAD"), &FORCE)?;
         }
         if !dry_run {
             crate::git::remove_worktree(&wt.path, force)?;
@@ -158,23 +180,23 @@ fn remove_detached(
     if !dry_run && let Ok(root) = crate::git::read_worktree_root() {
         crate::fs::remove_empty_parent_dirs(&wt.path, &root);
     }
-    crate::output::success(&format!(
-        "{} detached worktree in {}",
-        if dry_run { "Would remove" } else { "Removed" },
-        crate::output::display_path(&wt.path)
-    ));
-    if cwd.starts_with(&wt.path) && !dry_run {
-        let canonical = std::fs::canonicalize(main_path)
-            .map_err(|e| format!("could not canonicalize path: {e}"))?;
-        crate::shell_protocol::emit_cd(&canonical);
-    }
+    let removed = if dry_run { "Would remove" } else { "Removed" };
+    let path = crate::output::display_path(&wt.path);
+    crate::output::success(&match branch {
+        Some(branch) => format!(
+            "{removed} worktree for {} in {path}, keeping the default branch",
+            console::style(branch).bold()
+        ),
+        None => format!("{removed} detached worktree in {path}"),
+    });
     Ok(FinishData {
-        branch: None,
+        branch: branch.map(str::to_string),
         worktree: Some("linked"),
         path: Some(wt.path.clone()),
         switched_to: None,
         main_worktree: main_path.to_path_buf(),
         already_finished: false,
+        branch_kept: branch.is_some(),
         dry_run,
     })
 }
@@ -201,6 +223,7 @@ fn switch_detached_main(
         switched_to: Some(default.to_string()),
         main_worktree: wt.path.clone(),
         already_finished: false,
+        branch_kept: false,
         dry_run,
     })
 }

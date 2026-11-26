@@ -642,6 +642,80 @@ fn finish_all_from_a_linked_worktree_moves_to_the_main_worktree() {
 }
 
 #[test]
+fn finish_all_from_a_linked_worktree_finishes_the_worktrees_after_it() {
+    let (repo, _wt_root, _container) =
+        repo_with_linked_worktrees(&["feature/a", "feature/b", "feature/c"]);
+    repo.git(&["checkout", "-q", "-b", "feature/main"]);
+    // Run from the first linked worktree git lists, so that the others are
+    // finished after the current directory is gone.
+    let list = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    let list = String::from_utf8(list.stdout).unwrap();
+    let first_linked = list
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .nth(1)
+        .unwrap()
+        .to_string();
+    let (_guard, proto) = common::proto_file();
+
+    let output = common::git_mate()
+        .args(["--json", "finish", "--all"])
+        .env("GIT_MATE_PROTO", &proto)
+        .current_dir(&first_linked)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let data = common::parse_single_json(&output)["data"].clone();
+    assert_eq!(data["skipped"], serde_json::json!([]), "{data}");
+    assert_eq!(data["finished"].as_array().unwrap().len(), 4, "{data}");
+
+    assert_eq!(repo.current_branch(), "main");
+    for branch in ["feature/a", "feature/b", "feature/c", "feature/main"] {
+        assert!(!repo.branch_exists(branch), "{branch} should be deleted");
+    }
+    let main = std::fs::canonicalize(repo.path()).unwrap();
+    let proto = std::fs::read_to_string(&proto).unwrap();
+    assert_eq!(
+        proto.matches("CD:").count(),
+        1,
+        "exactly one cd to the main worktree: {proto:?}"
+    );
+    assert!(
+        proto.contains(&format!("CD:{}", main.display())),
+        "{proto:?}"
+    );
+}
+
+#[test]
+fn finish_all_keeps_the_default_branch_checked_out_in_a_linked_worktree() {
+    let (repo, _wt_root, container) = repo_with_linked_worktrees(&[]);
+    repo.git(&["checkout", "-q", "-b", "feature/x"]);
+    let main_wt = container.join("main");
+    repo.git(&["worktree", "add", "-q", main_wt.to_str().unwrap(), "main"]);
+
+    let data = finish_all_json(repo.path(), &[]);
+    assert_eq!(data["skipped"], serde_json::json!([]), "{data}");
+    let finished = data["finished"].as_array().unwrap();
+    assert_eq!(finished.len(), 2, "{data}");
+    assert_eq!(finished[0]["branch"], "main");
+    assert_eq!(finished[0]["worktree"], "linked");
+    assert_eq!(finished[0]["branchKept"], true);
+    assert_eq!(finished[1]["branch"], "feature/x");
+    assert!(finished[1].get("branchKept").is_none(), "{data}");
+
+    assert!(!main_wt.exists(), "its worktree is removed");
+    assert!(repo.branch_exists("main"), "the default branch is kept");
+    assert_eq!(repo.current_branch(), "main");
+    assert!(!repo.branch_exists("feature/x"));
+}
+
+#[test]
 fn finish_all_with_nothing_to_finish_succeeds() {
     let repo = common::RepoWithoutRemote::new();
     let data = finish_all_json(repo.path(), &[]);

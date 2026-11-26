@@ -48,6 +48,10 @@ pub(crate) struct FinishData {
     /// The branch and its worktree were already gone; nothing was left to do.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) already_finished: bool,
+    /// Only the worktree was removed: the branch is the default branch (only
+    /// under `--all`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(super) branch_kept: bool,
     /// Nothing was changed: this is what would have been done.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(super) dry_run: bool,
@@ -103,6 +107,7 @@ pub fn run(args: FinishArgs) -> Result<(), crate::output::CommandError> {
                     switched_to: None,
                     main_worktree: main_wt.path.clone(),
                     already_finished: true,
+                    branch_kept: false,
                     dry_run: args.dry_run,
                 },
             );
@@ -237,6 +242,7 @@ pub(crate) fn finish_branch(
         switched_to: None,
         main_worktree: main_wt.path.clone(),
         already_finished: false,
+        branch_kept: false,
         dry_run,
     };
     match target_wt {

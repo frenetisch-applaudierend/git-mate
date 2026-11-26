@@ -127,12 +127,13 @@ worktree with uncommitted changes. `--force` discards both.
 
 `--all` cleans up everything at once: it finishes the branch of every linked worktree (removing
 worktrees with a detached HEAD too) and switches the main worktree to the default branch, finishing
-the branch it was on. Branches that aren't checked out anywhere are left alone. Each worktree goes
+the branch it was on. Branches that aren't checked out anywhere are left alone, and so is the default
+branch: if it is checked out in a linked worktree, only that worktree is removed. Each worktree goes
 through the same checks as a single `finish`, and also isn't touched while a rebase, merge or the
 like is in progress there, or while its detached HEAD has commits no branch contains (`--force`
 overrides all of these). Whatever fails a check is skipped and the rest is still finished. With
 `--json`, `data` holds `finished` (one entry per worktree, shaped like a single `finish`, without
-`branch` for a detached HEAD), `skipped` (`branch`, `worktree`, `path`, and the `code`, `message` and
+`branch` for a detached HEAD, and with `branchKept: true` for the default branch), `skipped` (`branch`, `worktree`, `path`, and the `code`, `message` and
 `retryWith` a single `finish` would have failed with) and `mainWorktree`.
 
 `--dry-run` runs the same checks and reports what would be finished (or, with `--all`, skipped)
