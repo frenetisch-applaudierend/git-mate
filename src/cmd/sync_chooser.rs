@@ -1,7 +1,7 @@
 //! The inline chooser `git mate sync` shows for branches whose remote is
 //! gone or that have no upstream: one row per branch with its recommended
 //! action preselected, changed in place with the arrow keys or a shortcut
-//! letter, and an "apply" line below the rows that applies them row by row,
+//! letter, and an "Apply these choices" line below the rows that applies them row by row,
 //! each row turning into its result where it stands.
 
 use super::sync_report::{self as report, Candidate, Choice, DecisionRow};
@@ -16,7 +16,7 @@ const SHORTCUTS: &[(char, Choice)] = &[
 ];
 
 /// What the line below the rows says; selecting it applies every row.
-const APPLY_LABEL: &str = "apply";
+const APPLY_LABEL: &str = "Apply these choices";
 
 /// What a key press asks of the chooser.
 #[derive(Debug, Eq, PartialEq)]
@@ -73,20 +73,25 @@ impl Selection {
     }
 
     /// Change the action of `row` as `key` asks, if it asks for one the row
-    /// offers.
+    /// offers. A shortcut letter also moves the focus to the next line.
     fn change(&mut self, row: usize, key: &Key) {
         let (choice, options) = (self.choices[row], self.options[row]);
-        self.choices[row] = match key {
-            Key::ArrowLeft => choice.previous(options),
-            Key::ArrowRight | Key::Char(' ') => choice.next(options),
-            Key::Char(c) => SHORTCUTS
-                .iter()
-                .find(|(letter, _)| *letter == c.to_ascii_lowercase())
-                .map(|&(_, picked)| picked)
-                .filter(|picked| options.contains(picked))
-                .unwrap_or(choice),
-            _ => choice,
-        };
+        match key {
+            Key::ArrowLeft => self.choices[row] = choice.previous(options),
+            Key::ArrowRight | Key::Char(' ') => self.choices[row] = choice.next(options),
+            Key::Char(c) => {
+                let picked = SHORTCUTS
+                    .iter()
+                    .find(|(letter, _)| *letter == c.to_ascii_lowercase())
+                    .map(|&(_, picked)| picked)
+                    .filter(|picked| options.contains(picked));
+                if let Some(picked) = picked {
+                    self.choices[row] = picked;
+                    self.focus += 1;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The key hints shown below the apply line, listing only the shortcuts
@@ -391,16 +396,18 @@ mod tests {
     }
 
     #[test]
-    fn shortcuts_pick_offered_actions() {
+    fn shortcuts_pick_offered_actions_and_advance() {
         let mut selection = selection();
-        selection.handle(&Key::Char('k'));
-        assert_eq!(selection.choices, [Choice::Keep, Choice::Later]);
-        selection.handle(&Key::Char('L'));
-        assert_eq!(selection.choices, [Choice::Later, Choice::Later]);
         // A branch whose remote is gone can't be pushed.
         selection.handle(&Key::Char('p'));
-        assert_eq!(selection.choices, [Choice::Later, Choice::Later]);
+        assert_eq!(selection.choices, [Choice::Delete, Choice::Later]);
         assert_eq!(selection.focus, 0);
+        selection.handle(&Key::Char('k'));
+        assert_eq!(selection.choices, [Choice::Keep, Choice::Later]);
+        assert_eq!(selection.focus, 1);
+        selection.handle(&Key::Char('D'));
+        assert_eq!(selection.choices, [Choice::Keep, Choice::Delete]);
+        assert!(selection.on_apply());
     }
 
     #[test]

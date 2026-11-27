@@ -29,9 +29,10 @@ local branch (and worktree) left without a remote, each with an action to choose
 delete it, keep it and stop tracking the deleted remote, or ask again next time.
 Branches already merged into the default branch — whether merged, rebase-merged or
 squash-merged, even if those files were moved or edited since — start out as delete,
-the others as ask later; change them with the arrow keys or a shortcut letter (p push,
-d delete, k keep, l later), press Enter to move on and Enter on apply to apply them,
-or Esc to leave them all as they are. Without a terminal there is nobody to ask, so they are
+the others as ask later; change them with the arrow keys, or with a shortcut letter (p push,
+d delete, k keep, l later) that also moves on to the next branch; Enter moves on too,
+and on the last line applies them all. Esc leaves them all as they are.
+Without a terminal there is nobody to ask, so they are
 listed and left as they are. A branch with unpushed commits is treated like a merged
 one if everything on it is already in the default branch (e.g. the PR was squash-merged
 and the unpushed commit only merged the default branch in); otherwise it starts out as
