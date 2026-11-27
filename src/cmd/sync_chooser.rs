@@ -1,12 +1,22 @@
 //! The inline chooser `git mate sync` shows for branches whose remote is
-//! gone or that have no upstream: one row per branch with its recommended action preselected, changed
-//! in place with the arrow keys and applied row by row, each row turning
-//! into its result where it stands.
+//! gone or that have no upstream: one row per branch with its recommended
+//! action preselected, changed in place with the arrow keys or a shortcut
+//! letter, and an "apply" line below the rows that applies them row by row,
+//! each row turning into its result where it stands.
 
 use super::sync_report::{self as report, Candidate, Choice, DecisionRow};
 use console::{Key, Term, style};
 
-const HELP: &str = "↑↓ select · ←→ change · ⏎ apply · esc leave all as is";
+/// The shortcut letter that picks each action on a branch row.
+const SHORTCUTS: &[(char, Choice)] = &[
+    ('p', Choice::Push),
+    ('d', Choice::Delete),
+    ('k', Choice::Keep),
+    ('l', Choice::Later),
+];
+
+/// What the line below the rows says; selecting it applies every row.
+const APPLY_LABEL: &str = "apply";
 
 /// What a key press asks of the chooser.
 #[derive(Debug, Eq, PartialEq)]
@@ -21,6 +31,8 @@ struct Selection {
     choices: Vec<Choice>,
     /// The actions each row can be set to.
     options: Vec<&'static [Choice]>,
+    /// The focused line: a row, or the apply line when it equals the number
+    /// of rows.
     focus: usize,
 }
 
@@ -33,23 +45,62 @@ impl Selection {
         }
     }
 
+    /// Whether the apply line below the rows has the focus.
+    fn on_apply(&self) -> bool {
+        self.focus == self.choices.len()
+    }
+
+    /// The focused row, unless the apply line has the focus.
+    fn focused_row(&self) -> Option<usize> {
+        (!self.on_apply()).then_some(self.focus)
+    }
+
     fn handle(&mut self, key: &Key) -> Step {
-        let last = self.choices.len().saturating_sub(1);
+        let apply_line = self.choices.len();
         match key {
             Key::ArrowUp => self.focus = self.focus.saturating_sub(1),
-            Key::ArrowDown => self.focus = (self.focus + 1).min(last),
-            Key::ArrowLeft => {
-                self.choices[self.focus] =
-                    self.choices[self.focus].previous(self.options[self.focus])
-            }
-            Key::ArrowRight | Key::Char(' ') => {
-                self.choices[self.focus] = self.choices[self.focus].next(self.options[self.focus])
-            }
-            Key::Enter => return Step::Apply,
+            Key::ArrowDown => self.focus = (self.focus + 1).min(apply_line),
+            Key::Enter if self.on_apply() => return Step::Apply,
+            Key::Enter => self.focus += 1,
             Key::Escape | Key::CtrlC | Key::Char('q') => return Step::Cancel,
-            _ => {}
+            _ => {
+                if let Some(row) = self.focused_row() {
+                    self.change(row, key);
+                }
+            }
         }
         Step::Continue
+    }
+
+    /// Change the action of `row` as `key` asks, if it asks for one the row
+    /// offers.
+    fn change(&mut self, row: usize, key: &Key) {
+        let (choice, options) = (self.choices[row], self.options[row]);
+        self.choices[row] = match key {
+            Key::ArrowLeft => choice.previous(options),
+            Key::ArrowRight | Key::Char(' ') => choice.next(options),
+            Key::Char(c) => SHORTCUTS
+                .iter()
+                .find(|(letter, _)| *letter == c.to_ascii_lowercase())
+                .map(|&(_, picked)| picked)
+                .filter(|picked| options.contains(picked))
+                .unwrap_or(choice),
+            _ => choice,
+        };
+    }
+
+    /// The key hints shown below the apply line, listing only the shortcuts
+    /// some row offers.
+    fn help(&self) -> String {
+        let letters: Vec<String> = SHORTCUTS
+            .iter()
+            .filter(|(_, choice)| self.options.iter().any(|o| o.contains(choice)))
+            .map(|(letter, choice)| format!("{letter} {}", choice.label()))
+            .collect();
+        format!(
+            "↑↓ select · ←→ change · {} · ⏎ next / apply · esc leave all as is",
+            letters.join(" · ")
+        )
     }
 
     fn rows(&self) -> Vec<DecisionRow> {
@@ -60,11 +111,12 @@ impl Selection {
     }
 }
 
-/// What the board shows: a row being chosen, a row being applied, or every
+/// What the board shows: the rows being chosen (with the focused row, or
+/// `None` while the apply line has the focus), a row being applied, or every
 /// row once all is done.
 #[derive(Clone, Copy)]
-enum View {
-    Choosing(usize),
+enum View<'h> {
+    Choosing { focus: Option<usize>, help: &'h str },
     Applying(usize),
     Done,
 }
@@ -86,8 +138,10 @@ struct Board<'a> {
 
 impl Board<'_> {
     fn lines(&mut self, rows: &[DecisionRow], view: View) -> Vec<String> {
+        let last = self.candidates.len().saturating_sub(1);
         let (anchor, focus) = match view {
-            View::Choosing(i) => (Some(i), Some(i)),
+            // With the apply line in focus, the window shows the last rows.
+            View::Choosing { focus, .. } => (Some(focus.unwrap_or(last)), focus),
             View::Applying(i) => (Some(i), None),
             View::Done => (None, None),
         };
@@ -106,9 +160,24 @@ impl Board<'_> {
                 )
             })
             .collect();
-        let footer = match focus {
-            Some(_) => vec![String::new(), format!("   {}", style(HELP).dim())],
-            None => Vec::new(),
+        let footer = match view {
+            View::Choosing { focus, help } => {
+                let apply = match focus {
+                    None => format!(
+                        " {} {}",
+                        style("❯").cyan().bold(),
+                        style(APPLY_LABEL).cyan().bold()
+                    ),
+                    Some(_) => format!("   {}", style(APPLY_LABEL).dim()),
+                };
+                vec![
+                    String::new(),
+                    apply,
+                    String::new(),
+                    format!("   {}", style(help).dim()),
+                ]
+            }
+            View::Applying(_) | View::Done => Vec::new(),
         };
 
         let heights: Vec<usize> = row_lines.iter().map(|l| self.height(l)).collect();
@@ -214,8 +283,13 @@ pub fn resolve(
 
     report::print_title(title);
     let cursor = HiddenCursor::new(&term);
+    let help = selection.help();
     let step = loop {
-        board.draw(&selection.rows(), View::Choosing(selection.focus));
+        let view = View::Choosing {
+            focus: selection.focused_row(),
+            help: &help,
+        };
+        board.draw(&selection.rows(), view);
         match term.read_key_raw() {
             Ok(key) => match selection.handle(&key) {
                 Step::Continue => {}
@@ -289,21 +363,60 @@ mod tests {
     }
 
     #[test]
-    fn focus_stays_within_rows() {
+    fn focus_stays_within_rows_and_apply_line() {
         let mut selection = selection();
         selection.handle(&Key::ArrowUp);
         assert_eq!(selection.focus, 0);
-        selection.handle(&Key::ArrowDown);
-        selection.handle(&Key::ArrowDown);
-        assert_eq!(selection.focus, 1);
+        for _ in 0..3 {
+            selection.handle(&Key::ArrowDown);
+        }
+        assert!(selection.on_apply());
     }
 
     #[test]
-    fn enter_applies_and_escape_cancels() {
+    fn enter_advances_rows_then_applies() {
         let mut selection = selection();
+        assert_eq!(selection.handle(&Key::Enter), Step::Continue);
+        assert_eq!(selection.focus, 1);
+        assert_eq!(selection.handle(&Key::Enter), Step::Continue);
+        assert!(selection.on_apply());
         assert_eq!(selection.handle(&Key::Enter), Step::Apply);
+    }
+
+    #[test]
+    fn escape_cancels() {
+        let mut selection = selection();
         assert_eq!(selection.handle(&Key::Escape), Step::Cancel);
         assert_eq!(selection.handle(&Key::CtrlC), Step::Cancel);
+    }
+
+    #[test]
+    fn shortcuts_pick_offered_actions() {
+        let mut selection = selection();
+        selection.handle(&Key::Char('k'));
+        assert_eq!(selection.choices, [Choice::Keep, Choice::Later]);
+        selection.handle(&Key::Char('L'));
+        assert_eq!(selection.choices, [Choice::Later, Choice::Later]);
+        // A branch whose remote is gone can't be pushed.
+        selection.handle(&Key::Char('p'));
+        assert_eq!(selection.choices, [Choice::Later, Choice::Later]);
+        assert_eq!(selection.focus, 0);
+    }
+
+    #[test]
+    fn apply_line_ignores_changes() {
+        let mut selection = selection();
+        selection.focus = 2;
+        selection.handle(&Key::Char('d'));
+        selection.handle(&Key::ArrowRight);
+        assert_eq!(selection.choices, [Choice::Delete, Choice::Later]);
+    }
+
+    #[test]
+    fn help_lists_only_offered_shortcuts() {
+        let help = selection().help();
+        assert!(help.contains("d delete"));
+        assert!(!help.contains("p push"));
     }
 }
 
